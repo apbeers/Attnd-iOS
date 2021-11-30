@@ -9,8 +9,34 @@ import SwiftUI
 
 struct ContentView: View {
     var body: some View {
-        Text("Hello, world!")
-            .padding()
+        TabView {
+            
+            MapView()
+                .tabItem {
+                    Image(systemName: "map.fill")
+                    Text("Map")
+                }
+            LocationsView()
+                .tabItem {
+                    Image(systemName: "map.fill")
+                    Text("Locations")
+                }
+            FlyerView()
+                .tabItem {
+                    Image(systemName: "page.fill")
+                    Text("Flyer")
+                }
+            NotificationsView()
+                .tabItem {
+                    Image(systemName: "notification.fill")
+                    Text("Notifications")
+                }
+            SettingsView()
+                .tabItem {
+                    Image(systemName: "gearshape.fill")
+                    Text("Settings")
+                }
+        }
     }
 }
 

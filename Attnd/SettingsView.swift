@@ -9,7 +9,18 @@ import SwiftUI
 
 struct SettingsView: View {
     var body: some View {
-        Text("Settings View")
+        NavigationView {
+            Form {
+                Section(header: Text("Event")) {
+                    Toggle(isOn: .constant(true),
+                           label: {
+                            Text("Event Code")
+
+                    })
+                }
+            }.navigationTitle("Settings")
+        }
+        
     }
 }
 

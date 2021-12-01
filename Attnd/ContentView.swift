@@ -13,27 +13,27 @@ struct ContentView: View {
             
             MapView()
                 .tabItem {
-                    Image(systemName: "map.fill")
+                    Image(systemName: "map")
                     Text("Map")
                 }
             LocationsView()
                 .tabItem {
-                    Image(systemName: "map.fill")
+                    Image(systemName: "list.dash")
                     Text("Locations")
                 }
             FlyerView()
                 .tabItem {
-                    Image(systemName: "page.fill")
+                    Image(systemName: "doc")
                     Text("Flyer")
                 }
             NotificationsView()
                 .tabItem {
-                    Image(systemName: "notification.fill")
+                    Image(systemName: "bell")
                     Text("Notifications")
                 }
             SettingsView()
                 .tabItem {
-                    Image(systemName: "gearshape.fill")
+                    Image(systemName: "gearshape")
                     Text("Settings")
                 }
         }

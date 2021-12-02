@@ -43,20 +43,40 @@ class EventManager: ObservableObject {
     }
 }
 
-
 class ImageLoaderService: ObservableObject {
     @Published var image: UIImage = UIImage()
+    var loaded = false
     
-    func loadImage(for urlString: String) {
-        guard let url = URL(string: urlString) else { return }
-        
-        let task = URLSession.shared.dataTask(with: url) { data, response, error in
-            guard let data = data else { return }
-            DispatchQueue.main.async {
-                self.image = UIImage(data: data) ?? UIImage()
-            }
+    func loadImage(urlString: String) {
+        if !self.loaded {
+            guard let url = URL(string: urlString) else { return }
+            
+            URLSession.shared.dataTask(with: url) { data, response, error in
+                guard let data = data else { return }
+                DispatchQueue.main.async {
+                    self.image = UIImage(data: data) ?? UIImage()
+                    self.loaded = true
+                }
+            }.resume()
         }
-        task.resume()
     }
+}
+
+struct AsyncImage: View {
+    var urlString: String
+    @ObservedObject var imageLoader = ImageLoaderService()
+    @State var image: UIImage = UIImage()
     
+    var body: some View {
+        Image(uiImage: image)
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .frame(width:100, height:100)
+            .onReceive(imageLoader.$image) { image in
+                self.image = image
+            }
+            .onAppear {
+                imageLoader.loadImage(urlString: urlString)
+            }
+    }
 }

@@ -425,6 +425,7 @@
 				DEVELOPMENT_TEAM = G3446S9BE4;
 				ENABLE_PREVIEWS = YES;
 				INFOPLIST_FILE = Attnd/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Attnd;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -434,6 +435,10 @@
 				MARKETING_VERSION = 1.0.28;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.arcu.attnd-ios";
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = 1;
 			};
@@ -451,6 +456,7 @@
 				DEVELOPMENT_TEAM = G3446S9BE4;
 				ENABLE_PREVIEWS = YES;
 				INFOPLIST_FILE = Attnd/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Attnd;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -460,6 +466,10 @@
 				MARKETING_VERSION = 1.0.28;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.arcu.attnd-ios";
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = 1;
 			};

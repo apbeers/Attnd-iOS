@@ -425,6 +425,7 @@
 				DEVELOPMENT_TEAM = G3446S9BE4;
 				ENABLE_PREVIEWS = YES;
 				INFOPLIST_FILE = Attnd/Info.plist;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -450,6 +451,7 @@
 				DEVELOPMENT_TEAM = G3446S9BE4;
 				ENABLE_PREVIEWS = YES;
 				INFOPLIST_FILE = Attnd/Info.plist;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

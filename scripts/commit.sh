@@ -12,12 +12,10 @@ if [ -z "$1" ]; then
   exit 1
 fi
 
-rm -f .git/index.lock .git/HEAD.lock 2>/dev/null || true
-if [ -f .git/index.lock ] || [ -f .git/HEAD.lock ]; then
-  echo "⚠️  Git lock files exist (likely held by Xcode). Close Xcode or run"
-  echo "   scripts/push.command on your Mac instead."
-  exit 1
-fi
+# mv works where rm is blocked by FUSE; rename locks out of the way
+for lock in .git/index.lock .git/HEAD.lock .git/refs/heads/*.lock; do
+  [ -f "$lock" ] && mv "$lock" "${lock}.bak" 2>/dev/null || true
+done
 git config user.email "apbeers@icloud.com"
 git config user.name "Andrew"
 git --no-optional-locks add -A

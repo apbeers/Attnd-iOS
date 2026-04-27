@@ -60,14 +60,29 @@ struct MapView: View {
         .navigationTitle("Map")
         .navigationBarTitleDisplayMode(.inline)
         .overlay(alignment: .bottomTrailing) {
-            Button {
-                Task { await zoomToUserLocation() }
-            } label: {
-                Image(systemName: "location.fill")
-                    .padding(12)
-                    .background(.regularMaterial, in: Circle())
+            VStack(spacing: 12) {
+                // Re-center on event
+                Button {
+                    centerOnEvent()
+                } label: {
+                    Image(systemName: "scope")
+                        .padding(12)
+                        .background(.regularMaterial, in: Circle())
+                }
+
+                // Zoom to user location
+                Button {
+                    Task { await zoomToUserLocation() }
+                } label: {
+                    Image(systemName: "location.fill")
+                        .padding(12)
+                        .background(.regularMaterial, in: Circle())
+                }
             }
             .padding()
+        }
+        .onChange(of: appState.mapCenterToken) {
+            centerOnEvent()
         }
         .alert("Location Access Denied", isPresented: $showLocationDeniedAlert) {
             Button("Open Settings") {
@@ -78,6 +93,23 @@ struct MapView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Enable location access in Settings to show your position on the map.")
+        }
+    }
+
+    private func centerOnEvent() {
+        let target: CLLocationCoordinate2D
+        if let center = centerCoordinate {
+            target = center
+        } else if let first = locations.first {
+            target = CLLocationCoordinate2D(latitude: first.latitude, longitude: first.longitude)
+        } else {
+            return
+        }
+        withAnimation {
+            cameraPosition = .region(MKCoordinateRegion(
+                center: target,
+                span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
+            ))
         }
     }
 

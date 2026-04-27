@@ -23,6 +23,11 @@ final class AppState {
     var locationsError: String? = nil
     var notificationsError: String? = nil
 
+    // MARK: - Map Reset
+
+    /// Incremented each time the Map tab is tapped; MapView observes this to re-center.
+    var mapCenterToken: Int = 0
+
     // MARK: - User Preferences (persisted)
 
     /// Show the user's blue dot on the map.

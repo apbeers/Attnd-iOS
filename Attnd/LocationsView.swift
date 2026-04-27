@@ -1,67 +1,116 @@
-//
-//  LocationsView.swift
-//  Attnd
-//
-//  Created by Andrew Beers on 11/29/21.
-//
+// LocationsView.swift
+// Attnd
 
 import SwiftUI
-import Foundation
-
-
-struct Location: Decodable, Identifiable {
-    let id: Int
-    let name: String
-    let snippet: String
-    let description: String
-    let website: String?
-    let latitude: String
-    let longitude: String
-    let address: String
-    let user: Int
-    let event: Int
-    let image: String
-}
-
-
-class LocationManager: ObservableObject {
-    @Published var locations = [Location]()
-    
-    init() {
-        guard let url = URL(string: "https://attnd-web-test.herokuapp.com/events/1/locations/") else {
-            return
-        }
-        
-        URLSession.shared.dataTask(with: url) {(data, respose, error) in
-            
-            guard let data = data else { return }
-            
-            DispatchQueue.main.async {
-                self.locations = try! JSONDecoder().decode([Location].self, from: data)
-            }
-        }.resume()
-    }
-}
 
 struct LocationsView: View {
-    @State var locationManager = LocationManager()
+    let locations: [Location]
+
+    init(locations: [Location] = []) {
+        self.locations = locations
+    }
+
     var body: some View {
-        List(locationManager.locations) { location in
-            HStack {
-                AsyncImage(urlString: location.image)
-                    .frame(width: 100, height: 100)
-                VStack(alignment: .leading) {
-                    Text(location.name)
-                    Text(location.snippet)
+        List(locations) { location in
+            NavigationLink(value: location) {
+                HStack(spacing: 12) {
+                    if let imageUrl = location.imageUrl, let url = URL(string: imageUrl) {
+                        AsyncImage(url: url) { phase in
+                            switch phase {
+                            case .success(let image):
+                                image.resizable().scaledToFill()
+                            case .failure:
+                                Image(systemName: "photo").foregroundStyle(.secondary)
+                            default:
+                                ProgressView()
+                            }
+                        }
+                        .frame(width: 72, height: 72)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    } else {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color(.systemGray5))
+                            .frame(width: 72, height: 72)
+                            .overlay(Image(systemName: "mappin").foregroundStyle(.secondary))
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(location.name)
+                            .font(.headline)
+                        Text(location.snippet)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
                 }
+                .padding(.vertical, 4)
+            }
+        }
+        .navigationTitle("Locations")
+        .overlay {
+            if locations.isEmpty {
+                ContentUnavailableView(
+                    "No Locations",
+                    systemImage: "mappin.slash",
+                    description: Text("Locations will appear here once loaded.")
+                )
             }
         }
     }
 }
 
+// MARK: - Location Detail
 
-struct LocationsView_Previews: PreviewProvider {
-    static var previews: some View {
-        LocationsView()
+struct LocationDetailView: View {
+    let location: Location
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                if let imageUrl = location.imageUrl, let url = URL(string: imageUrl) {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image.resizable().scaledToFill()
+                        case .failure:
+                            Color(.systemGray5).overlay(Image(systemName: "photo").foregroundStyle(.secondary))
+                        default:
+                            ProgressView()
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 220)
+                    .clipped()
+                }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(location.name).font(.title2.bold())
+                    Text(location.address).font(.subheadline).foregroundStyle(.secondary)
+
+                    Divider()
+
+                    Text(location.description)
+                        .font(.body)
+
+                    if let website = location.website, let url = URL(string: website) {
+                        Link("Visit Website", destination: url)
+                            .font(.subheadline)
+                    }
+                }
+                .padding(.horizontal)
+            }
+        }
+        .navigationTitle(location.name)
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+#Preview {
+    NavigationStack {
+        LocationsView(locations: [
+            Location(id: 1, name: "Main Stage", snippet: "Live music all day",
+                     description: "Full description here", website: nil, imageUrl: nil,
+                     latitude: 32.754695, longitude: -97.331605, address: "420 Main St")
+        ])
     }
 }

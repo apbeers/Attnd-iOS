@@ -1,0 +1,10 @@
+// Debug.xcconfig
+// Local development overrides. Do NOT commit this file with a real API key.
+// Copy this file to Config/Debug.xcconfig (already gitignored) and fill in your key.
+//
+// To set the key, either:
+//   1. Add ATTND_API_KEY = your_key_here in this file
+//   2. Set it as an environment variable before opening Xcode: export ATTND_API_KEY=...
+//   3. In CI: add ATTND_API_KEY to your secrets and inject via xcodebuild -xcconfig
+
+ATTND_API_KEY = REPLACE_ME

@@ -13,6 +13,9 @@
 		4900991C2755DE8600E5951F /* NotificationsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4900991B2755DE8600E5951F /* NotificationsView.swift */; };
 		4900991E2755DE8F00E5951F /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4900991D2755DE8F00E5951F /* SettingsView.swift */; };
 		49DF918927571C4500399457 /* Helpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49DF918827571C4500399457 /* Helpers.swift */; };
+		49AA000227600A0000000001 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AA000127600A0000000001 /* APIClient.swift */; };
+		49AA000527600A0000000002 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AA000327600A0000000002 /* AppState.swift */; };
+		49AA000627600A0000000003 /* LaunchScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AA000427600A0000000003 /* LaunchScreen.swift */; };
 		49E7C76A262159B00073A60B /* AttndApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49E7C769262159B00073A60B /* AttndApp.swift */; };
 		49E7C76C262159B00073A60B /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49E7C76B262159B00073A60B /* ContentView.swift */; };
 		49E7C76E262159B10073A60B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 49E7C76D262159B10073A60B /* Assets.xcassets */; };
@@ -26,6 +29,9 @@
 		4900991B2755DE8600E5951F /* NotificationsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationsView.swift; sourceTree = "<group>"; };
 		4900991D2755DE8F00E5951F /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		49DF918827571C4500399457 /* Helpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Helpers.swift; sourceTree = "<group>"; };
+		49AA000127600A0000000001 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		49AA000327600A0000000002 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		49AA000427600A0000000003 /* LaunchScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchScreen.swift; sourceTree = "<group>"; };
 		49E7C766262159B00073A60B /* Attnd.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Attnd.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		49E7C769262159B00073A60B /* AttndApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttndApp.swift; sourceTree = "<group>"; };
 		49E7C76B262159B00073A60B /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -65,6 +71,9 @@
 			isa = PBXGroup;
 			children = (
 				49DF918827571C4500399457 /* Helpers.swift */,
+				49AA000127600A0000000001 /* APIClient.swift */,
+				49AA000327600A0000000002 /* AppState.swift */,
+				49AA000427600A0000000003 /* LaunchScreen.swift */,
 				490099152755DE5500E5951F /* MapView.swift */,
 				4900991D2755DE8F00E5951F /* SettingsView.swift */,
 				4900991B2755DE8600E5951F /* NotificationsView.swift */,
@@ -160,6 +169,9 @@
 				49E7C76C262159B00073A60B /* ContentView.swift in Sources */,
 				490099162755DE5500E5951F /* MapView.swift in Sources */,
 				49DF918927571C4500399457 /* Helpers.swift in Sources */,
+				49AA000227600A0000000001 /* APIClient.swift in Sources */,
+				49AA000527600A0000000002 /* AppState.swift in Sources */,
+				49AA000627600A0000000003 /* LaunchScreen.swift in Sources */,
 				4900991A2755DE7A00E5951F /* LocationsView.swift in Sources */,
 				49E7C76A262159B00073A60B /* AttndApp.swift in Sources */,
 				490099182755DE6900E5951F /* FlyerView.swift in Sources */,
@@ -221,7 +233,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 14.4;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -276,7 +288,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 14.4;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = iphoneos;
@@ -289,6 +301,7 @@
 		49E7C776262159B10073A60B /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ATTND_API_KEY = "$(ATTND_API_KEY)";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
@@ -297,7 +310,7 @@
 				DEVELOPMENT_TEAM = GQQX4L6TE2;
 				ENABLE_PREVIEWS = YES;
 				INFOPLIST_FILE = Attnd/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 14.3;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -305,7 +318,7 @@
 				MARKETING_VERSION = 1.0.28;
 				PRODUCT_BUNDLE_IDENTIFIER = com.arcu.Attnd;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
@@ -313,6 +326,7 @@
 		49E7C777262159B10073A60B /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ATTND_API_KEY = "$(ATTND_API_KEY)";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
@@ -321,7 +335,7 @@
 				DEVELOPMENT_TEAM = GQQX4L6TE2;
 				ENABLE_PREVIEWS = YES;
 				INFOPLIST_FILE = Attnd/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 14.3;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -329,7 +343,7 @@
 				MARKETING_VERSION = 1.0.28;
 				PRODUCT_BUNDLE_IDENTIFIER = com.arcu.Attnd;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;

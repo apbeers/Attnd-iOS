@@ -1,82 +1,89 @@
+// Helpers.swift
+// Attnd
 //
-//  Helpers.swift
-//  Attnd
-//
-//  Created by Andrew Beers on 11/30/21.
-//
+// Data models matching the Attnd API v1 response shapes.
+// All snake_case JSON keys are mapped to camelCase via CodingKeys.
 
 import Foundation
-import SwiftUI
 
+// MARK: - API List Envelope
+
+/// Generic paginated response wrapper used by all list endpoints.
+struct APIList<T: Decodable>: Decodable {
+    let count: Int
+    let results: [T]
+}
+
+// MARK: - Event
 
 struct Event: Decodable, Identifiable {
     let id: Int
-    let locations: [Location]
-    let notifications: [Notification]
-    let flyer: String
     let name: String
-    let event_code: String
+    let eventCode: String
     let description: String
-    let latitude: String
-    let longitude: String
-    let start_time: String
+    let latitude: Double
+    let longitude: Double
+    let startTime: String
     let paid: Bool
+    let flyerUrl: String?
     let address: String
-}
 
-class EventManager: ObservableObject {
-    @Published var events = [Event]()
-    
-    init() {
-        guard let url = URL(string: "https://attnd-web-test.herokuapp.com/events/1/") else {
-            return
-        }
-        
-        URLSession.shared.dataTask(with: url) {(data, _, _) in
-            guard let data = data else {
-                return
-            }
-            
-            let events = try! JSONDecoder().decode([Event].self, from: data)
-            self.events = events
-        }.resume()
+    enum CodingKeys: String, CodingKey {
+        case id, name, description, latitude, longitude, paid, address
+        case eventCode  = "event_code"
+        case startTime  = "start_time"
+        case flyerUrl   = "flyer_url"
     }
 }
 
-class ImageLoaderService: ObservableObject {
-    @Published var image: UIImage = UIImage()
-    var loaded = false
-    
-    func loadImage(urlString: String) {
-        if !self.loaded {
-            guard let url = URL(string: urlString) else { return }
-            
-            URLSession.shared.dataTask(with: url) { data, response, error in
-                guard let data = data else { return }
-                DispatchQueue.main.async {
-                    self.image = UIImage(data: data) ?? UIImage()
-                    self.loaded = true
-                }
-            }.resume()
-        }
+// MARK: - Nearby Event Result
+
+/// Wrapper returned by GET /api/v1/events/nearby_events/<lat>/<lng>/
+struct NearbyEventResult: Decodable, Identifiable {
+    // Stable identity from the wrapped event
+    var id: Int { event.id }
+    let event: Event
+    let distanceMiles: Double
+    let startsInHours: Double
+
+    enum CodingKeys: String, CodingKey {
+        case event
+        case distanceMiles  = "distance_miles"
+        case startsInHours  = "starts_in_hours"
     }
 }
 
-struct AsyncImage: View {
-    var urlString: String
-    @ObservedObject var imageLoader = ImageLoaderService()
-    @State var image: UIImage = UIImage()
-    
-    var body: some View {
-        Image(uiImage: image)
-            .resizable()
-            .aspectRatio(contentMode: .fit)
-            .frame(width:100, height:100)
-            .onReceive(imageLoader.$image) { image in
-                self.image = image
-            }
-            .onAppear {
-                imageLoader.loadImage(urlString: urlString)
-            }
+// MARK: - Location
+
+struct Location: Decodable, Identifiable {
+    let id: Int
+    let name: String
+    let snippet: String
+    let description: String
+    let website: String?
+    let imageUrl: String?
+    let latitude: Double
+    let longitude: Double
+    let address: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, snippet, description, website, latitude, longitude, address
+        case imageUrl = "image_url"
+    }
+}
+
+// MARK: - App Notification
+// Named AppNotification to avoid collision with Foundation.Notification.
+
+struct AppNotification: Decodable, Identifiable {
+    let id: Int
+    let title: String
+    let body: String
+    let sendTime: String
+    let sent: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, body, sent
+        case sendTime = "send_time"
     }
 }

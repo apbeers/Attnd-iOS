@@ -18,6 +18,10 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>ATTND_API_KEY</key>
+	<string>$(ATTND_API_KEY)</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Attnd uses your location to show events near you.</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSRequiresIPhoneOS</key>

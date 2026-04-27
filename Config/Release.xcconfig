@@ -1,0 +1,7 @@
+// Release.xcconfig
+// Release / CI build settings.
+// ATTND_API_KEY must be injected by CI before building.
+// In GitHub Actions: pass -xcconfig Config/Release.xcconfig
+// and set ATTND_API_KEY as a repository secret.
+
+ATTND_API_KEY = $(ATTND_API_KEY)

@@ -12,6 +12,11 @@ struct AttndApp: App {
         WindowGroup {
             RootView()
                 .environment(appState)
+                // Universal Links: intercept https://attnd.app/join/<code>/ when app is installed
+                .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { userActivity in
+                    guard let url = userActivity.webpageURL else { return }
+                    Task { await appState.handleDeepLink(url) }
+                }
         }
     }
 }

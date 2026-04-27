@@ -137,6 +137,34 @@ final class AppState {
         notifications = []
     }
 
+    // MARK: - Deep Link Handling
+
+    /// Called when the app or App Clip is opened via a Universal Link.
+    /// URL pattern: https://attnd.app/join/<event_code>/
+    /// On any API failure the method returns silently; the caller decides what to show.
+    func handleDeepLink(_ url: URL) async {
+        guard let code = eventCode(from: url) else { return }
+        // No-op if already in this event
+        if let current = currentEvent, current.eventCode.lowercased() == code.lowercased() { return }
+        do {
+            let event = try await APIClient.shared.lookupEvent(query: code)
+            // Leave current event gracefully before joining the new one
+            if let current = currentEvent {
+                Task { try? await APIClient.shared.leaveEvent(eventId: current.id, deviceId: deviceId) }
+            }
+            await joinEvent(event)
+        } catch {
+            // Silently fail — user stays on whatever screen they were on
+        }
+    }
+
+    private func eventCode(from url: URL) -> String? {
+        // pathComponents for /join/FWFM2026/ → ["/", "join", "FWFM2026"]
+        let parts = url.pathComponents
+        guard parts.count >= 3, parts[1] == "join", !parts[2].isEmpty else { return nil }
+        return parts[2]
+    }
+
     // MARK: - Notification Subscription
 
     private func syncNotificationSubscription() async {

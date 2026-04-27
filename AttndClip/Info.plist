@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- App Clip Info.plist -->
+    <!-- Bundle ID must be <main-app-bundle-id>.Clip -->
+    <!-- e.g. com.arcu.attnd-ios.Clip -->
+
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>Attnd uses your location to find events near you.</string>
+
+    <!-- Confirm the App Clip experience URL matches your AASA config -->
+    <key>NSAppClip</key>
+    <dict>
+        <key>NSAppClipRequestEphemeralUserNotification</key>
+        <false/>
+        <key>NSAppClipRequestLocationConfirmation</key>
+        <false/>
+    </dict>
+</dict>
+</plist>

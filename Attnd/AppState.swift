@@ -30,6 +30,14 @@ final class AppState {
 
     // MARK: - User Preferences (persisted)
 
+    // MARK: - Persisted Event Code
+
+    /// The event code of the last successfully joined event. Cleared on leave.
+    private(set) var savedEventCode: String? {
+        get { UserDefaults.standard.string(forKey: "pref.savedEventCode") }
+        set { UserDefaults.standard.set(newValue, forKey: "pref.savedEventCode") }
+    }
+
     /// Show the user's blue dot on the map.
     var showUserLocation: Bool {
         didSet { UserDefaults.standard.set(showUserLocation, forKey: "pref.showUserLocation") }
@@ -68,9 +76,24 @@ final class AppState {
     // MARK: - Event Actions
 
     func joinEvent(_ event: Event) async {
+        savedEventCode = event.eventCode
         currentEvent = event
         Task { try? await APIClient.shared.joinEvent(eventId: event.id, deviceId: deviceId) }
         await loadEventData(event: event)
+    }
+
+    /// Called on launch. If a saved event code exists, tries to look it up and rejoin.
+    /// On any API failure the saved code is cleared and the user lands on the launch screen.
+    func autoJoin() async {
+        guard let code = savedEventCode else { return }
+        do {
+            let event = try await APIClient.shared.lookupEvent(query: code)
+            currentEvent = event
+            Task { try? await APIClient.shared.joinEvent(eventId: event.id, deviceId: deviceId) }
+            await loadEventData(event: event)
+        } catch {
+            savedEventCode = nil
+        }
     }
 
     func loadEventData(event: Event) async {
@@ -105,6 +128,7 @@ final class AppState {
     }
 
     func leaveEvent() async {
+        savedEventCode = nil
         if let event = currentEvent {
             Task { try? await APIClient.shared.leaveEvent(eventId: event.id, deviceId: deviceId) }
         }

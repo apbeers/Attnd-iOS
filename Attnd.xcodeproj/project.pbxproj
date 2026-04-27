@@ -16,10 +16,12 @@
 		49AA000227600A0000000001 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AA000127600A0000000001 /* APIClient.swift */; };
 		49AA000527600A0000000002 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AA000327600A0000000002 /* AppState.swift */; };
 		49AA000627600A0000000003 /* LaunchScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AA000427600A0000000003 /* LaunchScreen.swift */; };
+		49AA000827600A0000000004 /* LocationPermissionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AA000727600A0000000004 /* LocationPermissionManager.swift */; };
 		49E7C76A262159B00073A60B /* AttndApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49E7C769262159B00073A60B /* AttndApp.swift */; };
 		49E7C76C262159B00073A60B /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49E7C76B262159B00073A60B /* ContentView.swift */; };
 		49E7C76E262159B10073A60B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 49E7C76D262159B10073A60B /* Assets.xcassets */; };
 		49E7C771262159B10073A60B /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 49E7C770262159B10073A60B /* Preview Assets.xcassets */; };
+		49CC000C27800000A000000C /* APIClientIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49CC000B27800000A000000B /* APIClientIntegrationTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -32,7 +34,10 @@
 		49AA000127600A0000000001 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		49AA000327600A0000000002 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		49AA000427600A0000000003 /* LaunchScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchScreen.swift; sourceTree = "<group>"; };
+		49AA000727600A0000000004 /* LocationPermissionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationPermissionManager.swift; sourceTree = "<group>"; };
 		49E7C766262159B00073A60B /* Attnd.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Attnd.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		49CC000227800000A0000002 /* AttndTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AttndTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		49CC000B27800000A000000B /* APIClientIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClientIntegrationTests.swift; sourceTree = "<group>"; };
 		49E7C769262159B00073A60B /* AttndApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttndApp.swift; sourceTree = "<group>"; };
 		49E7C76B262159B00073A60B /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		49E7C76D262159B10073A60B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -40,8 +45,25 @@
 		49E7C772262159B10073A60B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
+/* Begin PBXContainerItemProxy section */
+		49CC000627800000A0000006 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 49E7C75E262159B00073A60B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 49E7C765262159B00073A60B;
+			remoteInfo = Attnd;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFrameworksBuildPhase section */
 		49E7C763262159B00073A60B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		49CC000427800000A0000004 /* Frameworks (AttndTests) */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -55,6 +77,7 @@
 			isa = PBXGroup;
 			children = (
 				49E7C768262159B00073A60B /* Attnd */,
+				49CC000A27800000A000000A /* AttndTests */,
 				49E7C767262159B00073A60B /* Products */,
 			);
 			sourceTree = "<group>";
@@ -63,8 +86,17 @@
 			isa = PBXGroup;
 			children = (
 				49E7C766262159B00073A60B /* Attnd.app */,
+				49CC000227800000A0000002 /* AttndTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		49CC000A27800000A000000A /* AttndTests */ = {
+			isa = PBXGroup;
+			children = (
+				49CC000B27800000A000000B /* APIClientIntegrationTests.swift */,
+			);
+			path = AttndTests;
 			sourceTree = "<group>";
 		};
 		49E7C768262159B00073A60B /* Attnd */ = {
@@ -74,6 +106,7 @@
 				49AA000127600A0000000001 /* APIClient.swift */,
 				49AA000327600A0000000002 /* AppState.swift */,
 				49AA000427600A0000000003 /* LaunchScreen.swift */,
+				49AA000727600A0000000004 /* LocationPermissionManager.swift */,
 				490099152755DE5500E5951F /* MapView.swift */,
 				4900991D2755DE8F00E5951F /* SettingsView.swift */,
 				4900991B2755DE8600E5951F /* NotificationsView.swift */,
@@ -116,7 +149,32 @@
 			productReference = 49E7C766262159B00073A60B /* Attnd.app */;
 			productType = "com.apple.product-type.application";
 		};
+		49CC000127800000A0000001 /* AttndTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 49CC000727800000A0000007 /* Build configuration list for PBXNativeTarget "AttndTests" */;
+			buildPhases = (
+				49CC000327800000A0000003 /* Sources */,
+				49CC000427800000A0000004 /* Frameworks (AttndTests) */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				49CC000527800000A0000005 /* PBXTargetDependency */,
+			);
+			name = AttndTests;
+			productName = AttndTests;
+			productReference = 49CC000227800000A0000002 /* AttndTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
+
+/* Begin PBXTargetDependency section */
+		49CC000527800000A0000005 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 49E7C765262159B00073A60B /* Attnd */;
+			targetProxy = 49CC000627800000A0000006 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXProject section */
 		49E7C75E262159B00073A60B /* Project object */ = {
@@ -127,6 +185,10 @@
 				TargetAttributes = {
 					49E7C765262159B00073A60B = {
 						CreatedOnToolsVersion = 12.4;
+					};
+					49CC000127800000A0000001 = {
+						CreatedOnToolsVersion = 15.0;
+						TestTargetID = 49E7C765262159B00073A60B;
 					};
 				};
 			};
@@ -144,6 +206,7 @@
 			projectRoot = "";
 			targets = (
 				49E7C765262159B00073A60B /* Attnd */,
+				49CC000127800000A0000001 /* AttndTests */,
 			);
 		};
 /* End PBXProject section */
@@ -161,6 +224,14 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		49CC000327800000A0000003 /* Sources (AttndTests) */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				49CC000C27800000A000000C /* APIClientIntegrationTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		49E7C762262159B00073A60B /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -172,6 +243,7 @@
 				49AA000227600A0000000001 /* APIClient.swift in Sources */,
 				49AA000527600A0000000002 /* AppState.swift in Sources */,
 				49AA000627600A0000000003 /* LaunchScreen.swift in Sources */,
+				49AA000827600A0000000004 /* LocationPermissionManager.swift in Sources */,
 				4900991A2755DE7A00E5951F /* LocationsView.swift in Sources */,
 				49E7C76A262159B00073A60B /* AttndApp.swift in Sources */,
 				490099182755DE6900E5951F /* FlyerView.swift in Sources */,
@@ -350,6 +422,42 @@
 		};
 /* End XCBuildConfiguration section */
 
+		49CC000827800000A0000008 /* Debug (AttndTests) */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = GQQX4L6TE2;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.arcu.AttndTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Attnd.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Attnd";
+			};
+			name = Debug;
+		};
+		49CC000927800000A0000009 /* Release (AttndTests) */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = GQQX4L6TE2;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.arcu.AttndTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Attnd.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Attnd";
+			};
+			name = Release;
+		};
 /* Begin XCConfigurationList section */
 		49E7C761262159B00073A60B /* Build configuration list for PBXProject "Attnd" */ = {
 			isa = XCConfigurationList;
@@ -365,6 +473,15 @@
 			buildConfigurations = (
 				49E7C776262159B10073A60B /* Debug */,
 				49E7C777262159B10073A60B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		49CC000727800000A0000007 /* Build configuration list for PBXNativeTarget "AttndTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				49CC000827800000A0000008 /* Debug (AttndTests) */,
+				49CC000927800000A0000009 /* Release (AttndTests) */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

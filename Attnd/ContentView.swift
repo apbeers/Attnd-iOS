@@ -19,8 +19,7 @@ struct ContentView: View {
                     locations: appState.locations,
                     centerCoordinate: appState.currentEvent.map {
                         CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
-                    },
-                    showUserLocation: appState.showUserLocation
+                    }
                 )
             }
             .tabItem { Label("Map", systemImage: "map") }

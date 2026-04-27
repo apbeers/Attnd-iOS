@@ -123,6 +123,7 @@ struct LaunchScreen: View {
             nearbyError = "Location access is needed to find nearby events."
             return
         }
+        appState.showUserLocation = true
         isLoadingNearby = true
         nearbyError = nil
         do {
@@ -200,60 +201,3 @@ private struct EventRow: View {
     }
 }
 
-// MARK: - Location Permission Manager
-
-/// Wraps CLLocationManager in a simple async/await interface for one-shot location request.
-@MainActor
-private final class LocationPermissionManager: NSObject, ObservableObject, CLLocationManagerDelegate {
-
-    private let manager = CLLocationManager()
-    private var continuation: CheckedContinuation<CLLocationCoordinate2D?, Never>?
-
-    override init() {
-        super.init()
-        manager.delegate = self
-        manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
-    }
-
-    func requestLocation() async -> CLLocationCoordinate2D? {
-        await withCheckedContinuation { cont in
-            continuation = cont
-            let status = manager.authorizationStatus
-            if status == .notDetermined {
-                manager.requestWhenInUseAuthorization()
-            } else if status == .authorizedWhenInUse || status == .authorizedAlways {
-                manager.requestLocation()
-            } else {
-                cont.resume(returning: nil)
-                continuation = nil
-            }
-        }
-    }
-
-    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        Task { @MainActor in
-            if manager.authorizationStatus == .authorizedWhenInUse ||
-               manager.authorizationStatus == .authorizedAlways {
-                manager.requestLocation()
-            } else if manager.authorizationStatus != .notDetermined {
-                continuation?.resume(returning: nil)
-                continuation = nil
-            }
-        }
-    }
-
-    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        Task { @MainActor in
-            let coord = locations.first?.coordinate
-            continuation?.resume(returning: coord)
-            continuation = nil
-        }
-    }
-
-    nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        Task { @MainActor in
-            continuation?.resume(returning: nil)
-            continuation = nil
-        }
-    }
-}

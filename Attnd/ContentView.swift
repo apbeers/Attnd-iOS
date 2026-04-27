@@ -17,7 +17,8 @@ struct ContentView: View {
         Binding(
             get: { selectedTab },
             set: { newTab in
-                if newTab == 0 {
+                // Only re-center when the user taps the Map tab while already on it
+                if newTab == 0 && selectedTab == 0 {
                     appState.mapCenterToken += 1
                 }
                 selectedTab = newTab

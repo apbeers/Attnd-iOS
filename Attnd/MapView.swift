@@ -14,6 +14,15 @@ struct MapView: View {
     @StateObject private var locationManager = LocationPermissionManager()
     @State private var showLocationDeniedAlert = false
 
+    // Pin selection
+    @State private var selectedLocationId: Int? = nil
+    @State private var navigateToLocation: Location? = nil
+
+    private var selectedLocation: Location? {
+        guard let id = selectedLocationId else { return nil }
+        return locations.first { $0.id == id }
+    }
+
     init(
         locations: [Location] = [],
         centerCoordinate: CLLocationCoordinate2D? = nil
@@ -42,7 +51,7 @@ struct MapView: View {
     }
 
     var body: some View {
-        Map(position: $cameraPosition) {
+        Map(position: $cameraPosition, selection: $selectedLocationId) {
             ForEach(locations) { location in
                 Marker(
                     location.name,
@@ -51,6 +60,7 @@ struct MapView: View {
                         longitude: location.longitude
                     )
                 )
+                .tag(location.id)
             }
             if appState.showUserLocation {
                 UserAnnotation()
@@ -59,30 +69,47 @@ struct MapView: View {
         .mapStyle(.standard)
         .navigationTitle("Map")
         .navigationBarTitleDisplayMode(.inline)
-        .overlay(alignment: .bottomTrailing) {
-            VStack(spacing: 12) {
-                // Re-center on event
-                Button {
-                    centerOnEvent()
-                } label: {
-                    Image(systemName: "scope")
-                        .padding(12)
-                        .background(.regularMaterial, in: Circle())
-                }
-
-                // Zoom to user location
-                Button {
-                    Task { await zoomToUserLocation() }
-                } label: {
-                    Image(systemName: "location.fill")
-                        .padding(12)
-                        .background(.regularMaterial, in: Circle())
-                }
-            }
-            .padding()
+        .navigationDestination(item: $navigateToLocation) { location in
+            LocationDetailView(location: location)
         }
         .onChange(of: appState.mapCenterToken) {
             centerOnEvent()
+        }
+        // Single bottom overlay: FABs on trailing, info card below when a pin is selected
+        .overlay(alignment: .bottom) {
+            VStack(spacing: 0) {
+                HStack(alignment: .bottom) {
+                    Spacer()
+                    VStack(spacing: 12) {
+                        Button {
+                            centerOnEvent()
+                        } label: {
+                            Image(systemName: "scope")
+                                .padding(12)
+                                .background(.regularMaterial, in: Circle())
+                        }
+
+                        Button {
+                            Task { await zoomToUserLocation() }
+                        } label: {
+                            Image(systemName: "location.fill")
+                                .padding(12)
+                                .background(.regularMaterial, in: Circle())
+                        }
+                    }
+                    .padding()
+                }
+
+                if let loc = selectedLocation {
+                    LocationInfoCard(location: loc) {
+                        navigateToLocation = loc
+                    }
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(.spring(duration: 0.3), value: selectedLocationId)
         }
         .alert("Location Access Denied", isPresented: $showLocationDeniedAlert) {
             Button("Open Settings") {
@@ -126,6 +153,36 @@ struct MapView: View {
         } else {
             showLocationDeniedAlert = true
         }
+    }
+}
+
+// MARK: - Location Info Card
+
+private struct LocationInfoCard: View {
+    let location: Location
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(location.name)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                    Text(location.snippet)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .padding()
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
     }
 }
 

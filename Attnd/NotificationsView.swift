@@ -68,7 +68,7 @@ struct NotificationsView: View {
         }
     }
 
-    /// Returns a string like "Monday, 3:45 PM" in the device's local timezone.
+    /// Returns "Today, 3:45 PM" if the notification is from today, otherwise "Monday, 3:45 PM".
     private func formattedDate(_ iso: String) -> String {
         let parser = ISO8601DateFormatter()
         parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -84,8 +84,18 @@ struct NotificationsView: View {
         let fmt = DateFormatter()
         fmt.locale = .current
         fmt.timeZone = .current
-        fmt.dateFormat = "EEEE, h:mm a"   // e.g. "Monday, 3:45 PM"
-        return fmt.string(from: date)
+        fmt.dateFormat = "h:mm a"
+
+        let timeString = fmt.string(from: date)
+        let dayLabel = Calendar.current.isDateInToday(date) ? "Today" : {
+            let dayFmt = DateFormatter()
+            dayFmt.locale = .current
+            dayFmt.timeZone = .current
+            dayFmt.dateFormat = "EEEE"
+            return dayFmt.string(from: date)
+        }()
+
+        return "\(dayLabel), \(timeString)"
     }
 }
 

@@ -63,10 +63,16 @@ struct ContentView: View {
 
             // MARK: Notifications
             NavigationStack {
-                NotificationsView(notifications: appState.notifications)
-                    .overlay {
-                        if appState.isLoadingNotifications { ProgressView() }
+                NotificationsView(
+                    notifications: appState.notifications,
+                    onRefresh: {
+                        guard let event = appState.currentEvent else { return }
+                        await appState.loadNotifications(eventId: event.id)
                     }
+                )
+                .overlay {
+                    if appState.isLoadingNotifications { ProgressView() }
+                }
             }
             .tabItem { Label("Notifications", systemImage: "bell") }
             .tag(3)

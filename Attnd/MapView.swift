@@ -80,23 +80,10 @@ struct MapView: View {
             VStack(spacing: 0) {
                 HStack(alignment: .bottom) {
                     Spacer()
-                    VStack(spacing: 12) {
-                        Button {
-                            centerOnEvent()
-                        } label: {
-                            Image(systemName: "scope")
-                                .padding(12)
-                                .background(.regularMaterial, in: Circle())
-                        }
-
-                        Button {
-                            Task { await zoomToUserLocation() }
-                        } label: {
-                            Image(systemName: "location.fill")
-                                .padding(12)
-                                .background(.regularMaterial, in: Circle())
-                        }
-                    }
+                    MapFABStack(
+                        onCenter: { centerOnEvent() },
+                        onLocation: { Task { await zoomToUserLocation() } }
+                    )
                     .padding()
                 }
 
@@ -156,6 +143,50 @@ struct MapView: View {
     }
 }
 
+// MARK: - Map FAB Stack
+
+/// Two floating action buttons — scope (re-center) and location.
+/// On iOS 26+ they use native Liquid Glass; older OS falls back to .regularMaterial.
+private struct MapFABStack: View {
+    let onCenter: () -> Void
+    let onLocation: () -> Void
+
+    var body: some View {
+        if #available(iOS 26, *) {
+            GlassEffectContainer {
+                VStack(spacing: 8) {
+                    Button(action: onCenter) {
+                        Image(systemName: "scope")
+                            .frame(width: 44, height: 44)
+                            .contentShape(Circle())
+                    }
+                    .glassEffect(in: Circle())
+
+                    Button(action: onLocation) {
+                        Image(systemName: "location.fill")
+                            .frame(width: 44, height: 44)
+                            .contentShape(Circle())
+                    }
+                    .glassEffect(in: Circle())
+                }
+            }
+        } else {
+            VStack(spacing: 12) {
+                Button(action: onCenter) {
+                    Image(systemName: "scope")
+                        .padding(12)
+                        .background(.regularMaterial, in: Circle())
+                }
+                Button(action: onLocation) {
+                    Image(systemName: "location.fill")
+                        .padding(12)
+                        .background(.regularMaterial, in: Circle())
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Location Info Card
 
 private struct LocationInfoCard: View {
@@ -180,7 +211,13 @@ private struct LocationInfoCard: View {
                     .foregroundStyle(.secondary)
             }
             .padding()
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .background {
+                if #available(iOS 26, *) {
+                    RoundedRectangle(cornerRadius: 14).glassEffect()
+                } else {
+                    RoundedRectangle(cornerRadius: 14).fill(.regularMaterial)
+                }
+            }
         }
         .buttonStyle(.plain)
     }

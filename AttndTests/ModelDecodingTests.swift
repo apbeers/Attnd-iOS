@@ -30,6 +30,7 @@ final class ModelDecodingTests: XCTestCase {
           "latitude": 32.7555,
           "longitude": -97.3308,
           "start_time": "2026-04-26T18:00:00Z",
+          "created_at": "2026-01-15T09:00:00Z",
           "paid": false,
           "flyer_url": null,
           "address": "Sundance Square, Fort Worth, TX"
@@ -43,6 +44,7 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertEqual(event.latitude,  32.7555,  accuracy: 0.0001)
         XCTAssertEqual(event.longitude, -97.3308, accuracy: 0.0001)
         XCTAssertEqual(event.startTime, "2026-04-26T18:00:00Z")
+        XCTAssertEqual(event.createdAt, "2026-01-15T09:00:00Z")
         XCTAssertFalse(event.paid)
         XCTAssertNil(event.flyerUrl)
         XCTAssertEqual(event.address, "Sundance Square, Fort Worth, TX")
@@ -52,7 +54,7 @@ final class ModelDecodingTests: XCTestCase {
         let json = """
         {"id":2,"name":"Paid Event","event_code":"PAY001","description":"desc",
          "latitude":0,"longitude":0,"start_time":"2026-01-01T00:00:00Z",
-         "paid":true,"flyer_url":null,"address":""}
+         "created_at":"2025-12-01T00:00:00Z","paid":true,"flyer_url":null,"address":""}
         """
         XCTAssertTrue(try decode(Event.self, from: json).paid)
     }
@@ -61,6 +63,7 @@ final class ModelDecodingTests: XCTestCase {
         let json = """
         {"id":3,"name":"Flyer Event","event_code":"FLY001","description":"",
          "latitude":0,"longitude":0,"start_time":"2026-01-01T00:00:00Z",
+         "created_at":"2025-12-01T00:00:00Z",
          "paid":false,"flyer_url":"https://example.com/flyer.pdf","address":""}
         """
         let event = try decode(Event.self, from: json)
@@ -68,14 +71,16 @@ final class ModelDecodingTests: XCTestCase {
     }
 
     func testEvent_SnakeCaseMapping() throws {
-        // Verifies that event_code, start_time, flyer_url map to Swift camelCase names
+        // Verifies that event_code, start_time, created_at, flyer_url map to Swift camelCase names
         let json = """
         {"id":1,"name":"X","event_code":"ABC123","description":"","latitude":0,
-         "longitude":0,"start_time":"2026-06-01T10:00:00Z","paid":false,"flyer_url":null,"address":""}
+         "longitude":0,"start_time":"2026-06-01T10:00:00Z",
+         "created_at":"2026-01-01T00:00:00Z","paid":false,"flyer_url":null,"address":""}
         """
         let event = try decode(Event.self, from: json)
         XCTAssertEqual(event.eventCode, "ABC123")
         XCTAssertEqual(event.startTime, "2026-06-01T10:00:00Z")
+        XCTAssertEqual(event.createdAt, "2026-01-01T00:00:00Z")
     }
 
     // MARK: - ScheduledItem
@@ -237,7 +242,7 @@ final class ModelDecodingTests: XCTestCase {
           "event": {
             "id":1,"name":"Fort Worth Festival","event_code":"FWFM2026","description":"",
             "latitude":32.7555,"longitude":-97.3308,"start_time":"2026-04-26T18:00:00Z",
-            "paid":false,"flyer_url":null,"address":"Fort Worth, TX"
+            "created_at":"2026-01-15T09:00:00Z","paid":false,"flyer_url":null,"address":"Fort Worth, TX"
           },
           "distance_miles": 0.3,
           "starts_in_hours": 6.0
@@ -256,7 +261,8 @@ final class ModelDecodingTests: XCTestCase {
         let json = """
         {
           "event":{"id":2,"name":"E","event_code":"E2","description":"","latitude":0,"longitude":0,
-                   "start_time":"2026-01-01T00:00:00Z","paid":false,"flyer_url":null,"address":""},
+                   "start_time":"2026-01-01T00:00:00Z","created_at":"2025-12-01T00:00:00Z",
+                   "paid":false,"flyer_url":null,"address":""},
           "distance_miles":12.5,
           "starts_in_hours":-2.0
         }
@@ -274,9 +280,11 @@ final class ModelDecodingTests: XCTestCase {
           "count": 2,
           "results": [
             {"id":1,"name":"Event A","event_code":"EVA001","description":"","latitude":0,
-             "longitude":0,"start_time":"2026-01-01T00:00:00Z","paid":false,"flyer_url":null,"address":""},
+             "longitude":0,"start_time":"2026-01-01T00:00:00Z","created_at":"2025-12-01T00:00:00Z",
+             "paid":false,"flyer_url":null,"address":""},
             {"id":2,"name":"Event B","event_code":"EVB002","description":"","latitude":0,
-             "longitude":0,"start_time":"2026-01-01T00:00:00Z","paid":true,"flyer_url":null,"address":""}
+             "longitude":0,"start_time":"2026-01-01T00:00:00Z","created_at":"2025-12-01T00:00:00Z",
+             "paid":true,"flyer_url":null,"address":""}
           ]
         }
         """
@@ -313,9 +321,9 @@ final class ModelDecodingTests: XCTestCase {
     func testAPIList_CountAndResults_AlwaysMatch() throws {
         let json = """
         {"count":3,"results":[
-          {"id":1,"name":"A","event_code":"A1","description":"","latitude":0,"longitude":0,"start_time":"2026-01-01T00:00:00Z","paid":false,"flyer_url":null,"address":""},
-          {"id":2,"name":"B","event_code":"B2","description":"","latitude":0,"longitude":0,"start_time":"2026-01-01T00:00:00Z","paid":false,"flyer_url":null,"address":""},
-          {"id":3,"name":"C","event_code":"C3","description":"","latitude":0,"longitude":0,"start_time":"2026-01-01T00:00:00Z","paid":false,"flyer_url":null,"address":""}
+          {"id":1,"name":"A","event_code":"A1","description":"","latitude":0,"longitude":0,"start_time":"2026-01-01T00:00:00Z","created_at":"2025-12-01T00:00:00Z","paid":false,"flyer_url":null,"address":""},
+          {"id":2,"name":"B","event_code":"B2","description":"","latitude":0,"longitude":0,"start_time":"2026-01-01T00:00:00Z","created_at":"2025-12-01T00:00:00Z","paid":false,"flyer_url":null,"address":""},
+          {"id":3,"name":"C","event_code":"C3","description":"","latitude":0,"longitude":0,"start_time":"2026-01-01T00:00:00Z","created_at":"2025-12-01T00:00:00Z","paid":false,"flyer_url":null,"address":""}
         ]}
         """
         let list = try decode(APIList<Event>.self, from: json)

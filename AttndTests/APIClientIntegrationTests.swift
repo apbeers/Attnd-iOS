@@ -32,6 +32,7 @@ final class APIClientIntegrationTests: XCTestCase {
         XCTAssertEqual(event.latitude,  32.7555, accuracy: 0.001)
         XCTAssertEqual(event.longitude, -97.3308, accuracy: 0.001)
         XCTAssertFalse(event.paid)
+        XCTAssertFalse(event.createdAt.isEmpty)
     }
 
     func testLookupByCode_Austin() async throws {

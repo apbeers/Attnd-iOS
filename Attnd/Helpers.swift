@@ -24,6 +24,7 @@ struct Event: Decodable, Identifiable {
     let latitude: Double
     let longitude: Double
     let startTime: String
+    let createdAt: String
     let paid: Bool
     let flyerUrl: String?
     let address: String
@@ -32,6 +33,7 @@ struct Event: Decodable, Identifiable {
         case id, name, description, latitude, longitude, paid, address
         case eventCode  = "event_code"
         case startTime  = "start_time"
+        case createdAt  = "created_at"
         case flyerUrl   = "flyer_url"
     }
 }

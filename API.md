@@ -23,11 +23,95 @@ The API key is hardcoded into the Android and iOS app builds. Do not expose it p
 
 | Type | Format | Example |
 |------|--------|---------|
-| Timestamps | ISO 8601 UTC | `"2026-06-15T18:00:00+00:00"` |
+| Timestamps | ISO 8601 with offset | `"2026-06-15T18:00:00+00:00"` |
 | Coordinates | Float (decimal degrees) | `32.754695` |
 | File URLs | Absolute HTTPS URL or `null` | `"https://attnd.app/media/flyer.pdf"` |
 | IDs | Integer | `42` |
 | Device IDs | String (UUID recommended) | `"a1b2c3d4-..."` |
+
+---
+
+## Object Shapes
+
+### Event object
+
+```json
+{
+  "id": 1,
+  "name": "Fort Worth Art Fair",
+  "event_code": "fwartfair",
+  "description": "Annual outdoor art fair...",
+  "latitude": 32.754695,
+  "longitude": -97.331605,
+  "start_time": "2026-06-15T18:00:00+00:00",
+  "paid": true,
+  "flyer_url": "https://attnd.app/media/flyer_abc12.pdf",
+  "address": "420 Main St, Fort Worth, TX 76102"
+}
+```
+
+> **`paid`** — `false` for demo/trial events created via the "Try It Now" scraper. Show a prominent banner ("This is a demo event") when `paid` is `false` so attendees know it is not a live production event.
+
+---
+
+### Location object
+
+Returned individually and in list responses. Includes a nested list of scheduled items at that location, sorted by `start_time`.
+
+```json
+{
+  "id": 5,
+  "name": "Main Stage",
+  "snippet": "Live performances all day",
+  "description": "Full description...",
+  "website": "https://example.com",
+  "image_url": "https://example.com/stage.jpg",
+  "latitude": 32.754800,
+  "longitude": -97.331700,
+  "address": "420 Main St, Fort Worth, TX 76102",
+  "scheduled_items": [
+    {
+      "id": 12,
+      "name": "Opening Act",
+      "description": "Kick off the fair with live music.",
+      "start_time": "2026-06-15T18:00:00+00:00",
+      "location_id": 5,
+      "location_name": "Main Stage"
+    }
+  ]
+}
+```
+
+> `image_url` is sourced from the event website during scraping, or from the Google Places photo API, or manually uploaded by the organizer. May be `null`.
+
+---
+
+### Scheduled item object
+
+```json
+{
+  "id": 12,
+  "name": "Opening Act",
+  "description": "Kick off the fair with live music.",
+  "start_time": "2026-06-15T18:00:00+00:00",
+  "location_id": 5,
+  "location_name": "Main Stage"
+}
+```
+
+---
+
+### Notification object
+
+```json
+{
+  "id": 8,
+  "title": "Gate B is now open",
+  "body": "Head to Gate B for faster entry.",
+  "send_time": "2026-06-15T17:45:00+00:00",
+  "sent": true
+}
+```
 
 ---
 
@@ -49,18 +133,7 @@ Returns public events near the given coordinates, sorted by relevance (60% time 
   "count": 2,
   "results": [
     {
-      "event": {
-        "id": 1,
-        "name": "Fort Worth Art Fair",
-        "event_code": "fwartfair",
-        "description": "Annual outdoor art fair...",
-        "latitude": 32.754695,
-        "longitude": -97.331605,
-        "start_time": "2026-06-15T18:00:00+00:00",
-        "paid": true,
-        "flyer_url": "https://attnd.app/media/flyer_abc12.pdf",
-        "address": "420 Main St, Fort Worth, TX 76102"
-      },
+      "event": { "...event object..." },
       "distance_miles": 0.3,
       "starts_in_hours": 2.5
     }
@@ -81,35 +154,21 @@ Exact case-insensitive match on event name **or** event code. Does **not** filte
 **Query parameters**
 - `q` — exact event name or event code
 
-**Response `200`**
-```json
-{
-  "id": 1,
-  "name": "Fort Worth Art Fair",
-  "event_code": "fwartfair",
-  "description": "...",
-  "latitude": 32.754695,
-  "longitude": -97.331605,
-  "start_time": "2026-06-15T18:00:00+00:00",
-  "paid": true,
-  "flyer_url": "https://attnd.app/media/flyer_abc12.pdf",
-  "address": "420 Main St, Fort Worth, TX 76102"
-}
-```
-
+**Response `200`** — single event object  
 **Error responses**
+- `400` — missing `q` parameter
 - `404` — no exact match found
 
 ---
 
 #### GET `/api/v1/events/event_by_code_or_name/?data=<query>`
 
-Fuzzy search on event name or event code. Only returns **public** events. Use `/lookup/` instead for exact matching.
+Fuzzy search on event name or event code. Only returns **public** events. Use `/lookup/` for exact matching (e.g. when handling a scanned QR code).
 
 **Query parameters**
 - `data` — partial name or code
 
-**Response `200`** — same shape as single event above  
+**Response `200`** — single event object  
 **Error responses**
 - `404` — no close match found
 
@@ -119,7 +178,7 @@ Fuzzy search on event name or event code. Only returns **public** events. Use `/
 
 Fetch a single event by its integer ID.
 
-**Response `200`** — single event object (same shape as above)  
+**Response `200`** — single event object  
 **Error responses**
 - `404` — event not found
 
@@ -129,25 +188,13 @@ Fetch a single event by its integer ID.
 
 #### GET `/api/v1/events/<event_id>/locations/`
 
-All locations for an event, sorted alphabetically by name.
+All locations for an event, sorted alphabetically by name. Each location includes its nested `scheduled_items`.
 
 **Response `200`**
 ```json
 {
   "count": 3,
-  "results": [
-    {
-      "id": 5,
-      "name": "Main Stage",
-      "snippet": "Live performances all day",
-      "description": "Full description...",
-      "website": "https://example.com",
-      "image_url": "https://attnd.app/media/stage_abc12.jpg",
-      "latitude": 32.754800,
-      "longitude": -97.331700,
-      "address": "420 Main St, Fort Worth, TX 76102"
-    }
-  ]
+  "results": [ { "...location object..." } ]
 }
 ```
 
@@ -155,11 +202,48 @@ All locations for an event, sorted alphabetically by name.
 
 #### GET `/api/v1/events/<event_id>/locations/<location_id>/`
 
-Single location detail.
+Single location detail, including all scheduled items at that location sorted by `start_time`.
 
-**Response `200`** — single location object (same shape as above)  
+**Response `200`** — single location object  
 **Error responses**
 - `404` — location not found
+
+---
+
+### Schedule
+
+Scheduled items represent activities, sessions, performances, or any timed occurrence happening at a specific location during the event.
+
+#### GET `/api/v1/events/<event_id>/schedule/`
+
+All scheduled items for an event, sorted by `start_time`. Use this for a full event schedule view. Each item includes `location_id` and `location_name` for display and filtering without a separate locations fetch.
+
+**Response `200`**
+```json
+{
+  "count": 5,
+  "results": [
+    {
+      "id": 12,
+      "name": "Opening Act",
+      "description": "Kick off the fair with live music.",
+      "start_time": "2026-06-15T18:00:00+00:00",
+      "location_id": 5,
+      "location_name": "Main Stage"
+    }
+  ]
+}
+```
+
+---
+
+#### GET `/api/v1/events/<event_id>/schedule/<item_id>/`
+
+Single scheduled item detail.
+
+**Response `200`** — single scheduled item object  
+**Error responses**
+- `404` — item not found
 
 ---
 
@@ -173,15 +257,7 @@ All sent notifications for an event, newest first. Only includes notifications t
 ```json
 {
   "count": 1,
-  "results": [
-    {
-      "id": 8,
-      "title": "Gate B is now open",
-      "body": "Head to Gate B for faster entry.",
-      "send_time": "2026-06-15T17:45:00+00:00",
-      "sent": true
-    }
-  ]
+  "results": [ { "...notification object..." } ]
 }
 ```
 
@@ -191,7 +267,7 @@ All sent notifications for an event, newest first. Only includes notifications t
 
 Single notification detail.
 
-**Response `200`** — single notification object (same shape as above)  
+**Response `200`** — single notification object  
 **Error responses**
 - `404` — notification not found
 
@@ -217,11 +293,7 @@ Register a device as attending an event. Call this when the user opens an event.
 ```
 `platform` must be `"android"` or `"ios"`.
 
-**Response `200`**
-```json
-{ "status": "ok" }
-```
-
+**Response `200`** — `{ "status": "ok" }`  
 **Error responses**
 - `404` — event not found
 
@@ -231,10 +303,7 @@ Register a device as attending an event. Call this when the user opens an event.
 
 Unregister a device from an event.
 
-**Response `200`**
-```json
-{ "status": "ok" }
-```
+**Response `200`** — `{ "status": "ok" }`
 
 ---
 
@@ -260,7 +329,7 @@ Opt a device out of push notifications.
 
 ### QR Code Join Flow
 
-Every event has a QR code (visible in the organizer's admin panel) that encodes:
+Every event has a QR code (visible in the organizer's admin panel and shown after the "Try It Now" scraper) that encodes:
 
 ```
 https://attnd.app/join/<event_code>/
@@ -287,11 +356,6 @@ On first install via the Play Store referrer link, read the install referrer usi
 | `/.well-known/apple-app-site-association` | iOS Universal Links + App Clips config |
 | `/.well-known/assetlinks.json` | Android App Links config |
 
-These files are served by the backend. To activate App Clips and App Links, provide the following to the backend team:
-
-**iOS**: Apple Team ID, app Bundle ID, App Clip Bundle ID  
-**Android**: app package name, SHA-256 signing certificate fingerprint
-
 ---
 
 ## Typical Android App Flow
@@ -311,10 +375,58 @@ App launch
 ├── User taps event (or deep links via QR scan)
 │   ├── POST /api/v1/events/<id>/join/<device_id>/ { "platform": "android" }
 │   └── Load event detail
+│       └── Show "Demo Event" banner if paid == false
 │
 ├── Locations tab
 │   ├── GET /api/v1/events/<id>/locations/
-│   └── On tap → GET /api/v1/events/<id>/locations/<location_id>/
+│   └── On tap → location detail (scheduled_items already in response)
+│
+├── Schedule tab
+│   ├── GET /api/v1/events/<id>/schedule/
+│   ├── Display all items sorted by start_time
+│   └── Filter by location_id client-side
+│
+├── Notifications tab
+│   └── GET /api/v1/events/<id>/notifications/  (poll or use push)
+│
+├── Flyer tab
+│   └── Load flyer_url (PDF or image) from the event object
+│
+└── User leaves event
+    └── POST /api/v1/events/<id>/leave/<device_id>/
+```
+
+---
+
+## Typical iOS App Flow
+
+```
+App launch
+│
+├── Home screen (LaunchScreen)
+│   ├── Request location permission
+│   ├── GET /api/v1/events/nearby_events/<lat>/<lng>/
+│   ├── Display nearby events list
+│   └── Toolbar: QR scanner button (DataScannerViewController)
+│       └── On scan → parse /join/<code>/ URL → GET /lookup/?q=<code>
+│
+├── Manual search
+│   ├── Try GET /lookup/?q=<query>  (exact match)
+│   └── Fall back to GET /event_by_code_or_name/?data=<query>  (fuzzy)
+│
+├── User joins event
+│   ├── POST /api/v1/events/<id>/join/<device_id>/ { "platform": "ios" }
+│   └── Load event detail
+│       └── Show "Demo Event" banner if paid == false
+│
+├── Locations tab
+│   ├── GET /api/v1/events/<id>/locations/
+│   └── On tap → location detail (scheduled_items already in response)
+│
+├── Schedule tab
+│   ├── GET /api/v1/events/<id>/schedule/
+│   ├── Display all items sorted by start_time
+│   └── Filter by location_id client-side
 │
 ├── Notifications tab
 │   └── GET /api/v1/events/<id>/notifications/  (poll or use push)
@@ -338,6 +450,6 @@ All errors return JSON:
 
 | Status | Meaning |
 |--------|---------|
-| `400` | Bad request (e.g. invalid coordinates) |
+| `400` | Bad request (e.g. invalid coordinates, missing parameter) |
 | `401` | Missing or invalid API key |
 | `404` | Resource not found |

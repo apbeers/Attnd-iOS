@@ -5,9 +5,14 @@
 // All test data matches the sample_data.json fixture loaded on the production server.
 //
 // Event fixture summary:
-//   id=1  "Fort Worth Food & Music Festival"  code=FWFM2026  10 locations  2 sent notifications
-//   id=2  "Austin Tech & Innovation Summit"   code=ATIS2026  10 locations  2 sent notifications
-//   id=3  "Dallas Arts & Culture Night"       code=DACN2026  10 locations  2 sent notifications
+//   id=1  "Fort Worth Food & Music Festival"  code=FWFM2026  10 locations  2 sent notifications  2 scheduled items (loc 1)
+//   id=2  "Austin Tech & Innovation Summit"   code=ATIS2026  10 locations  2 sent notifications  1 scheduled item  (loc 11)
+//   id=3  "Dallas Arts & Culture Night"       code=DACN2026  10 locations  2 sent notifications  0 scheduled items
+//
+// Scheduled item fixture:
+//   pk=1  "Opening Ceremony"       event=1  location=1  start=2026-04-26T17:00:00Z
+//   pk=2  "Headliner Performance"  event=1  location=1  start=2026-04-26T21:00:00Z
+//   pk=3  "Food Tasting"           event=2  location=11 start=2026-04-26T12:00:00Z
 
 import XCTest
 @testable import Attnd
@@ -261,5 +266,126 @@ final class APIClientIntegrationTests: XCTestCase {
 
         let notifications = try await api.notifications(eventId: 1)
         XCTAssertEqual(notifications.count, notifications.results.count)
+    }
+
+    // MARK: - Schedule List
+
+    func testSchedule_FortWorth_Count() async throws {
+        let list = try await api.schedule(eventId: 1)
+        XCTAssertEqual(list.count, 2)
+        XCTAssertEqual(list.results.count, 2)
+    }
+
+    func testSchedule_Austin_Count() async throws {
+        let list = try await api.schedule(eventId: 2)
+        XCTAssertEqual(list.count, 1)
+    }
+
+    func testSchedule_Dallas_Empty() async throws {
+        let list = try await api.schedule(eventId: 3)
+        XCTAssertEqual(list.count, 0)
+        XCTAssertTrue(list.results.isEmpty)
+    }
+
+    func testSchedule_FortWorth_Fields() async throws {
+        let list = try await api.schedule(eventId: 1)
+        guard let first = list.results.first else {
+            XCTFail("Expected at least one scheduled item for event 1")
+            return
+        }
+        XCTAssertGreaterThan(first.id, 0)
+        XCTAssertFalse(first.name.isEmpty)
+        XCTAssertFalse(first.startTime.isEmpty)
+        XCTAssertGreaterThan(first.locationId, 0)
+        XCTAssertFalse(first.locationName.isEmpty)
+    }
+
+    func testSchedule_FortWorth_SortedByStartTime() async throws {
+        let list = try await api.schedule(eventId: 1)
+        let times = list.results.map { $0.startTime }
+        XCTAssertEqual(times, times.sorted(), "Schedule items must be sorted ascending by start_time")
+    }
+
+    func testSchedule_FortWorth_ItemNames() async throws {
+        let list = try await api.schedule(eventId: 1)
+        let names = list.results.map { $0.name }
+        XCTAssertTrue(names.contains("Opening Ceremony"))
+        XCTAssertTrue(names.contains("Headliner Performance"))
+    }
+
+    func testSchedule_CountMatchesEnvelope() async throws {
+        for eventId in [1, 2, 3] {
+            let list = try await api.schedule(eventId: eventId)
+            XCTAssertEqual(
+                list.count, list.results.count,
+                "count field must equal results.count for event \(eventId)"
+            )
+        }
+    }
+
+    // MARK: - Single Scheduled Item
+
+    func testFetchScheduledItem_FortWorth_Item1() async throws {
+        let item = try await api.scheduledItem(eventId: 1, itemId: 1)
+        XCTAssertEqual(item.id, 1)
+        XCTAssertEqual(item.name, "Opening Ceremony")
+        XCTAssertEqual(item.locationId, 1)
+        XCTAssertFalse(item.locationName.isEmpty)
+    }
+
+    func testFetchScheduledItem_FortWorth_Item2() async throws {
+        let item = try await api.scheduledItem(eventId: 1, itemId: 2)
+        XCTAssertEqual(item.id, 2)
+        XCTAssertEqual(item.name, "Headliner Performance")
+    }
+
+    func testFetchScheduledItem_NotFound() async throws {
+        do {
+            _ = try await api.scheduledItem(eventId: 1, itemId: 99999)
+            XCTFail("Expected APIError.notFound")
+        } catch APIError.notFound {
+            // pass
+        }
+    }
+
+    func testFetchScheduledItem_WrongEvent_Returns404() async throws {
+        // item 1 belongs to event 1; looking it up under event 2 should 404
+        do {
+            _ = try await api.scheduledItem(eventId: 2, itemId: 1)
+            XCTFail("Expected APIError.notFound")
+        } catch APIError.notFound {
+            // pass
+        }
+    }
+
+    // MARK: - Location scheduledItems field
+
+    func testAllLocations_HaveScheduledItemsField() async throws {
+        let list = try await api.locations(eventId: 1)
+        for loc in list.results {
+            // scheduledItems must decode as an array, never crash
+            XCTAssertNotNil(loc.scheduledItems, "location \(loc.id) scheduledItems should not be nil")
+        }
+    }
+
+    func testLocation_WithItems_CorrectCount() async throws {
+        // Location pk=1 (event 1) has 2 scheduled items in the fixture
+        let loc = try await api.location(eventId: 1, locationId: 1)
+        XCTAssertEqual(loc.scheduledItems.count, 2)
+        let names = loc.scheduledItems.map { $0.name }
+        XCTAssertTrue(names.contains("Opening Ceremony"))
+        XCTAssertTrue(names.contains("Headliner Performance"))
+    }
+
+    func testLocation_WithoutItems_EmptyArray() async throws {
+        // Location pk=2 (event 1) has no scheduled items in the fixture
+        let loc = try await api.location(eventId: 1, locationId: 2)
+        XCTAssertTrue(loc.scheduledItems.isEmpty)
+    }
+
+    func testLocation_ScheduledItems_SortedByStartTime() async throws {
+        let loc = try await api.location(eventId: 1, locationId: 1)
+        let times = loc.scheduledItems.map { $0.startTime }
+        XCTAssertEqual(times, times.sorted())
     }
 }

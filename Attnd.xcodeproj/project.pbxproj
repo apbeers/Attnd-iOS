@@ -19,6 +19,7 @@
 		49QR000127600A0000000010 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49QR000027600A0000000010 /* QRScannerView.swift */; };
 		49SC000127600A0000000020 /* ScheduleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49SC000027600A0000000020 /* ScheduleView.swift */; };
 		49CC000C27800000A000000C /* APIClientIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49CC000B27800000A000000B /* APIClientIntegrationTests.swift */; };
+		49MD000227600A0000000040 /* ModelDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49MD000127600A0000000040 /* ModelDecodingTests.swift */; };
 		49DF918927571C4500399457 /* Helpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49DF918827571C4500399457 /* Helpers.swift */; };
 		49E7C76A262159B00073A60B /* AttndApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49E7C769262159B00073A60B /* AttndApp.swift */; };
 		49E7C76C262159B00073A60B /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49E7C76B262159B00073A60B /* ContentView.swift */; };
@@ -63,6 +64,7 @@
 		49SC000027600A0000000020 /* ScheduleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleView.swift; sourceTree = "<group>"; };
 		49CC000227800000A0000002 /* AttndTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AttndTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		49CC000B27800000A000000B /* APIClientIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClientIntegrationTests.swift; sourceTree = "<group>"; };
+		49MD000127600A0000000040 /* ModelDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDecodingTests.swift; sourceTree = "<group>"; };
 		49DF918827571C4500399457 /* Helpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Helpers.swift; sourceTree = "<group>"; };
 		49E7C766262159B00073A60B /* Attnd.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Attnd.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		49E7C769262159B00073A60B /* AttndApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttndApp.swift; sourceTree = "<group>"; };
@@ -98,6 +100,7 @@
 			isa = PBXGroup;
 			children = (
 				49CC000B27800000A000000B /* APIClientIntegrationTests.swift */,
+				49MD000127600A0000000040 /* ModelDecodingTests.swift */,
 			);
 			path = AttndTests;
 			sourceTree = "<group>";
@@ -247,6 +250,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				49CC000C27800000A000000C /* APIClientIntegrationTests.swift in Sources */,
+				49MD000227600A0000000040 /* ModelDecodingTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

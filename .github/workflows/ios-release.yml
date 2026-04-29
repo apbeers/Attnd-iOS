@@ -1,12 +1,10 @@
 name: iOS Release
 
-# Runs only when a commit lands on main (via merged PR).
-# Tests are already required to pass before merging, so this job skips them.
+# Manually triggered only.
 # Builds a signed IPA and uploads it to App Store Connect for review.
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
   release:

@@ -22,6 +22,7 @@ struct LaunchScreen: View {
     @State private var searchError: String? = nil
     @State private var isJoining = false
     @State private var joinError: String? = nil
+    @State private var showScanner = false
 
     @StateObject private var locationManager = LocationPermissionManager()
 
@@ -102,11 +103,22 @@ struct LaunchScreen: View {
             }
             .navigationTitle("Attnd")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { showScanner = true } label: {
+                        Image(systemName: "qrcode.viewfinder")
+                            .font(.title3)
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { Task { await searchEvent() } } label: {
                         Text("Join")
                     }
                     .disabled(searchQuery.trimmingCharacters(in: .whitespaces).isEmpty || isSearching)
+                }
+            }
+            .sheet(isPresented: $showScanner) {
+                QRScannerSheet { raw in
+                    Task { await handleScannedCode(raw) }
                 }
             }
         }
@@ -153,6 +165,32 @@ struct LaunchScreen: View {
             searchError = "Event not found. Check the name or code and try again."
         }
         isSearching = false
+    }
+
+    /// Handles a raw QR string — extracts event code from a join URL or
+    /// treats the string itself as a code, then looks up and joins the event.
+    private func handleScannedCode(_ raw: String) async {
+        var code = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Extract code from URL patterns like https://attnd.app/join/CODE/ or /join/CODE
+        if let url = URL(string: code) {
+            let parts = url.pathComponents.filter { $0 != "/" }
+            if let joinIdx = parts.firstIndex(of: "join"), parts.indices.contains(joinIdx + 1) {
+                code = parts[joinIdx + 1]
+            }
+        }
+
+        guard !code.isEmpty else { return }
+        searchQuery = code
+        isJoining = true
+        joinError = nil
+        do {
+            let event = try await APIClient.shared.lookupEvent(query: code)
+            await join(event)
+        } catch {
+            joinError = "QR code not recognised. Try entering the event code manually."
+        }
+        isJoining = false
     }
 
     private func join(_ event: Event) async {

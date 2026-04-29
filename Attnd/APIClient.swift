@@ -137,6 +137,18 @@ final class APIClient {
         return try await request("\(baseURL)/\(eventId)/locations/\(locationId)/")
     }
 
+    // MARK: - Schedule
+
+    /// GET /api/v1/events/<eventId>/schedule/
+    func schedule(eventId: Int) async throws -> APIList<ScheduledItem> {
+        return try await request("\(baseURL)/\(eventId)/schedule/")
+    }
+
+    /// GET /api/v1/events/<eventId>/schedule/<id>/
+    func scheduledItem(eventId: Int, itemId: Int) async throws -> ScheduledItem {
+        return try await request("\(baseURL)/\(eventId)/schedule/\(itemId)/")
+    }
+
     // MARK: - Notifications
 
     /// GET /api/v1/events/<eventId>/notifications/

@@ -54,11 +54,21 @@ struct ContentView: View {
             .tabItem { Label("Locations", systemImage: "list.dash") }
             .tag(1)
 
-            // MARK: Info / Flyer
+            // MARK: Schedule
             NavigationStack {
-                FlyerView(flyerUrl: appState.currentEvent?.flyerUrl)
+                ScheduleView(
+                    items: appState.scheduledItems,
+                    locations: appState.locations,
+                    onRefresh: {
+                        guard let event = appState.currentEvent else { return }
+                        await appState.loadSchedule(eventId: event.id)
+                    }
+                )
+                .overlay {
+                    if appState.isLoadingSchedule { ProgressView() }
+                }
             }
-            .tabItem { Label("Info", systemImage: "doc") }
+            .tabItem { Label("Schedule", systemImage: "calendar") }
             .tag(2)
 
             // MARK: Notifications

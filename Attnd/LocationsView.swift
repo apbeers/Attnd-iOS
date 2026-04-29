@@ -96,12 +96,52 @@ struct LocationDetailView: View {
                         Link("Visit Website", destination: url)
                             .font(.subheadline)
                     }
+
+                    // Schedule at this location
+                    if !location.scheduledItems.isEmpty {
+                        Divider()
+
+                        Text("Schedule")
+                            .font(.title3.bold())
+
+                        ForEach(location.scheduledItems) { item in
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(formattedTime(item.startTime))
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                                Text(item.name)
+                                    .font(.headline)
+                                if !item.description.isEmpty {
+                                    Text(item.description)
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    }
                 }
                 .padding(.horizontal)
+                .padding(.bottom, 24)
             }
         }
         .navigationTitle(location.name)
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func formattedTime(_ iso: String) -> String {
+        let parser = ISO8601DateFormatter()
+        parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let parserNoFrac = ISO8601DateFormatter()
+        parserNoFrac.formatOptions = [.withInternetDateTime]
+        guard let date = parser.date(from: iso) ?? parserNoFrac.date(from: iso) else { return iso }
+        let fmt = DateFormatter()
+        fmt.locale = .current
+        fmt.timeZone = .current
+        fmt.dateFormat = Calendar.current.isDateInToday(date) ? "h:mm a" : "EEE h:mm a"
+        return fmt.string(from: date)
     }
 }
 
@@ -110,7 +150,11 @@ struct LocationDetailView: View {
         LocationsView(locations: [
             Location(id: 1, name: "Main Stage", snippet: "Live music all day",
                      description: "Full description here", website: nil, imageUrl: nil,
-                     latitude: 32.754695, longitude: -97.331605, address: "420 Main St")
+                     latitude: 32.754695, longitude: -97.331605, address: "420 Main St",
+                     scheduledItems: [
+                        ScheduledItem(id: 1, name: "Opening Act", description: "Kick off the fair.",
+                                      startTime: "2026-07-04T18:00:00+00:00", locationId: 1, locationName: "Main Stage"),
+                     ])
         ])
     }
 }

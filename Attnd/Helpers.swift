@@ -53,6 +53,24 @@ struct NearbyEventResult: Decodable, Identifiable {
     }
 }
 
+// MARK: - Scheduled Item
+
+struct ScheduledItem: Decodable, Identifiable, Hashable {
+    let id: Int
+    let name: String
+    let description: String
+    let startTime: String
+    let locationId: Int
+    let locationName: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, description
+        case startTime    = "start_time"
+        case locationId   = "location_id"
+        case locationName = "location_name"
+    }
+}
+
 // MARK: - Location
 
 struct Location: Decodable, Identifiable, Hashable {
@@ -65,10 +83,12 @@ struct Location: Decodable, Identifiable, Hashable {
     let latitude: Double
     let longitude: Double
     let address: String
+    let scheduledItems: [ScheduledItem]
 
     enum CodingKeys: String, CodingKey {
         case id, name, snippet, description, website, latitude, longitude, address
-        case imageUrl = "image_url"
+        case imageUrl      = "image_url"
+        case scheduledItems = "scheduled_items"
     }
 }
 

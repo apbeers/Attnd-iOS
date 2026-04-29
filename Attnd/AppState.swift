@@ -14,13 +14,16 @@ final class AppState {
 
     var currentEvent: Event? = nil
     var locations: [Location] = []
+    var scheduledItems: [ScheduledItem] = []
     var notifications: [AppNotification] = []
 
     // MARK: - Loading / Error
 
     var isLoadingLocations = false
+    var isLoadingSchedule = false
     var isLoadingNotifications = false
     var locationsError: String? = nil
+    var scheduleError: String? = nil
     var notificationsError: String? = nil
 
     // MARK: - Map Reset
@@ -99,6 +102,7 @@ final class AppState {
     func loadEventData(event: Event) async {
         await withTaskGroup(of: Void.self) { group in
             group.addTask { await self.loadLocations(eventId: event.id) }
+            group.addTask { await self.loadSchedule(eventId: event.id) }
             group.addTask { await self.loadNotifications(eventId: event.id) }
         }
     }
@@ -113,6 +117,18 @@ final class AppState {
             locationsError = error.localizedDescription
         }
         isLoadingLocations = false
+    }
+
+    func loadSchedule(eventId: Int) async {
+        isLoadingSchedule = true
+        scheduleError = nil
+        do {
+            let result = try await APIClient.shared.schedule(eventId: eventId)
+            scheduledItems = result.results
+        } catch {
+            scheduleError = error.localizedDescription
+        }
+        isLoadingSchedule = false
     }
 
     func loadNotifications(eventId: Int) async {
@@ -134,6 +150,7 @@ final class AppState {
         }
         currentEvent = nil
         locations = []
+        scheduledItems = []
         notifications = []
     }
 

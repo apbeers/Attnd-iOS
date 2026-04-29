@@ -17,6 +17,7 @@
 		49AA000627600A0000000003 /* LaunchScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AA000427600A0000000003 /* LaunchScreen.swift */; };
 		49AA000827600A0000000004 /* LocationPermissionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AA000727600A0000000004 /* LocationPermissionManager.swift */; };
 		49QR000127600A0000000010 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49QR000027600A0000000010 /* QRScannerView.swift */; };
+		49SC000127600A0000000020 /* ScheduleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49SC000027600A0000000020 /* ScheduleView.swift */; };
 		49CC000C27800000A000000C /* APIClientIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49CC000B27800000A000000B /* APIClientIntegrationTests.swift */; };
 		49DF918927571C4500399457 /* Helpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49DF918827571C4500399457 /* Helpers.swift */; };
 		49E7C76A262159B00073A60B /* AttndApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49E7C769262159B00073A60B /* AttndApp.swift */; };
@@ -59,6 +60,7 @@
 		49AA000427600A0000000003 /* LaunchScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchScreen.swift; sourceTree = "<group>"; };
 		49AA000727600A0000000004 /* LocationPermissionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationPermissionManager.swift; sourceTree = "<group>"; };
 		49QR000027600A0000000010 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
+		49SC000027600A0000000020 /* ScheduleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleView.swift; sourceTree = "<group>"; };
 		49CC000227800000A0000002 /* AttndTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AttndTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		49CC000B27800000A000000B /* APIClientIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClientIntegrationTests.swift; sourceTree = "<group>"; };
 		49DF918827571C4500399457 /* Helpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Helpers.swift; sourceTree = "<group>"; };
@@ -128,6 +130,7 @@
 				49AA000427600A0000000003 /* LaunchScreen.swift */,
 				49AA000727600A0000000004 /* LocationPermissionManager.swift */,
 				49QR000027600A0000000010 /* QRScannerView.swift */,
+				49SC000027600A0000000020 /* ScheduleView.swift */,
 				490099152755DE5500E5951F /* MapView.swift */,
 				4900991D2755DE8F00E5951F /* SettingsView.swift */,
 				4900991B2755DE8600E5951F /* NotificationsView.swift */,
@@ -260,6 +263,7 @@
 				49AA000627600A0000000003 /* LaunchScreen.swift in Sources */,
 				49AA000827600A0000000004 /* LocationPermissionManager.swift in Sources */,
 				49QR000127600A0000000010 /* QRScannerView.swift in Sources */,
+				49SC000127600A0000000020 /* ScheduleView.swift in Sources */,
 				4900991A2755DE7A00E5951F /* LocationsView.swift in Sources */,
 				49E7C76A262159B00073A60B /* AttndApp.swift in Sources */,
 				490099182755DE6900E5951F /* FlyerView.swift in Sources */,

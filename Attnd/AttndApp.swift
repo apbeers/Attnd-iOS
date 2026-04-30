@@ -8,6 +8,12 @@ struct AttndApp: App {
 
     @State private var appState = AppState()
 
+    init() {
+        // Start attestation in the background immediately so the JWT is ready
+        // before the first API call, avoiding extra latency on the first screen load.
+        AttestationManager.shared.warmup()
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()

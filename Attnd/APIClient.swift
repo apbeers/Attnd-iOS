@@ -4,9 +4,12 @@
 // Native URLSession API client for the Attnd API v1.
 // Uses async/await throughout. No external dependencies.
 //
-// Authentication: every request includes
-//   Authorization: Bearer <API_KEY>
-// where API_KEY is read from the app's Info.plist at key "ATTND_API_KEY".
+// Authentication priority:
+//   1. Attestation JWT from AttestationManager (production devices)
+//   2. Static ATTND_API_KEY from Info.plist (simulator / CI / dev builds)
+//
+// On 401, the stored JWT is cleared and the request is retried once after
+// re-attesting, so token rotation is transparent to callers.
 
 import Foundation
 
@@ -23,11 +26,11 @@ enum APIError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .invalidURL:         return "Invalid URL."
-        case .unauthorized:       return "Invalid or missing API key."
-        case .notFound:           return "Resource not found."
-        case .badRequest(let m):  return "Bad request: \(m)"
-        case .serverError(let c): return "Server error (\(c))."
+        case .invalidURL:           return "Invalid URL."
+        case .unauthorized:         return "Authorization failed."
+        case .notFound:             return "Resource not found."
+        case .badRequest(let m):    return "Bad request: \(m)"
+        case .serverError(let c):   return "Server error (\(c))."
         case .decodingError(let e): return "Decoding error: \(e.localizedDescription)"
         case .networkError(let e):  return "Network error: \(e.localizedDescription)"
         }
@@ -42,24 +45,39 @@ final class APIClient {
 
     private let baseURL = "https://attnd.app/api/v1/events"
     private let session: URLSession
-    private let apiKey: String
+
+    /// Fallback static key for simulators and CI; read from Info.plist.
+    private let staticApiKey: String
 
     private init() {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
         self.session = URLSession(configuration: config)
-        // Read key from Info.plist. Set ATTND_API_KEY in build settings (injected from .xcconfig / CI secret).
-        self.apiKey = Bundle.main.object(forInfoDictionaryKey: "ATTND_API_KEY") as? String ?? ""
+        self.staticApiKey = Bundle.main.object(forInfoDictionaryKey: "ATTND_API_KEY") as? String ?? ""
     }
 
     // MARK: - Core Request
 
-    private func request<T: Decodable>(_ path: String, method: String = "GET", body: [String: String]? = nil) async throws -> T {
+    /// Resolves the best available bearer token.
+    /// Tries the attestation manager first; falls back to the static key on simulator.
+    private func bearerToken() async -> String {
+        if let jwt = try? await AttestationManager.shared.token() {
+            return jwt
+        }
+        return staticApiKey
+    }
+
+    private func request<T: Decodable>(
+        _ path: String,
+        method: String = "GET",
+        body: [String: String]? = nil,
+        isRetry: Bool = false
+    ) async throws -> T {
         guard let url = URL(string: path) else { throw APIError.invalidURL }
 
         var req = URLRequest(url: url)
         req.httpMethod = method
-        req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        req.setValue("Bearer \(await bearerToken())", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
 
         if let body {
@@ -77,13 +95,26 @@ final class APIClient {
         guard let http = response as? HTTPURLResponse else { throw APIError.serverError(0) }
 
         switch http.statusCode {
-        case 200...299: break
+        case 200...299:
+            break
+
+        case 401:
+            // Token expired or invalid — invalidate and retry once
+            if !isRetry {
+                await AttestationManager.shared.invalidateToken()
+                return try await request(path, method: method, body: body, isRetry: true)
+            }
+            throw APIError.unauthorized
+
         case 400:
             let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"] ?? "Bad request"
             throw APIError.badRequest(msg)
-        case 401: throw APIError.unauthorized
-        case 404: throw APIError.notFound
-        default:  throw APIError.serverError(http.statusCode)
+
+        case 404:
+            throw APIError.notFound
+
+        default:
+            throw APIError.serverError(http.statusCode)
         }
 
         do {
@@ -93,7 +124,7 @@ final class APIClient {
         }
     }
 
-    // Convenience for POST with no return body (expects { "status": "ok" })
+    /// POST with no meaningful return body (expects { "status": "ok" } or similar).
     private func post(_ path: String, body: [String: String]? = nil) async throws {
         let _: [String: String] = try await request(path, method: "POST", body: body)
     }

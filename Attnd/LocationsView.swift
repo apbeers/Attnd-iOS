@@ -2,6 +2,7 @@
 // Attnd
 
 import SwiftUI
+import MapKit
 
 struct LocationsView: View {
     let locations: [Location]
@@ -97,6 +98,27 @@ struct LocationDetailView: View {
                             .font(.subheadline)
                     }
 
+                    // Walking directions button
+                    if location.latitude != 0 || location.longitude != 0 {
+                        Button {
+                            let coordinate = CLLocationCoordinate2D(
+                                latitude: location.latitude,
+                                longitude: location.longitude
+                            )
+                            let placemark = MKPlacemark(coordinate: coordinate)
+                            let mapItem = MKMapItem(placemark: placemark)
+                            mapItem.name = location.name
+                            mapItem.openInMaps(launchOptions: [
+                                MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeWalking
+                            ])
+                        } label: {
+                            Label("Get Walking Directions", systemImage: "figure.walk")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                    }
+
                     // Schedule at this location
                     if !location.scheduledItems.isEmpty {
                         Divider()
@@ -106,11 +128,20 @@ struct LocationDetailView: View {
 
                         ForEach(location.scheduledItems) { item in
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(formattedTime(item.startTime))
-                                    .font(.caption)
-                                    .fontWeight(.semibold)
-                                    .foregroundStyle(.secondary)
-                                    .monospacedDigit()
+                                HStack(alignment: .firstTextBaseline) {
+                                    Text(formattedTime(item.startTime))
+                                        .font(.caption)
+                                        .fontWeight(.semibold)
+                                        .foregroundStyle(.secondary)
+                                        .monospacedDigit()
+                                    if let countdown = item.startsInText {
+                                        Spacer()
+                                        Text(countdown)
+                                            .font(.caption)
+                                            .fontWeight(.bold)
+                                            .foregroundStyle(.tint)
+                                    }
+                                }
                                 Text(item.name)
                                     .font(.headline)
                                 if !item.description.isEmpty {

@@ -2,7 +2,8 @@
 // Attnd
 //
 // Full event schedule sorted by start_time.
-// A location filter menu lets attendees narrow items to a single venue.
+// Filter menu: hide past items (default on) + filter by location.
+// Tapping a row navigates to that location's detail page.
 
 import SwiftUI
 
@@ -12,10 +13,21 @@ struct ScheduleView: View {
     let onRefresh: () async -> Void
 
     @State private var selectedLocationId: Int? = nil
+    @State private var hideEnded: Bool = true
+
+    // Items whose start time was more than 1 hour ago are treated as ended.
+    private static let endedGrace: TimeInterval = 3600
 
     private var filteredItems: [ScheduledItem] {
-        guard let id = selectedLocationId else { return items }
-        return items.filter { $0.locationId == id }
+        var result = items
+        if hideEnded {
+            let cutoff = Date().addingTimeInterval(-Self.endedGrace)
+            result = result.filter { parsedDate($0.startTime) >= cutoff }
+        }
+        if let id = selectedLocationId {
+            result = result.filter { $0.locationId == id }
+        }
+        return result
     }
 
     private var filterLabel: String {
@@ -27,7 +39,16 @@ struct ScheduleView: View {
     var body: some View {
         List {
             ForEach(filteredItems) { item in
-                ScheduleRowView(item: item, showLocation: selectedLocationId == nil)
+                let matchedLocation = locations.first(where: { $0.id == item.locationId })
+                Group {
+                    if let loc = matchedLocation {
+                        NavigationLink(value: loc) {
+                            ScheduleRowView(item: item, showLocation: selectedLocationId == nil)
+                        }
+                    } else {
+                        ScheduleRowView(item: item, showLocation: selectedLocationId == nil)
+                    }
+                }
             }
         }
         .refreshable { await onRefresh() }
@@ -35,6 +56,19 @@ struct ScheduleView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
+                    // Hide-ended toggle
+                    Button {
+                        hideEnded.toggle()
+                    } label: {
+                        Label(
+                            hideEnded ? "Show All Items" : "Hide Ended Items",
+                            systemImage: hideEnded ? "eye" : "eye.slash"
+                        )
+                    }
+
+                    Divider()
+
+                    // Location filter
                     Button {
                         selectedLocationId = nil
                     } label: {
@@ -57,23 +91,39 @@ struct ScheduleView: View {
                 } label: {
                     Label(filterLabel, systemImage: "line.3.horizontal.decrease.circle")
                         .labelStyle(.iconOnly)
-                        .symbolVariant(selectedLocationId != nil ? .fill : .none)
+                        .symbolVariant(selectedLocationId != nil || !hideEnded ? .fill : .none)
                 }
             }
         }
         .overlay {
             if filteredItems.isEmpty {
                 ContentUnavailableView(
-                    "No Schedule",
-                    systemImage: "calendar",
-                    description: Text(
-                        selectedLocationId == nil
-                            ? "Schedule items will appear here once loaded."
-                            : "No items scheduled at this location."
-                    )
+                    hideEnded ? "All Done!" : "No Schedule",
+                    systemImage: hideEnded ? "checkmark.circle" : "calendar",
+                    description: Text(emptyMessage)
                 )
             }
         }
+    }
+
+    private var emptyMessage: String {
+        if hideEnded && selectedLocationId != nil {
+            return "No upcoming items at this location. Tap the filter to show all."
+        } else if hideEnded {
+            return "No upcoming items. Tap the filter to see past items."
+        } else if selectedLocationId != nil {
+            return "No items scheduled at this location."
+        } else {
+            return "Schedule items will appear here once loaded."
+        }
+    }
+
+    private func parsedDate(_ iso: String) -> Date {
+        let p1 = ISO8601DateFormatter()
+        p1.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let p2 = ISO8601DateFormatter()
+        p2.formatOptions = [.withInternetDateTime]
+        return p1.date(from: iso) ?? p2.date(from: iso) ?? .distantPast
     }
 }
 
@@ -99,8 +149,17 @@ private struct ScheduleRowView: View {
                         .lineLimit(1)
                 }
             }
-            Text(item.name)
-                .font(.headline)
+            HStack(alignment: .firstTextBaseline) {
+                Text(item.name)
+                    .font(.headline)
+                if let countdown = item.startsInText {
+                    Spacer()
+                    Text(countdown)
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundStyle(.tint)
+                }
+            }
             if !item.description.isEmpty {
                 Text(item.description)
                     .font(.subheadline)

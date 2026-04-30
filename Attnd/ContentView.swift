@@ -64,6 +64,9 @@ struct ContentView: View {
                         await appState.loadSchedule(eventId: event.id)
                     }
                 )
+                .navigationDestination(for: Location.self) { location in
+                    LocationDetailView(location: location)
+                }
                 .overlay {
                     if appState.isLoadingSchedule { ProgressView() }
                 }

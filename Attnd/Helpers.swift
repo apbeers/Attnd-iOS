@@ -94,6 +94,28 @@ struct Location: Decodable, Identifiable, Hashable {
     }
 }
 
+// MARK: - Scheduled Item Helpers
+
+extension ScheduledItem {
+    /// Returns a "Starts in Xh Ym" string if the item hasn't started yet, nil otherwise.
+    var startsInText: String? {
+        let p1 = ISO8601DateFormatter()
+        p1.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let p2 = ISO8601DateFormatter()
+        p2.formatOptions = [.withInternetDateTime]
+        guard let date = p1.date(from: startTime) ?? p2.date(from: startTime) else { return nil }
+        let seconds = date.timeIntervalSinceNow
+        guard seconds > 0 else { return nil }
+        let totalMinutes = Int(seconds / 60)
+        if totalMinutes < 1 { return "Starting now" }
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+        if hours == 0 { return "Starts in \(minutes)m" }
+        if minutes == 0 { return "Starts in \(hours)h" }
+        return "Starts in \(hours)h \(minutes)m"
+    }
+}
+
 // MARK: - App Notification
 // Named AppNotification to avoid collision with Foundation.Notification.
 

@@ -4,6 +4,7 @@
 // Full event schedule sorted by start_time.
 // Filter menu: hide past items (default on) + filter by location.
 // Tapping a row navigates to that location's detail page.
+// Countdown labels update live via TimelineView (no manual refresh needed).
 
 import SwiftUI
 
@@ -15,13 +16,12 @@ struct ScheduleView: View {
     @State private var selectedLocationId: Int? = nil
     @State private var hideEnded: Bool = true
 
-    // Items whose start time was more than 1 hour ago are treated as ended.
     private static let endedGrace: TimeInterval = 3600
 
-    private var filteredItems: [ScheduledItem] {
+    private func filteredItems(now: Date) -> [ScheduledItem] {
         var result = items
         if hideEnded {
-            let cutoff = Date().addingTimeInterval(-Self.endedGrace)
+            let cutoff = now.addingTimeInterval(-Self.endedGrace)
             result = result.filter { parsedDate($0.startTime) >= cutoff }
         }
         if let id = selectedLocationId {
@@ -37,71 +37,71 @@ struct ScheduleView: View {
     }
 
     var body: some View {
-        List {
-            ForEach(filteredItems) { item in
-                let matchedLocation = locations.first(where: { $0.id == item.locationId })
-                Group {
-                    if let loc = matchedLocation {
-                        NavigationLink(value: loc) {
-                            ScheduleRowView(item: item, showLocation: selectedLocationId == nil)
+        // TimelineView fires every 30 s — all countdown labels update automatically.
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            let now = context.date
+            let visible = filteredItems(now: now)
+
+            List {
+                ForEach(visible) { item in
+                    let matchedLocation = locations.first(where: { $0.id == item.locationId })
+                    Group {
+                        if let loc = matchedLocation {
+                            NavigationLink(value: loc) {
+                                ScheduleRowView(item: item, showLocation: selectedLocationId == nil, now: now)
+                            }
+                        } else {
+                            ScheduleRowView(item: item, showLocation: selectedLocationId == nil, now: now)
                         }
-                    } else {
-                        ScheduleRowView(item: item, showLocation: selectedLocationId == nil)
                     }
                 }
             }
-        }
-        .refreshable { await onRefresh() }
-        .navigationTitle("Schedule")
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    // Hide-ended toggle
-                    Button {
-                        hideEnded.toggle()
-                    } label: {
-                        Label(
-                            hideEnded ? "Show All Items" : "Hide Ended Items",
-                            systemImage: hideEnded ? "eye" : "eye.slash"
-                        )
-                    }
+            .refreshable { await onRefresh() }
+            .navigationTitle("Schedule")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button {
+                            hideEnded.toggle()
+                        } label: {
+                            Label(
+                                hideEnded ? "Show All Items" : "Hide Ended Items",
+                                systemImage: hideEnded ? "eye" : "eye.slash"
+                            )
+                        }
 
-                    Divider()
-
-                    // Location filter
-                    Button {
-                        selectedLocationId = nil
-                    } label: {
-                        Label("All Locations", systemImage: selectedLocationId == nil ? "checkmark" : "")
-                    }
-
-                    if !locations.isEmpty {
                         Divider()
-                        ForEach(locations) { location in
-                            Button {
-                                selectedLocationId = location.id
-                            } label: {
-                                Label(
-                                    location.name,
-                                    systemImage: selectedLocationId == location.id ? "checkmark" : ""
-                                )
+
+                        Button { selectedLocationId = nil } label: {
+                            Label("All Locations", systemImage: selectedLocationId == nil ? "checkmark" : "")
+                        }
+
+                        if !locations.isEmpty {
+                            Divider()
+                            ForEach(locations) { location in
+                                Button { selectedLocationId = location.id } label: {
+                                    Label(
+                                        location.name,
+                                        systemImage: selectedLocationId == location.id ? "checkmark" : ""
+                                    )
+                                }
                             }
                         }
+                    } label: {
+                        Label(filterLabel, systemImage: "line.3.horizontal.decrease.circle")
+                            .labelStyle(.iconOnly)
+                            .symbolVariant(selectedLocationId != nil || !hideEnded ? .fill : .none)
                     }
-                } label: {
-                    Label(filterLabel, systemImage: "line.3.horizontal.decrease.circle")
-                        .labelStyle(.iconOnly)
-                        .symbolVariant(selectedLocationId != nil || !hideEnded ? .fill : .none)
                 }
             }
-        }
-        .overlay {
-            if filteredItems.isEmpty {
-                ContentUnavailableView(
-                    hideEnded ? "All Done!" : "No Schedule",
-                    systemImage: hideEnded ? "checkmark.circle" : "calendar",
-                    description: Text(emptyMessage)
-                )
+            .overlay {
+                if visible.isEmpty {
+                    ContentUnavailableView(
+                        hideEnded ? "All Done!" : "No Schedule",
+                        systemImage: hideEnded ? "checkmark.circle" : "calendar",
+                        description: Text(emptyMessage)
+                    )
+                }
             }
         }
     }
@@ -132,6 +132,7 @@ struct ScheduleView: View {
 private struct ScheduleRowView: View {
     let item: ScheduledItem
     let showLocation: Bool
+    let now: Date
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -152,7 +153,7 @@ private struct ScheduleRowView: View {
             HStack(alignment: .firstTextBaseline) {
                 Text(item.name)
                     .font(.headline)
-                if let countdown = item.startsInText {
+                if let countdown = item.startsInText(relativeTo: now) {
                     Spacer()
                     Text(countdown)
                         .font(.caption)
@@ -171,11 +172,11 @@ private struct ScheduleRowView: View {
     }
 
     private func formattedTime(_ iso: String) -> String {
-        let parser = ISO8601DateFormatter()
-        parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let parserNoFrac = ISO8601DateFormatter()
-        parserNoFrac.formatOptions = [.withInternetDateTime]
-        guard let date = parser.date(from: iso) ?? parserNoFrac.date(from: iso) else { return iso }
+        let p1 = ISO8601DateFormatter()
+        p1.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let p2 = ISO8601DateFormatter()
+        p2.formatOptions = [.withInternetDateTime]
+        guard let date = p1.date(from: iso) ?? p2.date(from: iso) else { return iso }
         let fmt = DateFormatter()
         fmt.locale = .current
         fmt.timeZone = .current

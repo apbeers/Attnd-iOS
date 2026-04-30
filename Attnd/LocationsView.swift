@@ -66,108 +66,133 @@ struct LocationDetailView: View {
     let location: Location
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                if let imageUrl = location.imageUrl, let url = URL(string: imageUrl) {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image.resizable().scaledToFill()
-                        case .failure:
-                            Color(.systemGray5).overlay(Image(systemName: "photo").foregroundStyle(.secondary))
-                        default:
-                            ProgressView()
+        // TimelineView drives live countdown labels every 30 s across the whole detail page.
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            let now = context.date
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    // Hero image
+                    if let imageUrl = location.imageUrl, let url = URL(string: imageUrl) {
+                        AsyncImage(url: url) { phase in
+                            switch phase {
+                            case .success(let image):
+                                image.resizable().scaledToFill()
+                            case .failure:
+                                Color(.systemGray5)
+                                    .overlay(Image(systemName: "photo").foregroundStyle(.secondary))
+                            default:
+                                ProgressView()
+                            }
                         }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 220)
-                    .clipped()
-                }
-
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(location.name).font(.title2.bold())
-                    Text(location.address).font(.subheadline).foregroundStyle(.secondary)
-
-                    Divider()
-
-                    Text(location.description)
-                        .font(.body)
-
-                    if let website = location.website, let url = URL(string: website) {
-                        Link("Visit Website", destination: url)
-                            .font(.subheadline)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 220)
+                        .clipped()
                     }
 
-                    // Walking directions button
-                    if location.latitude != 0 || location.longitude != 0 {
-                        Button {
-                            let coordinate = CLLocationCoordinate2D(
-                                latitude: location.latitude,
-                                longitude: location.longitude
-                            )
-                            let placemark = MKPlacemark(coordinate: coordinate)
-                            let mapItem = MKMapItem(placemark: placemark)
-                            mapItem.name = location.name
-                            mapItem.openInMaps(launchOptions: [
-                                MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeWalking
-                            ])
-                        } label: {
-                            Label("Get Walking Directions", systemImage: "figure.walk")
-                                .frame(maxWidth: .infinity)
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(location.name).font(.title2.bold())
+
+                        if !location.address.isEmpty {
+                            Text(location.address)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
-                    }
 
-                    // Schedule at this location
-                    if !location.scheduledItems.isEmpty {
+                        // Walking directions
+                        if location.latitude != 0 || location.longitude != 0 {
+                            Button {
+                                let coordinate = CLLocationCoordinate2D(
+                                    latitude: location.latitude,
+                                    longitude: location.longitude
+                                )
+                                let placemark = MKPlacemark(coordinate: coordinate)
+                                let mapItem = MKMapItem(placemark: placemark)
+                                mapItem.name = location.name
+                                mapItem.openInMaps(launchOptions: [
+                                    MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeWalking
+                                ])
+                            } label: {
+                                Label("Get Walking Directions", systemImage: "figure.walk")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
+                        }
+
                         Divider()
 
-                        Text("Schedule")
-                            .font(.title3.bold())
+                        Text(location.description).font(.body)
 
-                        ForEach(location.scheduledItems) { item in
-                            VStack(alignment: .leading, spacing: 3) {
-                                HStack(alignment: .firstTextBaseline) {
-                                    Text(formattedTime(item.startTime))
-                                        .font(.caption)
-                                        .fontWeight(.semibold)
-                                        .foregroundStyle(.secondary)
-                                        .monospacedDigit()
-                                    if let countdown = item.startsInText {
-                                        Spacer()
-                                        Text(countdown)
-                                            .font(.caption)
-                                            .fontWeight(.bold)
-                                            .foregroundStyle(.tint)
-                                    }
-                                }
-                                Text(item.name)
-                                    .font(.headline)
-                                if !item.description.isEmpty {
-                                    Text(item.description)
-                                        .font(.subheadline)
-                                        .foregroundStyle(.secondary)
+                        if let website = location.website, let url = URL(string: website) {
+                            Link("Visit Website", destination: url)
+                                .font(.subheadline)
+                        }
+
+                        // Schedule at this location
+                        if !location.scheduledItems.isEmpty {
+                            Divider()
+                            Text("At This Location")
+                                .font(.title3.bold())
+                                .padding(.top, 4)
+
+                            ForEach(location.scheduledItems) { item in
+                                LocationScheduleRow(item: item, now: now)
+                                if item.id != location.scheduledItems.last?.id {
+                                    Divider().padding(.vertical, 2)
                                 }
                             }
-                            .padding(.vertical, 4)
                         }
                     }
+                    .padding(.horizontal)
+                    .padding(.vertical, 16)
+                    .padding(.bottom, 24)
                 }
-                .padding(.horizontal)
-                .padding(.bottom, 24)
             }
         }
         .navigationTitle(location.name)
         .navigationBarTitleDisplayMode(.inline)
     }
+}
+
+// MARK: - Schedule row inside Location Detail
+
+private struct LocationScheduleRow: View {
+    let item: ScheduledItem
+    let now: Date
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            // Time + countdown on the same line
+            HStack(alignment: .firstTextBaseline) {
+                Text(formattedTime(item.startTime))
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                Spacer()
+                if let countdown = item.startsInText(relativeTo: now) {
+                    Text(countdown)
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundStyle(.tint)
+                }
+            }
+            Text(item.name).font(.headline)
+            if !item.description.isEmpty {
+                Text(item.description)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 6)
+    }
 
     private func formattedTime(_ iso: String) -> String {
-        let parser = ISO8601DateFormatter()
-        parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let parserNoFrac = ISO8601DateFormatter()
-        parserNoFrac.formatOptions = [.withInternetDateTime]
-        guard let date = parser.date(from: iso) ?? parserNoFrac.date(from: iso) else { return iso }
+        let p1 = ISO8601DateFormatter()
+        p1.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let p2 = ISO8601DateFormatter()
+        p2.formatOptions = [.withInternetDateTime]
+        guard let date = p1.date(from: iso) ?? p2.date(from: iso) else { return iso }
         let fmt = DateFormatter()
         fmt.locale = .current
         fmt.timeZone = .current

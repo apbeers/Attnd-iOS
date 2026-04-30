@@ -98,13 +98,14 @@ struct Location: Decodable, Identifiable, Hashable {
 
 extension ScheduledItem {
     /// Returns a "Starts in Xh Ym" string if the item hasn't started yet, nil otherwise.
-    var startsInText: String? {
+    /// Pass `now` from a TimelineView or timer so the label updates live.
+    func startsInText(relativeTo now: Date = Date()) -> String? {
         let p1 = ISO8601DateFormatter()
         p1.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let p2 = ISO8601DateFormatter()
         p2.formatOptions = [.withInternetDateTime]
         guard let date = p1.date(from: startTime) ?? p2.date(from: startTime) else { return nil }
-        let seconds = date.timeIntervalSinceNow
+        let seconds = date.timeIntervalSince(now)
         guard seconds > 0 else { return nil }
         let totalMinutes = Int(seconds / 60)
         if totalMinutes < 1 { return "Starting now" }

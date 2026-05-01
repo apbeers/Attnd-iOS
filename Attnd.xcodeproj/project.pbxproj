@@ -16,17 +16,33 @@
 		49AA000527600A0000000002 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AA000327600A0000000002 /* AppState.swift */; };
 		49AA000627600A0000000003 /* LaunchScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AA000427600A0000000003 /* LaunchScreen.swift */; };
 		49AA000827600A0000000004 /* LocationPermissionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AA000727600A0000000004 /* LocationPermissionManager.swift */; };
+		49AT000227600A0000000050 /* AttestationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AT000127600A0000000050 /* AttestationManager.swift */; };
 		49CC000C27800000A000000C /* APIClientIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49CC000B27800000A000000B /* APIClientIntegrationTests.swift */; };
+		49DD95322FA559F8002F90DE /* AttndAppClip.app in Embed App Clips */ = {isa = PBXBuildFile; fileRef = 49DD95262FA559F6002F90DE /* AttndAppClip.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		49DF918927571C4500399457 /* Helpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49DF918827571C4500399457 /* Helpers.swift */; };
 		49E7C76A262159B00073A60B /* AttndApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49E7C769262159B00073A60B /* AttndApp.swift */; };
 		49E7C76C262159B00073A60B /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49E7C76B262159B00073A60B /* ContentView.swift */; };
 		49E7C76E262159B10073A60B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 49E7C76D262159B10073A60B /* Assets.xcassets */; };
 		49E7C771262159B10073A60B /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 49E7C770262159B10073A60B /* Preview Assets.xcassets */; };
+		49KC000227600A0000000051 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49KC000127600A0000000051 /* KeychainHelper.swift */; };
 		49MD000227600A0000000040 /* ModelDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49MD000127600A0000000040 /* ModelDecodingTests.swift */; };
 		49QR000127600A0000000010 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49QR000027600A0000000010 /* QRScannerView.swift */; };
 		49SC000127600A0000000020 /* ScheduleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49SC000027600A0000000020 /* ScheduleView.swift */; };
-		49AT000227600A0000000050 /* AttestationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AT000127600A0000000050 /* AttestationManager.swift */; };
-		49KC000227600A0000000051 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49KC000127600A0000000051 /* KeychainHelper.swift */; };
+		49CL000127600A0000AA0001 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AA000127600A0000000001 /* APIClient.swift */; };
+		49CL000227600A0000AA0002 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AA000327600A0000000002 /* AppState.swift */; };
+		49CL000327600A0000AA0003 /* LaunchScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AA000427600A0000000003 /* LaunchScreen.swift */; };
+		49CL000427600A0000AA0004 /* LocationPermissionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AA000727600A0000000004 /* LocationPermissionManager.swift */; };
+		49CL000527600A0000AA0005 /* AttestationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AT000127600A0000000050 /* AttestationManager.swift */; };
+		49CL000627600A0000AA0006 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49KC000127600A0000000051 /* KeychainHelper.swift */; };
+		49CL000727600A0000AA0007 /* Helpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49DF918827571C4500399457 /* Helpers.swift */; };
+		49CL000827600A0000AA0008 /* MapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 490099152755DE5500E5951F /* MapView.swift */; };
+		49CL000927600A0000AA0009 /* FlyerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 490099172755DE6900E5951F /* FlyerView.swift */; };
+		49CL000A27600A0000AA000A /* LocationsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 490099192755DE7A00E5951F /* LocationsView.swift */; };
+		49CL000B27600A0000AA000B /* NotificationsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4900991B2755DE8600E5951F /* NotificationsView.swift */; };
+		49CL000C27600A0000AA000C /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4900991D2755DE8F00E5951F /* SettingsView.swift */; };
+		49CL000D27600A0000AA000D /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49QR000027600A0000000010 /* QRScannerView.swift */; };
+		49CL000E27600A0000AA000E /* ScheduleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49SC000027600A0000000020 /* ScheduleView.swift */; };
+		49CL000F27600A0000AA000F /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49E7C76B262159B00073A60B /* ContentView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -37,6 +53,13 @@
 			remoteGlobalIDString = 49E7C765262159B00073A60B;
 			remoteInfo = Attnd;
 		};
+		49DD95302FA559F8002F90DE /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 49E7C75E262159B00073A60B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 49DD95252FA559F6002F90DE;
+			remoteInfo = AttndAppClip;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -46,6 +69,7 @@
 			dstPath = "$(CONTENTS_FOLDER_PATH)/AppClips";
 			dstSubfolderSpec = 16;
 			files = (
+				49DD95322FA559F8002F90DE /* AttndAppClip.app in Embed App Clips */,
 			);
 			name = "Embed App Clips";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -62,8 +86,11 @@
 		49AA000327600A0000000002 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		49AA000427600A0000000003 /* LaunchScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchScreen.swift; sourceTree = "<group>"; };
 		49AA000727600A0000000004 /* LocationPermissionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationPermissionManager.swift; sourceTree = "<group>"; };
+		49AT000127600A0000000050 /* AttestationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttestationManager.swift; sourceTree = "<group>"; };
 		49CC000227800000A0000002 /* AttndTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AttndTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		49CC000B27800000A000000B /* APIClientIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClientIntegrationTests.swift; sourceTree = "<group>"; };
+		49DD95212FA557CE002F90DE /* Attnd.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Attnd.entitlements; sourceTree = "<group>"; };
+		49DD95262FA559F6002F90DE /* AttndAppClip.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AttndAppClip.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		49DF918827571C4500399457 /* Helpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Helpers.swift; sourceTree = "<group>"; };
 		49E7C766262159B00073A60B /* Attnd.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Attnd.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		49E7C769262159B00073A60B /* AttndApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttndApp.swift; sourceTree = "<group>"; };
@@ -71,19 +98,36 @@
 		49E7C76D262159B10073A60B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		49E7C770262159B10073A60B /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
 		49E7C772262159B10073A60B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		49KC000127600A0000000051 /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
 		49MD000127600A0000000040 /* ModelDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDecodingTests.swift; sourceTree = "<group>"; };
 		49QR000027600A0000000010 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
 		49SC000027600A0000000020 /* ScheduleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleView.swift; sourceTree = "<group>"; };
-		49AT000127600A0000000050 /* AttestationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttestationManager.swift; sourceTree = "<group>"; };
-		49KC000127600A0000000051 /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		49DD95332FA559F8002F90DE /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 49DD95252FA559F6002F90DE /* AttndAppClip */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		4943C69E2FA026610036D9E7 /* AttndClip */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = AttndClip; sourceTree = "<group>"; };
+		49DD95272FA559F6002F90DE /* AttndAppClip */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (49DD95332FA559F8002F90DE /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = AttndAppClip; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		49CC000427800000A0000004 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		49DD95232FA559F6002F90DE /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -115,6 +159,7 @@
 				49E7C768262159B00073A60B /* Attnd */,
 				49CC000A27800000A000000A /* AttndTests */,
 				4943C69E2FA026610036D9E7 /* AttndClip */,
+				49DD95272FA559F6002F90DE /* AttndAppClip */,
 				49E7C767262159B00073A60B /* Products */,
 			);
 			sourceTree = "<group>";
@@ -124,6 +169,7 @@
 			children = (
 				49E7C766262159B00073A60B /* Attnd.app */,
 				49CC000227800000A0000002 /* AttndTests.xctest */,
+				49DD95262FA559F6002F90DE /* AttndAppClip.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -131,6 +177,7 @@
 		49E7C768262159B00073A60B /* Attnd */ = {
 			isa = PBXGroup;
 			children = (
+				49DD95212FA557CE002F90DE /* Attnd.entitlements */,
 				49DF918827571C4500399457 /* Helpers.swift */,
 				49AA000127600A0000000001 /* APIClient.swift */,
 				49AA000327600A0000000002 /* AppState.swift */,
@@ -182,6 +229,28 @@
 			productReference = 49CC000227800000A0000002 /* AttndTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		49DD95252FA559F6002F90DE /* AttndAppClip */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 49DD95342FA559F8002F90DE /* Build configuration list for PBXNativeTarget "AttndAppClip" */;
+			buildPhases = (
+				49DD95222FA559F6002F90DE /* Sources */,
+				49DD95232FA559F6002F90DE /* Frameworks */,
+				49DD95242FA559F6002F90DE /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				49DD95272FA559F6002F90DE /* AttndAppClip */,
+			);
+			name = AttndAppClip;
+			packageProductDependencies = (
+			);
+			productName = AttndAppClip;
+			productReference = 49DD95262FA559F6002F90DE /* AttndAppClip.app */;
+			productType = "com.apple.product-type.application.on-demand-install-capable";
+		};
 		49E7C765262159B00073A60B /* Attnd */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 49E7C775262159B10073A60B /* Build configuration list for PBXNativeTarget "Attnd" */;
@@ -194,6 +263,7 @@
 			buildRules = (
 			);
 			dependencies = (
+				49DD95312FA559F8002F90DE /* PBXTargetDependency */,
 			);
 			name = Attnd;
 			productName = Attnd;
@@ -213,6 +283,9 @@
 					49CC000127800000A0000001 = {
 						CreatedOnToolsVersion = 15.0;
 						TestTargetID = 49E7C765262159B00073A60B;
+					};
+					49DD95252FA559F6002F90DE = {
+						CreatedOnToolsVersion = 26.3;
 					};
 					49E7C765262159B00073A60B = {
 						CreatedOnToolsVersion = 12.4;
@@ -234,11 +307,19 @@
 			targets = (
 				49E7C765262159B00073A60B /* Attnd */,
 				49CC000127800000A0000001 /* AttndTests */,
+				49DD95252FA559F6002F90DE /* AttndAppClip */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		49DD95242FA559F6002F90DE /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		49E7C764262159B00073A60B /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -257,6 +338,28 @@
 			files = (
 				49CC000C27800000A000000C /* APIClientIntegrationTests.swift in Sources */,
 				49MD000227600A0000000040 /* ModelDecodingTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		49DD95222FA559F6002F90DE /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				49CL000127600A0000AA0001 /* APIClient.swift in Sources */,
+				49CL000227600A0000AA0002 /* AppState.swift in Sources */,
+				49CL000327600A0000AA0003 /* LaunchScreen.swift in Sources */,
+				49CL000427600A0000AA0004 /* LocationPermissionManager.swift in Sources */,
+				49CL000527600A0000AA0005 /* AttestationManager.swift in Sources */,
+				49CL000627600A0000AA0006 /* KeychainHelper.swift in Sources */,
+				49CL000727600A0000AA0007 /* Helpers.swift in Sources */,
+				49CL000827600A0000AA0008 /* MapView.swift in Sources */,
+				49CL000927600A0000AA0009 /* FlyerView.swift in Sources */,
+				49CL000A27600A0000AA000A /* LocationsView.swift in Sources */,
+				49CL000B27600A0000AA000B /* NotificationsView.swift in Sources */,
+				49CL000C27600A0000AA000C /* SettingsView.swift in Sources */,
+				49CL000D27600A0000AA000D /* QRScannerView.swift in Sources */,
+				49CL000E27600A0000AA000E /* ScheduleView.swift in Sources */,
+				49CL000F27600A0000AA000F /* ContentView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -290,6 +393,11 @@
 			isa = PBXTargetDependency;
 			target = 49E7C765262159B00073A60B /* Attnd */;
 			targetProxy = 49CC000627800000A0000006 /* PBXContainerItemProxy */;
+		};
+		49DD95312FA559F8002F90DE /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 49DD95252FA559F6002F90DE /* AttndAppClip */;
+			targetProxy = 49DD95302FA559F8002F90DE /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -327,6 +435,85 @@
 				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = 1;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Attnd.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Attnd";
+			};
+			name = Release;
+		};
+		49DD95352FA559F8002F90DE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_ENTITLEMENTS = AttndAppClip/AttndAppClip.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = GQQX4L6TE2;
+				ENABLE_PREVIEWS = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = AttndAppClip/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Attnd;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.arcu.attnd-ios2.Clip";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		49DD95362FA559F8002F90DE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_ENTITLEMENTS = AttndAppClip/AttndAppClip.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = GQQX4L6TE2;
+				ENABLE_PREVIEWS = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = AttndAppClip/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Attnd;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.arcu.attnd-ios2.Clip";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};
@@ -460,11 +647,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ATTND_API_KEY = "$(ATTND_API_KEY)";
-				CODE_SIGN_ENTITLEMENTS = "";
+				CODE_SIGN_ENTITLEMENTS = Attnd/Attnd.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 28;
 				DEVELOPMENT_ASSET_PATHS = "\"Attnd/Preview Content\"";
-				DEVELOPMENT_TEAM = G3446S9BE4;
+				DEVELOPMENT_TEAM = GQQX4L6TE2;
 				ENABLE_PREVIEWS = YES;
 				INFOPLIST_FILE = Attnd/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Attnd;
@@ -475,7 +662,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0.28;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.arcu.attnd-ios";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.arcu.attnd-ios2";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -492,11 +679,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ATTND_API_KEY = "$(ATTND_API_KEY)";
-				CODE_SIGN_ENTITLEMENTS = "";
+				CODE_SIGN_ENTITLEMENTS = Attnd/Attnd.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 28;
 				DEVELOPMENT_ASSET_PATHS = "\"Attnd/Preview Content\"";
-				DEVELOPMENT_TEAM = G3446S9BE4;
+				DEVELOPMENT_TEAM = GQQX4L6TE2;
 				ENABLE_PREVIEWS = YES;
 				INFOPLIST_FILE = Attnd/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Attnd;
@@ -507,7 +694,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0.28;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.arcu.attnd-ios";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.arcu.attnd-ios2";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -526,6 +713,15 @@
 			buildConfigurations = (
 				49CC000827800000A0000008 /* Debug */,
 				49CC000927800000A0000009 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		49DD95342FA559F8002F90DE /* Build configuration list for PBXNativeTarget "AttndAppClip" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				49DD95352FA559F8002F90DE /* Debug */,
+				49DD95362FA559F8002F90DE /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

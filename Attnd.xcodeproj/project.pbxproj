@@ -16,15 +16,15 @@
 		49AA000527600A0000000002 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AA000327600A0000000002 /* AppState.swift */; };
 		49AA000627600A0000000003 /* LaunchScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AA000427600A0000000003 /* LaunchScreen.swift */; };
 		49AA000827600A0000000004 /* LocationPermissionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AA000727600A0000000004 /* LocationPermissionManager.swift */; };
-		49QR000127600A0000000010 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49QR000027600A0000000010 /* QRScannerView.swift */; };
-		49SC000127600A0000000020 /* ScheduleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49SC000027600A0000000020 /* ScheduleView.swift */; };
 		49CC000C27800000A000000C /* APIClientIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49CC000B27800000A000000B /* APIClientIntegrationTests.swift */; };
-		49MD000227600A0000000040 /* ModelDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49MD000127600A0000000040 /* ModelDecodingTests.swift */; };
 		49DF918927571C4500399457 /* Helpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49DF918827571C4500399457 /* Helpers.swift */; };
 		49E7C76A262159B00073A60B /* AttndApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49E7C769262159B00073A60B /* AttndApp.swift */; };
 		49E7C76C262159B00073A60B /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49E7C76B262159B00073A60B /* ContentView.swift */; };
 		49E7C76E262159B10073A60B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 49E7C76D262159B10073A60B /* Assets.xcassets */; };
 		49E7C771262159B10073A60B /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 49E7C770262159B10073A60B /* Preview Assets.xcassets */; };
+		49MD000227600A0000000040 /* ModelDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49MD000127600A0000000040 /* ModelDecodingTests.swift */; };
+		49QR000127600A0000000010 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49QR000027600A0000000010 /* QRScannerView.swift */; };
+		49SC000127600A0000000020 /* ScheduleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49SC000027600A0000000020 /* ScheduleView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -60,11 +60,8 @@
 		49AA000327600A0000000002 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		49AA000427600A0000000003 /* LaunchScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchScreen.swift; sourceTree = "<group>"; };
 		49AA000727600A0000000004 /* LocationPermissionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationPermissionManager.swift; sourceTree = "<group>"; };
-		49QR000027600A0000000010 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
-		49SC000027600A0000000020 /* ScheduleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleView.swift; sourceTree = "<group>"; };
 		49CC000227800000A0000002 /* AttndTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AttndTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		49CC000B27800000A000000B /* APIClientIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClientIntegrationTests.swift; sourceTree = "<group>"; };
-		49MD000127600A0000000040 /* ModelDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDecodingTests.swift; sourceTree = "<group>"; };
 		49DF918827571C4500399457 /* Helpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Helpers.swift; sourceTree = "<group>"; };
 		49E7C766262159B00073A60B /* Attnd.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Attnd.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		49E7C769262159B00073A60B /* AttndApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttndApp.swift; sourceTree = "<group>"; };
@@ -72,6 +69,9 @@
 		49E7C76D262159B10073A60B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		49E7C770262159B10073A60B /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
 		49E7C772262159B10073A60B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		49MD000127600A0000000040 /* ModelDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDecodingTests.swift; sourceTree = "<group>"; };
+		49QR000027600A0000000010 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
+		49SC000027600A0000000020 /* ScheduleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -132,6 +132,8 @@
 				49AA000327600A0000000002 /* AppState.swift */,
 				49AA000427600A0000000003 /* LaunchScreen.swift */,
 				49AA000727600A0000000004 /* LocationPermissionManager.swift */,
+				49AT000127600A0000000050 /* AttestationManager.swift */,
+				49KC000127600A0000000051 /* KeychainHelper.swift */,
 				49QR000027600A0000000010 /* QRScannerView.swift */,
 				49SC000027600A0000000020 /* ScheduleView.swift */,
 				490099152755DE5500E5951F /* MapView.swift */,
@@ -272,6 +274,8 @@
 				49E7C76A262159B00073A60B /* AttndApp.swift in Sources */,
 				490099182755DE6900E5951F /* FlyerView.swift in Sources */,
 				4900991C2755DE8600E5951F /* NotificationsView.swift in Sources */,
+				49AT000227600A0000000050 /* AttestationManager.swift in Sources */,
+				49KC000227600A0000000051 /* KeychainHelper.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

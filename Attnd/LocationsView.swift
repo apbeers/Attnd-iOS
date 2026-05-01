@@ -67,93 +67,98 @@ struct LocationDetailView: View {
 
     var body: some View {
         // TimelineView drives live countdown labels every 30 s across the whole detail page.
+        // Content is extracted into a helper to avoid generic-inference failures in Xcode 26.
         TimelineView(.periodic(from: .now, by: 30)) { context in
-            let now = context.date
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    // Hero image
-                    if let imageUrl = location.imageUrl, let url = URL(string: imageUrl) {
-                        AsyncImage(url: url) { phase in
-                            if case .success(let image) = phase {
-                                image.resizable().scaledToFill()
-                            } else if case .failure = phase {
-                                Color(.systemGray5)
-                                    .overlay(Image(systemName: "photo").foregroundStyle(.secondary))
-                            } else {
-                                ProgressView()
-                            }
-                        }
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 220)
-                        .clipped()
-                    }
-
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text(location.name).font(.title2.bold())
-
-                        if !location.address.isEmpty {
-                            Text(location.address)
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        // Walking directions
-                        if location.latitude != 0 || location.longitude != 0 {
-                            Button {
-                                let coordinate = CLLocationCoordinate2D(
-                                    latitude: location.latitude,
-                                    longitude: location.longitude
-                                )
-                                let mapItem: MKMapItem
-                                if #available(iOS 18.0, *) {
-                                    mapItem = MKMapItem(location: CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude))
-                                } else {
-                                    mapItem = MKMapItem(placemark: MKPlacemark(coordinate: coordinate))
-                                }
-                                mapItem.name = location.name
-                                mapItem.openInMaps(launchOptions: [
-                                    MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeWalking
-                                ])
-                            } label: {
-                                Label("Get Walking Directions", systemImage: "figure.walk")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.large)
-                        }
-
-                        Divider()
-
-                        Text(location.description).font(.body)
-
-                        if let website = location.website, let url = URL(string: website) {
-                            Link("Visit Website", destination: url)
-                                .font(.subheadline)
-                        }
-
-                        // Schedule at this location
-                        if !location.scheduledItems.isEmpty {
-                            Divider()
-                            Text("At This Location")
-                                .font(.title3.bold())
-                                .padding(.top, 4)
-
-                            ForEach(location.scheduledItems) { item in
-                                LocationScheduleRow(item: item, now: now)
-                                if item.id != location.scheduledItems.last?.id {
-                                    Divider().padding(.vertical, 2)
-                                }
-                            }
-                        }
-                    }
-                    .padding(.horizontal)
-                    .padding(.vertical, 16)
-                    .padding(.bottom, 24)
-                }
-            }
+            detailContent(now: context.date)
         }
         .navigationTitle(location.name)
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    @ViewBuilder
+    private func detailContent(now: Date) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                // Hero image
+                if let imageUrl = location.imageUrl, let url = URL(string: imageUrl) {
+                    AsyncImage(url: url) { phase in
+                        if case .success(let image) = phase {
+                            image.resizable().scaledToFill()
+                        } else if case .failure = phase {
+                            Color(.systemGray5)
+                                .overlay(Image(systemName: "photo").foregroundStyle(.secondary))
+                        } else {
+                            ProgressView()
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 220)
+                    .clipped()
+                }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(location.name).font(.title2.bold())
+
+                    if !location.address.isEmpty {
+                        Text(location.address)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    // Walking directions
+                    if location.latitude != 0 || location.longitude != 0 {
+                        Button {
+                            let coordinate = CLLocationCoordinate2D(
+                                latitude: location.latitude,
+                                longitude: location.longitude
+                            )
+                            let mapItem: MKMapItem
+                            if #available(iOS 18.0, *) {
+                                mapItem = MKMapItem(location: CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude))
+                            } else {
+                                mapItem = MKMapItem(placemark: MKPlacemark(coordinate: coordinate))
+                            }
+                            mapItem.name = location.name
+                            mapItem.openInMaps(launchOptions: [
+                                MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeWalking
+                            ])
+                        } label: {
+                            Label("Get Walking Directions", systemImage: "figure.walk")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                    }
+
+                    Divider()
+
+                    Text(location.description).font(.body)
+
+                    if let website = location.website, let url = URL(string: website) {
+                        Link("Visit Website", destination: url)
+                            .font(.subheadline)
+                    }
+
+                    // Schedule at this location
+                    if !location.scheduledItems.isEmpty {
+                        Divider()
+                        Text("At This Location")
+                            .font(.title3.bold())
+                            .padding(.top, 4)
+
+                        ForEach(location.scheduledItems) { item in
+                            LocationScheduleRow(item: item, now: now)
+                            if item.id != location.scheduledItems.last?.id {
+                                Divider().padding(.vertical, 2)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 16)
+                .padding(.bottom, 24)
+            }
+        }
     }
 }
 

@@ -74,13 +74,12 @@ struct LocationDetailView: View {
                     // Hero image
                     if let imageUrl = location.imageUrl, let url = URL(string: imageUrl) {
                         AsyncImage(url: url) { phase in
-                            switch phase {
-                            case .success(let image):
+                            if case .success(let image) = phase {
                                 image.resizable().scaledToFill()
-                            case .failure:
+                            } else if case .failure = phase {
                                 Color(.systemGray5)
                                     .overlay(Image(systemName: "photo").foregroundStyle(.secondary))
-                            default:
+                            } else {
                                 ProgressView()
                             }
                         }

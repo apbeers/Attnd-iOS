@@ -18,16 +18,6 @@
 		49AA000827600A0000000004 /* LocationPermissionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AA000727600A0000000004 /* LocationPermissionManager.swift */; };
 		49AT000227600A0000000050 /* AttestationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AT000127600A0000000050 /* AttestationManager.swift */; };
 		49CC000C27800000A000000C /* APIClientIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49CC000B27800000A000000B /* APIClientIntegrationTests.swift */; };
-		49DD95322FA559F8002F90DE /* AttndAppClip.app in Embed App Clips */ = {isa = PBXBuildFile; fileRef = 49DD95262FA559F6002F90DE /* AttndAppClip.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		49DF918927571C4500399457 /* Helpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49DF918827571C4500399457 /* Helpers.swift */; };
-		49E7C76A262159B00073A60B /* AttndApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49E7C769262159B00073A60B /* AttndApp.swift */; };
-		49E7C76C262159B00073A60B /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49E7C76B262159B00073A60B /* ContentView.swift */; };
-		49E7C76E262159B10073A60B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 49E7C76D262159B10073A60B /* Assets.xcassets */; };
-		49E7C771262159B10073A60B /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 49E7C770262159B10073A60B /* Preview Assets.xcassets */; };
-		49KC000227600A0000000051 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49KC000127600A0000000051 /* KeychainHelper.swift */; };
-		49MD000227600A0000000040 /* ModelDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49MD000127600A0000000040 /* ModelDecodingTests.swift */; };
-		49QR000127600A0000000010 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49QR000027600A0000000010 /* QRScannerView.swift */; };
-		49SC000127600A0000000020 /* ScheduleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49SC000027600A0000000020 /* ScheduleView.swift */; };
 		49CL000127600A0000AA0001 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AA000127600A0000000001 /* APIClient.swift */; };
 		49CL000227600A0000AA0002 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AA000327600A0000000002 /* AppState.swift */; };
 		49CL000327600A0000AA0003 /* LaunchScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AA000427600A0000000003 /* LaunchScreen.swift */; };
@@ -43,6 +33,16 @@
 		49CL000D27600A0000AA000D /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49QR000027600A0000000010 /* QRScannerView.swift */; };
 		49CL000E27600A0000AA000E /* ScheduleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49SC000027600A0000000020 /* ScheduleView.swift */; };
 		49CL000F27600A0000AA000F /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49E7C76B262159B00073A60B /* ContentView.swift */; };
+		49DD95322FA559F8002F90DE /* AttndAppClip.app in Embed App Clips */ = {isa = PBXBuildFile; fileRef = 49DD95262FA559F6002F90DE /* AttndAppClip.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		49DF918927571C4500399457 /* Helpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49DF918827571C4500399457 /* Helpers.swift */; };
+		49E7C76A262159B00073A60B /* AttndApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49E7C769262159B00073A60B /* AttndApp.swift */; };
+		49E7C76C262159B00073A60B /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49E7C76B262159B00073A60B /* ContentView.swift */; };
+		49E7C76E262159B10073A60B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 49E7C76D262159B10073A60B /* Assets.xcassets */; };
+		49E7C771262159B10073A60B /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 49E7C770262159B10073A60B /* Preview Assets.xcassets */; };
+		49KC000227600A0000000051 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49KC000127600A0000000051 /* KeychainHelper.swift */; };
+		49MD000227600A0000000040 /* ModelDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49MD000127600A0000000040 /* ModelDecodingTests.swift */; };
+		49QR000127600A0000000010 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49QR000027600A0000000010 /* QRScannerView.swift */; };
+		49SC000127600A0000000020 /* ScheduleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49SC000027600A0000000020 /* ScheduleView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -109,13 +109,13 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				"ContentView.swift.bak",
 			);
 			target = 49DD95252FA559F6002F90DE /* AttndAppClip */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		4943C69E2FA026610036D9E7 /* AttndClip */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = AttndClip; sourceTree = "<group>"; };
 		49DD95272FA559F6002F90DE /* AttndAppClip */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (49DD95332FA559F8002F90DE /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = AttndAppClip; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
@@ -158,7 +158,6 @@
 			children = (
 				49E7C768262159B00073A60B /* Attnd */,
 				49CC000A27800000A000000A /* AttndTests */,
-				4943C69E2FA026610036D9E7 /* AttndClip */,
 				49DD95272FA559F6002F90DE /* AttndAppClip */,
 				49E7C767262159B00073A60B /* Products */,
 			);

@@ -5,6 +5,7 @@
 // Calls onCode(_ raw: String) the first time a QR code is recognised, then dismisses.
 
 import SwiftUI
+import Vision
 import VisionKit
 
 // MARK: - QRScannerSheet

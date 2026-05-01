@@ -114,7 +114,7 @@ struct LocationDetailView: View {
                             )
                             let mapItem: MKMapItem
                             if #available(iOS 18.0, *) {
-                                mapItem = MKMapItem(location: CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude))
+                                mapItem = MKMapItem(location: CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude), address: nil)
                             } else {
                                 mapItem = MKMapItem(placemark: MKPlacemark(coordinate: coordinate))
                             }

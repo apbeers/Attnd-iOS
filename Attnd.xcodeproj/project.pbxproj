@@ -25,6 +25,8 @@
 		49MD000227600A0000000040 /* ModelDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49MD000127600A0000000040 /* ModelDecodingTests.swift */; };
 		49QR000127600A0000000010 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49QR000027600A0000000010 /* QRScannerView.swift */; };
 		49SC000127600A0000000020 /* ScheduleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49SC000027600A0000000020 /* ScheduleView.swift */; };
+		49AT000227600A0000000050 /* AttestationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AT000127600A0000000050 /* AttestationManager.swift */; };
+		49KC000227600A0000000051 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49KC000127600A0000000051 /* KeychainHelper.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -72,6 +74,8 @@
 		49MD000127600A0000000040 /* ModelDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDecodingTests.swift; sourceTree = "<group>"; };
 		49QR000027600A0000000010 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
 		49SC000027600A0000000020 /* ScheduleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleView.swift; sourceTree = "<group>"; };
+		49AT000127600A0000000050 /* AttestationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttestationManager.swift; sourceTree = "<group>"; };
+		49KC000127600A0000000051 /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */

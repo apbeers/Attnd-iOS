@@ -95,7 +95,7 @@ actor AttestationManager {
 
     /// Eagerly start attestation in the background so the first API call is instant.
     /// Errors are silently ignored — the API call will retry.
-    func warmup() {
+    nonisolated func warmup() {
         Task { _ = try? await self.token() }
     }
 

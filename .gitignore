@@ -1,5 +1,5 @@
-Attnd.xcodeproj/project.xcworkspace/xcuserdata/andrew.xcuserdatad/UserInterfaceState.xcuserstate
-Attnd.xcodeproj/project.xcworkspace/xcuserdata/andrew.xcuserdatad/UserInterfaceState.xcuserstate
+xcuserdata/
+*.xcuserstate
 
 # GitHub PAT for agent push — never commit
 .push-token

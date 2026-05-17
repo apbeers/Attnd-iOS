@@ -6,6 +6,8 @@
 	<string>ce23b0d41e71285582fb42cebf48d416b4161c12f9b29825a99f9a4b34368ade</string>
 	<key>CFBundleIconName</key>
 	<string>AppIcon</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Attnd uses your location to show events near you.</string>
 	<key>NSAppClip</key>
 	<dict>
 		<key>NSAppClipRequestEphemeralUserNotification</key>

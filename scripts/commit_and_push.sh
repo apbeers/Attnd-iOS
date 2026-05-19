@@ -10,13 +10,16 @@ if [ -z "$1" ]; then
   exit 1
 fi
 
-# Bump CURRENT_PROJECT_VERSION in project.pbxproj by 1
+# Bump build and version numbers in project.pbxproj
 PBXPROJ="$REPO/Attnd.xcodeproj/project.pbxproj"
 CURRENT=$(grep -m1 'CURRENT_PROJECT_VERSION' "$PBXPROJ" | grep -o '[0-9]*')
 NEXT=$((CURRENT + 1))
-sed -i.bak "s/CURRENT_PROJECT_VERSION = $CURRENT;/CURRENT_PROJECT_VERSION = $NEXT;/g" "$PBXPROJ"
+sed -i.bak \
+  -e "s/CURRENT_PROJECT_VERSION = $CURRENT;/CURRENT_PROJECT_VERSION = $NEXT;/g" \
+  -e "s/MARKETING_VERSION = 1\.0\.$CURRENT;/MARKETING_VERSION = 1.0.$NEXT;/g" \
+  "$PBXPROJ"
 rm -f "$PBXPROJ.bak" 2>/dev/null || true
-echo "Build $CURRENT → $NEXT"
+echo "Build $CURRENT → $NEXT  |  Version 1.0.$CURRENT → 1.0.$NEXT"
 
 bash "$REPO/scripts/commit.sh" "$1"
 bash "$REPO/scripts/push.sh" "${2:-}"

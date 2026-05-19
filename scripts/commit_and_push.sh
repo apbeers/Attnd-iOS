@@ -14,7 +14,8 @@ fi
 PBXPROJ="$REPO/Attnd.xcodeproj/project.pbxproj"
 CURRENT=$(grep -m1 'CURRENT_PROJECT_VERSION' "$PBXPROJ" | grep -o '[0-9]*')
 NEXT=$((CURRENT + 1))
-sed -i "s/CURRENT_PROJECT_VERSION = $CURRENT;/CURRENT_PROJECT_VERSION = $NEXT;/g" "$PBXPROJ"
+sed -i.bak "s/CURRENT_PROJECT_VERSION = $CURRENT;/CURRENT_PROJECT_VERSION = $NEXT;/g" "$PBXPROJ"
+rm -f "$PBXPROJ.bak" 2>/dev/null || true
 echo "Build $CURRENT → $NEXT"
 
 bash "$REPO/scripts/commit.sh" "$1"

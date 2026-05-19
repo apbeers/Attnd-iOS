@@ -3,3 +3,6 @@ xcuserdata/
 
 # GitHub PAT for agent push — never commit
 .push-token
+
+# Temp files
+*.bak

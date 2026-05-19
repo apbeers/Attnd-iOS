@@ -112,12 +112,7 @@ struct LocationDetailView: View {
                                 latitude: location.latitude,
                                 longitude: location.longitude
                             )
-                            let mapItem: MKMapItem
-                            if #available(iOS 26.0, *) {
-                                mapItem = MKMapItem(location: CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude), address: nil)
-                            } else {
-                                mapItem = MKMapItem(placemark: MKPlacemark(coordinate: coordinate))
-                            }
+                            let mapItem = MKMapItem(location: CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude), address: nil)
                             mapItem.name = location.name
                             mapItem.openInMaps(launchOptions: [
                                 MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeWalking

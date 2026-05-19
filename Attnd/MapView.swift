@@ -146,42 +146,26 @@ struct MapView: View {
 // MARK: - Map FAB Stack
 
 /// Two floating action buttons — scope (re-center) and location.
-/// On iOS 26+ they use native Liquid Glass; older OS falls back to .regularMaterial.
 private struct MapFABStack: View {
     let onCenter: () -> Void
     let onLocation: () -> Void
 
     var body: some View {
-        if #available(iOS 26, *) {
-            GlassEffectContainer {
-                VStack(spacing: 8) {
-                    Button(action: onCenter) {
-                        Image(systemName: "scope")
-                            .frame(width: 44, height: 44)
-                            .contentShape(Circle())
-                    }
-                    .glassEffect(in: Circle())
-
-                    Button(action: onLocation) {
-                        Image(systemName: "location.fill")
-                            .frame(width: 44, height: 44)
-                            .contentShape(Circle())
-                    }
-                    .glassEffect(in: Circle())
-                }
-            }
-        } else {
-            VStack(spacing: 12) {
+        GlassEffectContainer {
+            VStack(spacing: 8) {
                 Button(action: onCenter) {
                     Image(systemName: "scope")
-                        .padding(12)
-                        .background(.regularMaterial, in: Circle())
+                        .frame(width: 44, height: 44)
+                        .contentShape(Circle())
                 }
+                .glassEffect(in: Circle())
+
                 Button(action: onLocation) {
                     Image(systemName: "location.fill")
-                        .padding(12)
-                        .background(.regularMaterial, in: Circle())
+                        .frame(width: 44, height: 44)
+                        .contentShape(Circle())
                 }
+                .glassEffect(in: Circle())
             }
         }
     }
@@ -212,11 +196,7 @@ private struct LocationInfoCard: View {
             }
             .padding()
             .background {
-                if #available(iOS 26, *) {
-                    RoundedRectangle(cornerRadius: 14).glassEffect()
-                } else {
-                    RoundedRectangle(cornerRadius: 14).fill(.regularMaterial)
-                }
+                RoundedRectangle(cornerRadius: 14).glassEffect()
             }
         }
         .buttonStyle(.plain)

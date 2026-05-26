@@ -257,12 +257,10 @@
 				49E7C762262159B00073A60B /* Sources */,
 				49E7C763262159B00073A60B /* Frameworks */,
 				49E7C764262159B00073A60B /* Resources */,
-				4943C6AE2FA026630036D9E7 /* Embed App Clips */,
 			);
 			buildRules = (
 			);
 			dependencies = (
-				49DD95312FA559F8002F90DE /* PBXTargetDependency */,
 			);
 			name = Attnd;
 			productName = Attnd;
@@ -407,7 +405,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_ENTITLEMENTS = "";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 40;
+				CURRENT_PROJECT_VERSION = 41;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
@@ -429,7 +427,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_ENTITLEMENTS = "";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 40;
+				CURRENT_PROJECT_VERSION = 41;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
@@ -453,7 +451,7 @@
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
 				CODE_SIGN_ENTITLEMENTS = AttndAppClip/AttndAppClip.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 40;
+				CURRENT_PROJECT_VERSION = 41;
 				ENABLE_PREVIEWS = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -472,7 +470,7 @@
 					"@executable_path/Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 1.0.40;
+				MARKETING_VERSION = 1.0.41;
 				PRODUCT_BUNDLE_IDENTIFIER = com.arcu.Attnd.clip;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -495,7 +493,7 @@
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
 				CODE_SIGN_ENTITLEMENTS = AttndAppClip/AttndAppClip.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 40;
+				CURRENT_PROJECT_VERSION = 41;
 				ENABLE_PREVIEWS = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -514,7 +512,7 @@
 					"@executable_path/Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 1.0.40;
+				MARKETING_VERSION = 1.0.41;
 				PRODUCT_BUNDLE_IDENTIFIER = com.arcu.Attnd.clip;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -662,7 +660,7 @@
 				ATTND_API_KEY = "$(ATTND_API_KEY)";
 				CODE_SIGN_ENTITLEMENTS = Attnd/Attnd.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 40;
+				CURRENT_PROJECT_VERSION = 41;
 				DEVELOPMENT_ASSET_PATHS = "\"Attnd/Preview Content\"";
 				DEVELOPMENT_TEAM = GQQX4L6TE2;
 				ENABLE_PREVIEWS = YES;
@@ -674,7 +672,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.40;
+				MARKETING_VERSION = 1.0.41;
 				PRODUCT_BUNDLE_IDENTIFIER = com.arcu.Attnd;
 				PRODUCT_NAME = Attnd;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -694,7 +692,7 @@
 				ATTND_API_KEY = "$(ATTND_API_KEY)";
 				CODE_SIGN_ENTITLEMENTS = Attnd/Attnd.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 40;
+				CURRENT_PROJECT_VERSION = 41;
 				DEVELOPMENT_ASSET_PATHS = "\"Attnd/Preview Content\"";
 				DEVELOPMENT_TEAM = GQQX4L6TE2;
 				ENABLE_PREVIEWS = YES;
@@ -706,7 +704,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.40;
+				MARKETING_VERSION = 1.0.41;
 				PRODUCT_BUNDLE_IDENTIFIER = com.arcu.Attnd;
 				PRODUCT_NAME = Attnd;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";

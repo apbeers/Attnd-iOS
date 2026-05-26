@@ -312,7 +312,9 @@ final class ModelDecodingTests: XCTestCase {
     }
 
     func testAPIList_Decodes_EmptyResults() throws {
-        let json = """{"count":0,"results":[]}"""
+        let json = """
+            {"count":0,"results":[]}
+            """
         let list = try decode(APIList<ScheduledItem>.self, from: json)
         XCTAssertEqual(list.count, 0)
         XCTAssertTrue(list.results.isEmpty)

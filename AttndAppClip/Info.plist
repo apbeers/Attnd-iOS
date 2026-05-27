@@ -3,9 +3,29 @@
 <plist version="1.0">
 <dict>
 	<key>ATTND_API_KEY</key>
-	<string>ce23b0d41e71285582fb42cebf48d416b4161c12f9b29825a99f9a4b34368ade</string>
+	<string>$(ATTND_API_KEY)</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleIconName</key>
 	<string>AppIcon</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
 	<key>NSAppClip</key>
 	<dict>
 		<key>NSAppClipRequestEphemeralUserNotification</key>
@@ -13,5 +33,11 @@
 		<key>NSAppClipRequestLocationConfirmation</key>
 		<false/>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Scan an event QR code to join instantly</string>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
 </dict>
 </plist>

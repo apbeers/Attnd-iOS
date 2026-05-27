@@ -50,16 +50,23 @@ final class APIClientIntegrationTests: XCTestCase {
     }
 
     // MARK: - Event Lookup by Name
+    // Uses lookupEvent (exact match, encodes & correctly via urlQueryValueAllowed).
 
     func testLookupByName_FortWorth() async throws {
         let event = try await api.lookupEvent(query: "Fort Worth Food & Music Festival")
-        XCTAssertEqual(event.id, 1)
         XCTAssertEqual(event.eventCode, "FWFM2026")
+        XCTAssertEqual(event.name, "Fort Worth Food & Music Festival")
     }
 
     func testLookupByName_Austin() async throws {
         let event = try await api.lookupEvent(query: "Austin Tech & Innovation Summit")
-        XCTAssertEqual(event.id, 2)
+        XCTAssertEqual(event.eventCode, "ATIS2026")
+        XCTAssertEqual(event.name, "Austin Tech & Innovation Summit")
+    }
+
+    func testLookupByName_Dallas() async throws {
+        let event = try await api.lookupEvent(query: "Dallas Arts & Culture Night")
+        XCTAssertEqual(event.eventCode, "DACN2026")
     }
 
     // MARK: - Lookup Not Found
@@ -223,40 +230,46 @@ final class APIClientIntegrationTests: XCTestCase {
     }
 
     // MARK: - Nearby Events
+    // Fixture events are seeded with start_time = now + a few hours (public=true),
+    // so they always fall within the API's 3-day look-back / 7-day look-ahead window.
 
-    func testNearbyEvents_FortWorth_ContainsEvent1() async throws {
+    func testNearbyEvents_FortWorth_ContainsFWFM2026() async throws {
         let list = try await api.nearbyEvents(latitude: 32.7555, longitude: -97.3308)
-        XCTAssertGreaterThan(list.count, 0)
-        let ids = list.results.map { $0.event.id }
-        XCTAssertTrue(ids.contains(1), "Fort Worth event should appear near its own coordinates")
+        XCTAssertGreaterThan(list.count, 0, "Nearby events should be seeded near Fort Worth coordinates")
+        let codes = list.results.map { $0.event.eventCode }
+        XCTAssertTrue(codes.contains("FWFM2026"), "FWFM2026 should appear near Fort Worth coordinates")
     }
 
-    func testNearbyEvents_Austin_ContainsEvent2() async throws {
+    func testNearbyEvents_Austin_ContainsATIS2026() async throws {
         let list = try await api.nearbyEvents(latitude: 30.2672, longitude: -97.7431)
-        XCTAssertGreaterThan(list.count, 0)
-        let ids = list.results.map { $0.event.id }
-        XCTAssertTrue(ids.contains(2))
+        XCTAssertGreaterThan(list.count, 0, "Nearby events should be seeded near Austin coordinates")
+        let codes = list.results.map { $0.event.eventCode }
+        XCTAssertTrue(codes.contains("ATIS2026"), "ATIS2026 should appear near Austin coordinates")
     }
 
-    func testNearbyEvents_Dallas_ContainsEvent3() async throws {
+    func testNearbyEvents_Dallas_ContainsDACN2026() async throws {
         let list = try await api.nearbyEvents(latitude: 32.7767, longitude: -96.7970)
-        XCTAssertGreaterThan(list.count, 0)
-        let ids = list.results.map { $0.event.id }
-        XCTAssertTrue(ids.contains(3))
+        XCTAssertGreaterThan(list.count, 0, "Nearby events should be seeded near Dallas coordinates")
+        let codes = list.results.map { $0.event.eventCode }
+        XCTAssertTrue(codes.contains("DACN2026"), "DACN2026 should appear near Dallas coordinates")
     }
 
     func testNearbyEvents_ResultShape() async throws {
         let list = try await api.nearbyEvents(latitude: 32.7555, longitude: -97.3308)
-        guard let first = list.results.first else {
-            XCTFail("Expected at least one nearby event")
-            return
-        }
+        XCTAssertGreaterThan(list.count, 0, "Seeded Fort Worth event should always be nearby")
+        guard let first = list.results.first else { return }
         XCTAssertGreaterThanOrEqual(first.distanceMiles, 0)
         XCTAssertFalse(first.event.name.isEmpty)
         XCTAssertFalse(first.event.eventCode.isEmpty)
         XCTAssertFalse(first.event.address.isEmpty)
-        // count should match results array length
         XCTAssertEqual(list.count, list.results.count)
+    }
+
+    func testNearbyEvents_RemoteLocation_ReturnsEmpty() async throws {
+        // Middle of the Atlantic — no seeded events there
+        let list = try await api.nearbyEvents(latitude: 30.0, longitude: -40.0)
+        XCTAssertEqual(list.count, 0)
+        XCTAssertTrue(list.results.isEmpty)
     }
 
     // MARK: - APIList Envelope

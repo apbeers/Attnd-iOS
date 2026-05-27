@@ -17,6 +17,7 @@
 		49AA000627600A0000000003 /* LaunchScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AA000427600A0000000003 /* LaunchScreen.swift */; };
 		49AA000827600A0000000004 /* LocationPermissionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AA000727600A0000000004 /* LocationPermissionManager.swift */; };
 		49AT000227600A0000000050 /* AttestationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AT000127600A0000000050 /* AttestationManager.swift */; };
+		49BL000127600A0000000061 /* BusinessLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49BL000027600A0000000060 /* BusinessLogicTests.swift */; };
 		49CC000C27800000A000000C /* APIClientIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49CC000B27800000A000000B /* APIClientIntegrationTests.swift */; };
 		49CL000127600A0000AA0001 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AA000127600A0000000001 /* APIClient.swift */; };
 		49CL000227600A0000AA0002 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AA000327600A0000000002 /* AppState.swift */; };
@@ -88,6 +89,7 @@
 		49AA000727600A0000000004 /* LocationPermissionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationPermissionManager.swift; sourceTree = "<group>"; };
 		49AT000127600A0000000050 /* AttestationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttestationManager.swift; sourceTree = "<group>"; };
 		49CC000227800000A0000002 /* AttndTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AttndTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		49BL000027600A0000000060 /* BusinessLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BusinessLogicTests.swift; sourceTree = "<group>"; };
 		49CC000B27800000A000000B /* APIClientIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClientIntegrationTests.swift; sourceTree = "<group>"; };
 		49DD95212FA557CE002F90DE /* Attnd.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Attnd.entitlements; sourceTree = "<group>"; };
 		49DD95262FA559F6002F90DE /* AttndAppClip.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AttndAppClip.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -147,6 +149,7 @@
 		49CC000A27800000A000000A /* AttndTests */ = {
 			isa = PBXGroup;
 			children = (
+				49BL000027600A0000000060 /* BusinessLogicTests.swift */,
 				49CC000B27800000A000000B /* APIClientIntegrationTests.swift */,
 				49MD000127600A0000000040 /* ModelDecodingTests.swift */,
 			);
@@ -257,10 +260,12 @@
 				49E7C762262159B00073A60B /* Sources */,
 				49E7C763262159B00073A60B /* Frameworks */,
 				49E7C764262159B00073A60B /* Resources */,
+				4943C6AE2FA026630036D9E7 /* Embed App Clips */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				49DD95312FA559F8002F90DE /* PBXTargetDependency */,
 			);
 			name = Attnd;
 			productName = Attnd;
@@ -333,6 +338,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				49BL000127600A0000000061 /* BusinessLogicTests.swift in Sources */,
 				49CC000C27800000A000000C /* APIClientIntegrationTests.swift in Sources */,
 				49MD000227600A0000000040 /* ModelDecodingTests.swift in Sources */,
 			);
@@ -405,7 +411,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_ENTITLEMENTS = "";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 42;
+				CURRENT_PROJECT_VERSION = 43;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
@@ -427,7 +433,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_ENTITLEMENTS = "";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 42;
+				CURRENT_PROJECT_VERSION = 43;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
@@ -451,7 +457,7 @@
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
 				CODE_SIGN_ENTITLEMENTS = AttndAppClip/AttndAppClip.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 42;
+				CURRENT_PROJECT_VERSION = 43;
 				ENABLE_PREVIEWS = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -470,7 +476,7 @@
 					"@executable_path/Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 1.0.42;
+				MARKETING_VERSION = 1.0.43;
 				PRODUCT_BUNDLE_IDENTIFIER = com.arcu.Attnd.clip;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -493,7 +499,7 @@
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
 				CODE_SIGN_ENTITLEMENTS = AttndAppClip/AttndAppClip.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 42;
+				CURRENT_PROJECT_VERSION = 43;
 				ENABLE_PREVIEWS = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -512,7 +518,7 @@
 					"@executable_path/Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 1.0.42;
+				MARKETING_VERSION = 1.0.43;
 				PRODUCT_BUNDLE_IDENTIFIER = com.arcu.Attnd.clip;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -660,7 +666,7 @@
 				ATTND_API_KEY = "$(ATTND_API_KEY)";
 				CODE_SIGN_ENTITLEMENTS = Attnd/Attnd.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 42;
+				CURRENT_PROJECT_VERSION = 43;
 				DEVELOPMENT_ASSET_PATHS = "\"Attnd/Preview Content\"";
 				DEVELOPMENT_TEAM = GQQX4L6TE2;
 				ENABLE_PREVIEWS = YES;
@@ -672,7 +678,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.42;
+				MARKETING_VERSION = 1.0.43;
 				PRODUCT_BUNDLE_IDENTIFIER = com.arcu.Attnd;
 				PRODUCT_NAME = Attnd;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -692,7 +698,7 @@
 				ATTND_API_KEY = "$(ATTND_API_KEY)";
 				CODE_SIGN_ENTITLEMENTS = Attnd/Attnd.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 42;
+				CURRENT_PROJECT_VERSION = 43;
 				DEVELOPMENT_ASSET_PATHS = "\"Attnd/Preview Content\"";
 				DEVELOPMENT_TEAM = GQQX4L6TE2;
 				ENABLE_PREVIEWS = YES;
@@ -704,7 +710,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.42;
+				MARKETING_VERSION = 1.0.43;
 				PRODUCT_BUNDLE_IDENTIFIER = com.arcu.Attnd;
 				PRODUCT_NAME = Attnd;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";

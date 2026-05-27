@@ -175,7 +175,7 @@ final class AppState {
         }
     }
 
-    private func eventCode(from url: URL) -> String? {
+    func eventCode(from url: URL) -> String? {
         // pathComponents for /join/FWFM2026/ → ["/", "join", "FWFM2026"]
         let parts = url.pathComponents
         guard parts.count >= 3, parts[1] == "join", !parts[2].isEmpty else { return nil }

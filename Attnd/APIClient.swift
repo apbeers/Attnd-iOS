@@ -13,6 +13,18 @@
 
 import Foundation
 
+// MARK: - URL Encoding
+
+private extension CharacterSet {
+    /// Like urlQueryAllowed but excludes `&` and `=` so query parameter values
+    /// are fully percent-encoded and don't break the key=value&key=value structure.
+    static var urlQueryValueAllowed: CharacterSet {
+        var set = CharacterSet.urlQueryAllowed
+        set.remove(charactersIn: "&=+")
+        return set
+    }
+}
+
 // MARK: - API Errors
 
 enum APIError: LocalizedError {
@@ -139,14 +151,14 @@ final class APIClient {
 
     /// GET /api/v1/events/lookup/?q=<query>  — exact match, ignores public flag
     func lookupEvent(query: String) async throws -> Event {
-        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryValueAllowed) ?? query
         let path = "\(baseURL)/lookup/?q=\(encoded)"
         return try await request(path)
     }
 
     /// GET /api/v1/events/event_by_code_or_name/?data=<query>  — fuzzy match, public only
     func searchEvent(query: String) async throws -> Event {
-        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryValueAllowed) ?? query
         let path = "\(baseURL)/event_by_code_or_name/?data=\(encoded)"
         return try await request(path)
     }

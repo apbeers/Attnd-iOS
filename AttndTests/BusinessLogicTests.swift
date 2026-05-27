@@ -13,16 +13,24 @@ final class BusinessLogicTests: XCTestCase {
 
     // MARK: - Helpers
 
-    /// Build a ScheduledItem whose startTime is `secondsFromNow` in the future (or past if negative).
-    private func item(secondsFromNow: TimeInterval) -> ScheduledItem {
-        let date = Date(timeIntervalSinceNow: secondsFromNow)
-        let fmt = ISO8601DateFormatter()
-        fmt.formatOptions = [.withInternetDateTime]
-        return ScheduledItem(
+    /// Fixed anchor date used across all startsInText tests.
+    /// Using a fixed point eliminates timing sensitivity — both the item's
+    /// startTime and the `relativeTo` argument are derived from the same anchor.
+    private let anchor = Date(timeIntervalSinceReferenceDate: 0) // 2001-01-01 00:00:00 UTC
+
+    private let fmt: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
+    /// Build a ScheduledItem whose startTime is `seconds` after `anchor`.
+    private func item(secondsFromAnchor seconds: TimeInterval) -> ScheduledItem {
+        ScheduledItem(
             id: 1,
             name: "Test",
             description: "",
-            startTime: fmt.string(from: date),
+            startTime: fmt.string(from: anchor.addingTimeInterval(seconds)),
             locationId: 1,
             locationName: "Stage"
         )
@@ -35,52 +43,50 @@ final class BusinessLogicTests: XCTestCase {
     // MARK: - startsInText: future items
 
     func testStartsInText_HoursAndMinutes() {
-        // 2 hours 30 minutes from now
-        let result = item(secondsFromNow: (2 * 3600) + (30 * 60)).startsInText(relativeTo: .now)
+        let result = item(secondsFromAnchor: (2 * 3600) + (30 * 60)).startsInText(relativeTo: anchor)
         XCTAssertEqual(result, "Starts in 2h 30m")
     }
 
     func testStartsInText_ExactlyOneHour() {
-        let result = item(secondsFromNow: 3600).startsInText(relativeTo: .now)
+        let result = item(secondsFromAnchor: 3600).startsInText(relativeTo: anchor)
         XCTAssertEqual(result, "Starts in 1h")
     }
 
     func testStartsInText_ExactlyTwoHours() {
-        let result = item(secondsFromNow: 7200).startsInText(relativeTo: .now)
+        let result = item(secondsFromAnchor: 7200).startsInText(relativeTo: anchor)
         XCTAssertEqual(result, "Starts in 2h")
     }
 
     func testStartsInText_MinutesOnly() {
-        let result = item(secondsFromNow: 45 * 60).startsInText(relativeTo: .now)
+        let result = item(secondsFromAnchor: 45 * 60).startsInText(relativeTo: anchor)
         XCTAssertEqual(result, "Starts in 45m")
     }
 
     func testStartsInText_OneMinute() {
-        let result = item(secondsFromNow: 90).startsInText(relativeTo: .now) // 1m 30s → 1m
+        let result = item(secondsFromAnchor: 90).startsInText(relativeTo: anchor) // 1m 30s → 1m
         XCTAssertEqual(result, "Starts in 1m")
     }
 
     func testStartsInText_LessThanOneMinute_ReturnsStartingNow() {
-        let result = item(secondsFromNow: 30).startsInText(relativeTo: .now)
+        let result = item(secondsFromAnchor: 30).startsInText(relativeTo: anchor)
         XCTAssertEqual(result, "Starting now")
     }
 
-    func testStartsInText_ExactlyZeroSeconds_ReturnsStartingNow() {
-        // 0 seconds → guard seconds > 0 fails → nil, but totalMinutes < 1 path fires first
-        // Actually: seconds = 0.0, guard > 0 fails → nil
-        let result = item(secondsFromNow: 0).startsInText(relativeTo: .now)
+    func testStartsInText_ExactlyZeroSeconds_ReturnsNil() {
+        // anchor == startTime → seconds == 0 → guard seconds > 0 fails → nil
+        let result = item(secondsFromAnchor: 0).startsInText(relativeTo: anchor)
         XCTAssertNil(result)
     }
 
     // MARK: - startsInText: past items
 
     func testStartsInText_OneMinutePast_ReturnsNil() {
-        let result = item(secondsFromNow: -60).startsInText(relativeTo: .now)
+        let result = item(secondsFromAnchor: -60).startsInText(relativeTo: anchor)
         XCTAssertNil(result)
     }
 
     func testStartsInText_OneDayPast_ReturnsNil() {
-        let result = item(secondsFromNow: -86400).startsInText(relativeTo: .now)
+        let result = item(secondsFromAnchor: -86400).startsInText(relativeTo: anchor)
         XCTAssertNil(result)
     }
 
@@ -100,19 +106,19 @@ final class BusinessLogicTests: XCTestCase {
 
     func testStartsInText_FractionalSeconds() {
         // The formatter should handle fractional seconds (p1 path)
-        let futureDate = Date(timeIntervalSinceNow: 3600)
-        let fmt = ISO8601DateFormatter()
-        fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let iso = fmt.string(from: futureDate)
-        let result = item(startTime: iso).startsInText(relativeTo: Date())
-        XCTAssertNotNil(result)
-        XCTAssertTrue(result!.hasPrefix("Starts in"))
+        let fmtFrac = ISO8601DateFormatter()
+        fmtFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let iso = fmtFrac.string(from: anchor.addingTimeInterval(3600))
+        let result = item(startTime: iso).startsInText(relativeTo: anchor)
+        XCTAssertEqual(result, "Starts in 1h")
     }
 
     func testStartsInText_TimezoneOffset() {
-        // An ISO string with explicit timezone offset (+05:30) should still parse
-        let result = item(startTime: "2099-12-31T12:00:00+05:30").startsInText(relativeTo: Date())
-        XCTAssertNotNil(result) // far future → non-nil
+        // ISO string with explicit offset — 2099-12-31T12:00:00+05:30 is far in the future
+        // relative to any sane anchor, so result must be non-nil and start with "Starts in"
+        let result = item(startTime: "2099-12-31T12:00:00+05:30").startsInText(relativeTo: anchor)
+        XCTAssertNotNil(result)
+        XCTAssertTrue(result!.hasPrefix("Starts in"))
     }
 
     // MARK: - startsInText: custom `now` reference

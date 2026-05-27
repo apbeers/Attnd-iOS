@@ -338,24 +338,37 @@ final class APIClientIntegrationTests: XCTestCase {
     }
 
     // MARK: - Single Scheduled Item
+    // Item IDs are dynamic (auto-increment), so we look them up via the schedule
+    // list first rather than hardcoding database IDs.
 
-    func testFetchScheduledItem_FortWorth_Item1() async throws {
-        let item = try await api.scheduledItem(eventId: 1, itemId: 1)
-        XCTAssertEqual(item.id, 1)
+    func testFetchScheduledItem_FortWorth_OpeningCeremony() async throws {
+        let event = try await api.lookupEvent(query: "FWFM2026")
+        let schedule = try await api.schedule(eventId: event.id)
+        guard let opener = schedule.results.first(where: { $0.name == "Opening Ceremony" }) else {
+            XCTFail("Opening Ceremony not found in FWFM2026 schedule")
+            return
+        }
+        let item = try await api.scheduledItem(eventId: event.id, itemId: opener.id)
         XCTAssertEqual(item.name, "Opening Ceremony")
-        XCTAssertEqual(item.locationId, 1)
+        XCTAssertGreaterThan(item.locationId, 0)
         XCTAssertFalse(item.locationName.isEmpty)
     }
 
-    func testFetchScheduledItem_FortWorth_Item2() async throws {
-        let item = try await api.scheduledItem(eventId: 1, itemId: 2)
-        XCTAssertEqual(item.id, 2)
+    func testFetchScheduledItem_FortWorth_HeadlinerPerformance() async throws {
+        let event = try await api.lookupEvent(query: "FWFM2026")
+        let schedule = try await api.schedule(eventId: event.id)
+        guard let headliner = schedule.results.first(where: { $0.name == "Headliner Performance" }) else {
+            XCTFail("Headliner Performance not found in FWFM2026 schedule")
+            return
+        }
+        let item = try await api.scheduledItem(eventId: event.id, itemId: headliner.id)
         XCTAssertEqual(item.name, "Headliner Performance")
     }
 
     func testFetchScheduledItem_NotFound() async throws {
+        let event = try await api.lookupEvent(query: "FWFM2026")
         do {
-            _ = try await api.scheduledItem(eventId: 1, itemId: 99999)
+            _ = try await api.scheduledItem(eventId: event.id, itemId: 99999)
             XCTFail("Expected APIError.notFound")
         } catch APIError.notFound {
             // pass
@@ -363,9 +376,16 @@ final class APIClientIntegrationTests: XCTestCase {
     }
 
     func testFetchScheduledItem_WrongEvent_Returns404() async throws {
-        // item 1 belongs to event 1; looking it up under event 2 should 404
+        // Look up an item that belongs to FWFM2026 and try to fetch it under ATIS2026
+        let fwEvent = try await api.lookupEvent(query: "FWFM2026")
+        let austinEvent = try await api.lookupEvent(query: "ATIS2026")
+        let schedule = try await api.schedule(eventId: fwEvent.id)
+        guard let opener = schedule.results.first else {
+            XCTFail("FWFM2026 has no scheduled items")
+            return
+        }
         do {
-            _ = try await api.scheduledItem(eventId: 2, itemId: 1)
+            _ = try await api.scheduledItem(eventId: austinEvent.id, itemId: opener.id)
             XCTFail("Expected APIError.notFound")
         } catch APIError.notFound {
             // pass

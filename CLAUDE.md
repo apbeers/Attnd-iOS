@@ -21,7 +21,7 @@ SwiftUI app that lets attendees discover and follow live events. Consumes the At
 - **DataScannerViewController** (VisionKit) — QR code scanning
 - **MapKit** — map view
 - **Xcode project**: `Attnd.xcodeproj` (latest Xcode; required for iPhone Duo layouts)
-- **Targets**: `Attnd` (iPhone + iPad, all orientations), `AttndAppClip`, `AttndTests`
+- **Targets**: `Attnd` (iPhone only, including iPhone Duo; all orientations; no iPad), `AttndAppClip`, `AttndTests`
 
 ## Source Structure (`Attnd/`)
 

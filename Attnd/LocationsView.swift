@@ -2,7 +2,7 @@
 // Attnd
 //
 // Locations tab. A NavigationSplitView: list → detail side by side on regular
-// width (unfolded iPhone Duo, iPad), collapsing to a push stack on compact width.
+// width (unfolded iPhone Duo, landscape Pro Max), collapsing to a push stack on compact width.
 //
 // Display config: `locations_style` (cards / list / grouped by category),
 // `show_location_images`, `enable_search` and `group_by_category` (filter chips).

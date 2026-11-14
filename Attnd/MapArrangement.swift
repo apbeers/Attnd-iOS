@@ -1,7 +1,7 @@
 // MapArrangement.swift
 // Attnd
 //
-// The Map tab on wide layouts (an unfolded iPhone Duo, iPad): the map plus the
+// The Map tab on wide layouts (an unfolded iPhone Duo): the map plus the
 // pane named by `display.secondary_pane` (locations, schedule or now/next).
 //
 // ⚠️ COMPILE-TIME CHECK: `ArrangementView` / `.arrangementViewStyle(.split)` are the

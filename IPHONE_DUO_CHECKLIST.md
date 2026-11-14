@@ -43,5 +43,4 @@ Test each posture **upright and rotated 90° both ways**. Change posture **while
 ## Regression
 
 - [ ] Closed-phone experience matches the pre-Duo app (no new layout bugs on regular iPhones).
-- [ ] iPad: split views and Map arrangement behave like the wide posture.
 - [ ] App Clip launched from a join link: same screens, all orientations.

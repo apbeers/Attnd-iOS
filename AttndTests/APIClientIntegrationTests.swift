@@ -461,11 +461,15 @@ final class APIClientIntegrationTests: XCTestCase {
             if let id = item.locationId { XCTAssertTrue(locationIds.contains(id), "\(item.name) points at a bundle location") }
         }
 
-        // Notifications: only the 4 sent ones, newest first.
-        XCTAssertEqual(Set(bundle.notifications.map(\.title)),
-                       ["Welcome!", "Taco Row is open", "Shade & water", "Set time change"])
+        // Notifications: the 4 sent at load, plus the 2 load_demo_event schedules ("Headliner soon" +90 min,
+        // "Day 2" +24 h) once the scheduler has sent them; newest first.
+        let titles = Set(bundle.notifications.map(\.title))
+        let sentAtLoad: Set<String> = ["Welcome!", "Taco Row is open", "Shade & water", "Set time change"]
+        XCTAssertTrue(titles.isSuperset(of: sentAtLoad), "the four sent at load: \(titles)")
+        XCTAssertTrue(titles.isSubset(of: sentAtLoad.union(["Headliner soon", "Day 2"])), "unexpected notifications: \(titles)")
+        XCTAssertEqual(titles.count, bundle.notifications.count, "no duplicate notifications")
         let sent = bundle.notifications.compactMap(\.sendTime)
-        XCTAssertEqual(sent.count, 4)
+        XCTAssertEqual(sent.count, bundle.notifications.count, "every notification has a send time")
         XCTAssertEqual(sent, sent.sorted(by: >), "notifications are newest first")
         XCTAssertTrue(sent.allSatisfy { $0 <= now.addingTimeInterval(60) }, "no future notifications")
     }

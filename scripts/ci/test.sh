@@ -1,8 +1,34 @@
 #!/usr/bin/env bash
-# Build and run the unit tests on the newest available iPhone simulator.
-# Live API integration tests run only when ATTND_API_KEY is provided.
+# Build and run tests on the newest available iPhone simulator.
+#
+#   scripts/ci/test.sh                          unit tests only (APIClientIntegrationTests skipped)
+#   scripts/ci/test.sh integration [label]      only the live API tests (AttndTests/APIClientIntegrationTests)
+#
+# Integration mode needs ATTND_IT_SERVER (host) and ATTND_IT_KEY (bearer key) in the environment.
+# xcodebuild passes only TEST_RUNNER_-prefixed variables on to the test process (prefix stripped), so
+# they are exported here as TEST_RUNNER_ATTND_IT_*; the tests read ATTND_IT_SERVER / ATTND_IT_KEY.
+# ATTND_IT_RUN_ID (default GITHUB_RUN_ID) goes into the CI device ids.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+
+mode=${1:-unit}
+case "$mode" in
+  unit)        label=${2:-Build & unit tests}; result=build/TestResults.xcresult; log=build/xcodebuild-test.log ;;
+  integration) label=${2:-Integration tests}; result=build/IntegrationResults.xcresult; log=build/xcodebuild-integration.log ;;
+  *) echo "usage: $0 [unit|integration [label]]" >&2; exit 2 ;;
+esac
+
+if [ "$mode" = integration ]; then
+  if [ -z "${ATTND_IT_SERVER:-}" ] || [ -z "${ATTND_IT_KEY:-}" ]; then
+    echo "::error title=$label::ATTND_IT_SERVER / ATTND_IT_KEY not set (missing secret?)"
+    [ -n "${GITHUB_STEP_SUMMARY:-}" ] && echo "### $label: not run — server or key not configured" >> "$GITHUB_STEP_SUMMARY"
+    exit 1
+  fi
+  export TEST_RUNNER_ATTND_IT_SERVER="$ATTND_IT_SERVER"
+  export TEST_RUNNER_ATTND_IT_KEY="$ATTND_IT_KEY"
+  export TEST_RUNNER_ATTND_IT_RUN_ID="${ATTND_IT_RUN_ID:-${GITHUB_RUN_ID:-local}}"
+  echo "Live API tests against $ATTND_IT_SERVER"
+fi
 
 device=$(xcrun simctl list devices available -j | python3 -c '
 import json, re, sys
@@ -36,19 +62,25 @@ xcrun simctl boot "$device" > /dev/null 2>&1 &
 
 # No index store: CI never uses it and it costs build time.
 args=(-project Attnd.xcodeproj -scheme Attnd -destination "id=$device" CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO
-      -resultBundlePath build/TestResults.xcresult)
-if [ -n "${ATTND_API_KEY:-}" ]; then
-  args+=(ATTND_API_KEY="$ATTND_API_KEY" ATTND_SERVER="${ATTND_SERVER:-attnd.app}")
+      -resultBundlePath "$result")
+if [ "$mode" = integration ]; then
+  args+=(-only-testing:AttndTests/APIClientIntegrationTests)
 else
-  echo "ATTND_API_KEY not set — skipping live API integration tests"
   args+=(-skip-testing:AttndTests/APIClientIntegrationTests)
 fi
-rm -rf build/TestResults.xcresult
+rm -rf "$result"
 mkdir -p build
 # Shut the simulator down afterwards: left running, it slows the archive that follows in the same job.
 trap 'xcrun simctl shutdown all 2>/dev/null || true' EXIT
 # The log is kept for the warnings summary (annotations only; it never changes the result).
 status=0
-xcodebuild test "${args[@]}" 2>&1 | tee build/xcodebuild-test.log || status=$?
-python3 scripts/ci/warnings.py build/xcodebuild-test.log "Build & unit tests" || true
+xcodebuild test "${args[@]}" 2>&1 | tee "$log" || status=$?
+python3 scripts/ci/warnings.py "$log" "$label" || true
+if [ "$mode" = integration ]; then
+  # Short pass/fail/skip summary (annotations + step summary). It also fails the run when every test
+  # was skipped, which means the TEST_RUNNER_ variables never reached the test process.
+  if ! python3 scripts/ci/test_summary.py "$log" "$label"; then
+    [ "$status" -ne 0 ] || status=1
+  fi
+fi
 exit "$status"

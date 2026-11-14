@@ -13,6 +13,10 @@
 //
 // The client is stateless (and therefore Sendable): callers own any ETag they
 // want to send back.
+//
+// `shared` talks to the build's server (ATTND_SERVER). The live integration tests build their
+// own client with `init(serverHost:apiKey:apiVersion:attest:)` so they can point it at another
+// server and key without a rebuild (AttndTests/APIClientIntegrationTests.swift).
 
 import Foundation
 
@@ -62,9 +66,14 @@ final class APIClient: Sendable {
         return host.isEmpty || host.hasPrefix("$(") ? "attnd.app" : host
     }()
 
-    /// The API version this build speaks. Bump it together with `baseURL`.
+    /// The API version this build speaks.
     static let apiVersion = 2
-    static let baseURL = "https://\(serverHost)/api/v2/"
+
+    /// Host, API version (the `/api/vN/` path, also sent to app-status) and base URL of this
+    /// client (`shared`: the build's server and `apiVersion`).
+    let host: String
+    let pathVersion: Int
+    let baseURL: String
 
     /// Result of a conditional bundle fetch.
     enum BundleResult: Sendable {
@@ -78,17 +87,35 @@ final class APIClient: Sendable {
     /// Fallback static key for simulators and CI; read from Info.plist.
     private let staticApiKey: String
 
+    /// Whether to use App Attest (on devices that support it) before the static key.
+    private let attest: Bool
+
     /// Sent with join / device registration.
     let appVersion: String?
 
-    private init() {
+    private convenience init() {
+        self.init(
+            serverHost: Self.serverHost,
+            apiKey: Bundle.main.object(forInfoDictionaryKey: "ATTND_API_KEY") as? String ?? "",
+            apiVersion: Self.apiVersion,
+            attest: true
+        )
+    }
+
+    /// A client for any server. Used by the live integration tests; the app uses `shared`.
+    /// An empty `apiKey` (with `attest: false`) sends no Authorization header at all.
+    init(serverHost: String, apiKey: String, apiVersion: Int = APIClient.apiVersion, attest: Bool = false) {
+        self.host = serverHost
+        self.pathVersion = apiVersion
+        self.baseURL = "https://\(serverHost)/api/v\(apiVersion)/"
+        self.attest = attest
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
         // We do our own ETag handling for the bundle; keep URLCache out of the way.
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
         config.urlCache = nil
         self.session = URLSession(configuration: config)
-        self.staticApiKey = Bundle.main.object(forInfoDictionaryKey: "ATTND_API_KEY") as? String ?? ""
+        self.staticApiKey = apiKey.hasPrefix("$(") ? "" : apiKey
         self.appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
     }
 
@@ -162,11 +189,11 @@ final class APIClient: Sendable {
     /// GET /api/app-status/ (API-003). Unversioned and unauthenticated, so even a build whose
     /// API version was retired, or whose attestation fails, can learn that it must update.
     func appStatus() async throws -> AppStatus {
-        var components = URLComponents(string: "https://\(Self.serverHost)/api/app-status/")
+        var components = URLComponents(string: "https://\(host)/api/app-status/")
         components?.queryItems = [
             URLQueryItem(name: "platform", value: "ios"),
             URLQueryItem(name: "version", value: appVersion ?? ""),
-            URLQueryItem(name: "api", value: String(Self.apiVersion)),
+            URLQueryItem(name: "api", value: String(pathVersion)),
         ]
         guard let url = components?.url else { throw APIError.invalidURL }
         var req = URLRequest(url: url)
@@ -197,7 +224,7 @@ final class APIClient: Sendable {
 
     /// Resolves the best available bearer token: attestation JWT, else the static key.
     private func bearerToken() async -> String {
-        if let jwt = try? await AttestationManager.shared.token() {
+        if attest, let jwt = try? await AttestationManager.shared.token() {
             return jwt
         }
         return staticApiKey
@@ -224,18 +251,22 @@ final class APIClient: Sendable {
     }
 
     /// Sends a request and maps HTTP status codes to `APIError`. 2xx and 304 are returned.
-    private func send(
+    /// Internal (not private) so the integration tests can check raw responses through the same path.
+    func send(
         _ path: String,
         method: String = "GET",
         body: Data? = nil,
         headers: [String: String] = [:],
         isRetry: Bool = false
     ) async throws -> (Data, HTTPURLResponse) {
-        guard let url = URL(string: Self.baseURL + path) else { throw APIError.invalidURL }
+        guard let url = URL(string: baseURL + path) else { throw APIError.invalidURL }
 
         var req = URLRequest(url: url)
         req.httpMethod = method
-        req.setValue("Bearer \(await bearerToken())", forHTTPHeaderField: "Authorization")
+        let token = await bearerToken()
+        if !token.isEmpty {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         for (name, value) in headers {
             req.setValue(value, forHTTPHeaderField: name)
@@ -262,7 +293,7 @@ final class APIClient: Sendable {
         case 401:
             // Token expired or invalid — invalidate and retry once.
             guard !isRetry else { throw APIError.unauthorized }
-            await AttestationManager.shared.invalidateToken()
+            if attest { await AttestationManager.shared.invalidateToken() }
             return try await send(path, method: method, body: body, headers: headers, isRetry: true)
 
         case 400:

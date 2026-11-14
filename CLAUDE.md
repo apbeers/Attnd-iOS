@@ -184,7 +184,14 @@ Open `Attnd.xcodeproj` in the latest Xcode. For simulator builds, create `Config
 
 ## Running Tests
 
-In Xcode: **Product → Test** (`⌘U`), or `./run_tests.command`. Unit tests (`ModelDecodingTests`, `DisplayLogicTests`, `BusinessLogicTests`) need no network; `APIClientIntegrationTests` hit the live v2 API and need the static key on a simulator.
+In Xcode: **Product → Test** (`⌘U`), or `./run_tests.command`. Unit tests (`ModelDecodingTests`, `DisplayLogicTests`, `BusinessLogicTests`) need no network.
+
+**Live integration tests** (`AttndTests/APIClientIntegrationTests.swift`) run the app's real `APIClient` against a server's **DEMO** event (attnd-web `load_demo_event`): app-status, lookup (any case, 404, missing/wrong key → 401), bundle ETag/304/stale ETag/404, join/leave twice, devices (token omitted, never `""`), usage (invalid entries dropped with 200, empty batch), retired `/api/v9/` → 410 `update_required`, and full-bundle decoding against the demo facts (18 locations, 51 items, 4 notifications …). They build their own client with `APIClient(serverHost:apiKey:apiVersion:attest:)` (static key, no App Attest) and are **skipped** unless the test process has `ATTND_IT_SERVER` (host) and `ATTND_IT_KEY`. xcodebuild forwards only `TEST_RUNNER_`-prefixed variables to tests (prefix stripped), so:
+```bash
+ATTND_IT_SERVER=attnd-dev-7ab893f37020.herokuapp.com ATTND_IT_KEY=<dev key> bash scripts/ci/test.sh integration
+# or: TEST_RUNNER_ATTND_IT_SERVER=… TEST_RUNNER_ATTND_IT_KEY=… xcodebuild test … -only-testing:AttndTests/APIClientIntegrationTests
+```
+In Xcode, put them in the scheme's Test environment locally (never commit a key). Device ids are `ci-ios-<run id>-<random>` and every test leaves the event. If the server's demo data changes, attnd-web's test of `load_demo_event` is the source of truth; update the three repos together.
 
 ## Related Repos
 
@@ -195,10 +202,11 @@ In Xcode: **Product → Test** (`⌘U`), or `./run_tests.command`. Unit tests (`
 
 | Trigger | What happens |
 |---------|--------------|
-| Pull request | Xcode `XCODE_VERSION` (default 27.2) on the `xcode-27` runner, unit tests on the newest iPhone simulator (`scripts/ci/test.sh`, which shuts the simulator down afterwards so the archive in the same job runs at full speed). Live API tests only if `LIVE_API_TESTS` is set. |
-| Push to `develop` | One Mac job: unit tests, then archive with the `dev` environment's `ATTND_SERVER` and upload; a Linux job waits for TestFlight processing (internal testers get every build). |
+| Pull request | Xcode `XCODE_VERSION` (default 27.2) on the `xcode-27` runner, unit tests on the newest iPhone simulator (`scripts/ci/test.sh`, which shuts the simulator down afterwards so the archive in the same job runs at full speed), plus **Integration · dev** (same-repo PRs only). |
+| Push to `develop` | One Mac job: unit tests, then archive with the `dev` environment's `ATTND_SERVER` and upload; a Linux job waits for TestFlight processing (internal testers get every build). In parallel: **Integration · dev** and **Integration · prod** (below). |
 | Push to `main` | The same against `attnd.app`; the Linux job sets the store listing text (`asc.py metadata`) and submits for App Review (`scripts/ci/asc.py release`), released after approval. What's New comes from `store/en-US/release_notes.txt` unless the `WHATS_NEW` repo variable is set. |
 
+- **Integration jobs** (every push to `develop`/`main`, separate Mac jobs, no archive): `scripts/ci/test.sh integration "<label>"` runs only `-only-testing:AttndTests/APIClientIntegrationTests` (the unit runs use `-skip-testing` for it). **Integration · dev**: `ATTND_IT_SERVER=attnd-dev-7ab893f37020.herokuapp.com`, key `secrets.ATTND_API_KEY`. **Integration · prod**: `attnd.app`, key `secrets.ATTND_PROD_CI_KEY` (a CI key production accepts only for the DEMO event); `continue-on-error`, so it warns but never turns the run red while production is behind. Neither gates the upload (`publish` needs only `deliver`). `scripts/ci/test_summary.py` prints passed/failed/skipped, annotates failures and fails the job when everything was skipped (the variables never reached the tests).
 - Docs-only commits (`*.md`) don't run; a newer push to `develop` cancels the older run (`main` never cancels). Anything that only waits on Apple runs on Linux (Mac minutes cost ~10×).
 - Version = contents of `VERSION` + `.` + run number (e.g. `2.0.57`); build number = run number. Bump `VERSION` for a new major/minor line.
 - Signing is automatic via the App Store Connect API key (`ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` secrets; the key needs the **Admin** role): Xcode manages the profiles and the upload uses a cloud-managed distribution certificate. The archive step reuses one stored **Apple Development** certificate (`IOS_DEV_CERT_P12_BASE64`, `IOS_DEV_CERT_PASSWORD` secrets, imported into a throwaway keychain by `scripts/ci/archive_upload.sh`); without it every fresh runner mints a new "Created via API" certificate and Apple's limit fills up. Renew yearly (attnd-web `SETUP.md` step 3e).

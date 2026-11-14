@@ -4,6 +4,8 @@
 <dict>
 	<key>ATTND_API_KEY</key>
 	<string>$(ATTND_API_KEY)</string>
+	<key>ATTND_SERVER</key>
+	<string>$(ATTND_SERVER)</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleExecutable</key>

@@ -1,0 +1,76 @@
+# iOS pipeline
+#   every push / PR   → build + unit tests on the newest iPhone simulator
+#   push to develop   → archive, upload, TestFlight internal testers (talks to the dev server)
+#   push to main      → archive, upload, submit to App Review (released when approved)
+#
+# Signing is automatic via an App Store Connect API key — see DEPLOYMENT.md.
+# Version: <VERSION file>.<run number>; build number: run number (always increasing).
+name: iOS
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/develop' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build & test
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - name: Select newest Xcode
+        run: bash scripts/ci/select_xcode.sh
+      - name: Unit tests
+        env:
+          ATTND_API_KEY: ${{ secrets.ATTND_API_KEY }}
+        run: bash scripts/ci/test.sh
+      - name: Keep test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-test-results
+          path: build/TestResults.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
+
+  deliver:
+    name: ${{ github.ref == 'refs/heads/main' && 'App Store' || 'TestFlight' }}
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
+    needs: test
+    runs-on: macos-latest
+    timeout-minutes: 120
+    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'dev' }}
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+      ATTND_SERVER: ${{ vars.ATTND_SERVER || 'attnd.app' }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Select newest Xcode
+        run: bash scripts/ci/select_xcode.sh
+      - name: Version
+        run: |
+          echo "MARKETING_VERSION=$(tr -d '[:space:]' < VERSION).${{ github.run_number }}" >> "$GITHUB_ENV"
+          echo "BUILD_NUMBER=${{ github.run_number }}" >> "$GITHUB_ENV"
+      - name: Archive & upload
+        run: bash scripts/ci/archive_upload.sh
+      - name: App Store Connect tooling
+        run: python3 -m pip install --quiet "pyjwt[crypto]"
+      - name: Make available in TestFlight
+        if: github.ref == 'refs/heads/develop'
+        run: python3 scripts/ci/asc.py testflight --version "$MARKETING_VERSION" --build "$BUILD_NUMBER" --group "${{ vars.TESTFLIGHT_GROUP }}"
+      - name: Submit for App Review
+        if: github.ref == 'refs/heads/main'
+        env:
+          WHATS_NEW: ${{ vars.WHATS_NEW || 'Improvements and fixes.' }}
+        run: python3 scripts/ci/asc.py release --version "$MARKETING_VERSION" --build "$BUILD_NUMBER" --whats-new "$WHATS_NEW"

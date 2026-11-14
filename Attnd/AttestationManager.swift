@@ -46,7 +46,7 @@ actor AttestationManager {
 
     // MARK: Private constants
 
-    private let attestBaseURL = "https://attnd.app/api/v1/attest"
+    private let attestBaseURL = "https://\(APIClient.serverHost)/api/v1/attest"
 
     // UserDefaults key for the persisted App Attest key ID
     private let keyIdDefaultsKey = "com.arcu.attnd.attest.keyId"

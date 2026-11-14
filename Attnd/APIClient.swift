@@ -46,7 +46,15 @@ final class APIClient: Sendable {
 
     static let shared = APIClient()
 
-    static let baseURL = "https://attnd.app/api/v2/"
+    /// Host of the Attnd server, from the ATTND_SERVER build setting (Info.plist).
+    /// Builds from the develop branch point at the dev server; everything else uses attnd.app.
+    static let serverHost: String = {
+        let host = (Bundle.main.object(forInfoDictionaryKey: "ATTND_SERVER") as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return host.isEmpty || host.hasPrefix("$(") ? "attnd.app" : host
+    }()
+
+    static let baseURL = "https://\(serverHost)/api/v2/"
 
     /// Result of a conditional bundle fetch.
     enum BundleResult: Sendable {

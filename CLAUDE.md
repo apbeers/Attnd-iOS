@@ -144,3 +144,16 @@ In Xcode: **Product → Test** (`⌘U`), or `./run_tests.command`. Unit tests (`
 
 - **[attnd-web](https://github.com/apbeers/Attnd-Web)** — Django backend + REST API (`API_V2.md`)
 - **[attnd-android](https://github.com/apbeers/Attnd-Android)** — Kotlin/Compose Android client
+
+## CI/CD (`.github/workflows/ios.yml`)
+
+| Trigger | What happens |
+|---------|--------------|
+| Any push / PR | Newest Xcode on `macos-latest`, unit tests on the newest iPhone simulator (`scripts/ci/test.sh`). Live API tests run only if the `ATTND_API_KEY` secret is set. |
+| Push to `develop` | Archive with the `dev` environment's `ATTND_SERVER` (the Heroku dev app), upload, add to the TestFlight group in `TESTFLIGHT_GROUP`. |
+| Push to `main` | Archive against `attnd.app`, upload, submit for App Review (`scripts/ci/asc.py release`); releases after approval. |
+
+- Version = contents of `VERSION` + `.` + run number (e.g. `2.0.57`); build number = run number. Bump `VERSION` for a new major/minor line.
+- Signing is cloud-managed via the App Store Connect API key (`ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` secrets; the key needs the **Admin** role). No certificates or profiles are stored anywhere.
+- Server host: `ATTND_SERVER` build setting → `Info.plist` → `APIClient.serverHost` (default `attnd.app`).
+- Full setup checklist: `DEPLOYMENT.md` in attnd-web.

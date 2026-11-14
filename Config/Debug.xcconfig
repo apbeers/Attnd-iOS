@@ -8,4 +8,8 @@
 
 ATTND_API_KEY =
 
+// API host (no scheme — "//" starts a comment in xcconfig). CI sets this to the Heroku dev
+// app for builds from the develop branch, e.g. ATTND_SERVER=attnd-dev.herokuapp.com
+ATTND_SERVER = attnd.app
+
 #include? "Secrets.xcconfig"

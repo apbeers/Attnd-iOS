@@ -14,6 +14,7 @@ the device, PNG, RGB (no alpha):
     iphone-69   1320 x 2868   (iPhone with Dynamic Island, large display  -> APP_IPHONE_67)
     iphone-63   1206 x 2622   (iPhone with Dynamic Island, medium display -> APP_IPHONE_61)
     iphone-duo        2007 x 2853   (iPhone Duo unfolded, inner display    -> APP_IPHONE_DUO)
+    iphone-duo-wide   2853 x 2007   (iPhone Duo unfolded in landscape: used when the simulator won't rotate)
     iphone-duo-cover  1398 x 2034   (iPhone Duo folded, cover display      -> APP_IPHONE_DUO, after the unfolded ones)
 
 A device folder may hold orientation-probe.png (the app's red-over-blue probe screen, captured on
@@ -35,6 +36,7 @@ SIZES = {
     'iphone-69': (1320, 2868),
     'iphone-63': (1206, 2622),
     'iphone-duo': (2007, 2853),
+    'iphone-duo-wide': (2853, 2007),
     'iphone-duo-cover': (1398, 2034),
 }
 
@@ -141,13 +143,13 @@ def rounded_mask(size, radius):
 PROBE = 'orientation-probe.png'
 
 
-def probe_rotation(path):
-    """Degrees (counter-clockwise, as Image.rotate) that turn the probe capture upright: portrait,
-    red half on top, blue half below. None if no rotation does."""
+def probe_rotation(path, landscape=False):
+    """Degrees (counter-clockwise, as Image.rotate) that turn the probe capture upright: portrait (or
+    landscape when `landscape`), red half on top, blue half below. None if no rotation does."""
     probe = Image.open(path).convert('RGB')
     for angle in (0, 90, 270, 180):
         img = probe.rotate(angle, expand=True) if angle else probe
-        if img.height <= img.width:
+        if (img.width > img.height) != landscape:
             continue
         w, h = img.size
         # Skip the edges (status bar, home indicator, rounded corners).
@@ -222,7 +224,7 @@ def main():
         rotation = 0
         probe = device_dir / PROBE
         if probe.exists():
-            rotation = probe_rotation(probe)
+            rotation = probe_rotation(probe, landscape=size[0] > size[1])
             if rotation is None:
                 sys.exit(f'{probe}: no rotation shows the red half on top; was the probe captured on '
                          'the right display?')

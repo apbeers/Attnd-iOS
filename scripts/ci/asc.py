@@ -354,6 +354,7 @@ SCREENSHOT_TYPES = [
     ('iphone-69', 'APP_IPHONE_67', (1320, 2868)),
     ('iphone-63', 'APP_IPHONE_61', (1206, 2622)),
     ('iphone-duo', 'APP_IPHONE_DUO', (2007, 2853)),
+    ('iphone-duo-wide', 'APP_IPHONE_DUO', (2853, 2007)),
     ('iphone-duo-cover', 'APP_IPHONE_DUO', (1398, 2034)),
 ]
 

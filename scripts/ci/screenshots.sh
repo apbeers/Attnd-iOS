@@ -42,6 +42,7 @@ duo_cover_screens=(map schedule location updates)           # folded, cover disp
 
 out=build/screenshots/raw
 display=""     # the display to capture (set for the iPhone Duo only)
+duo_dir=""     # iphone-duo (unfolded, portrait) or iphone-duo-wide (unfolded, landscape)
 ready_size=""  # the app's window size from its last ready marker
 rm -rf "$out"
 mkdir -p "$out"
@@ -277,9 +278,14 @@ unfold_duo() {  # udid → 0 when the inner display hosts the app in portrait
     launch_screen "$udid" orientation-probe || return 1
     width=${ready_size%x*}; height=${ready_size#*x}
     echo "iPhone Duo after unfolding: display $display, app window $ready_size pt"
-    if [ "$width" -ge 600 ] 2>/dev/null && [ "$height" -gt "$width" ]; then
-      snap "$udid" "$out/iphone-duo/orientation-probe.png"
-      echo "  orientation probe: $(png_size "$out/iphone-duo/orientation-probe.png")"
+    if [ "$width" -ge 600 ] 2>/dev/null; then
+      # Unfolded. Portrait is preferred; the simulator often keeps the inner display in landscape
+      # whatever the orientation request, and App Store Connect takes that too (2853x2007).
+      if [ "$height" -gt "$width" ]; then duo_dir=iphone-duo; else duo_dir=iphone-duo-wide; fi
+      [ "$attempt" -lt 3 ] && [ "$duo_dir" = iphone-duo-wide ] && { duo_hinge "$udid" orient portrait > /dev/null 2>&1 || true; sleep 3; continue; }
+      mkdir -p "$out/$duo_dir"
+      snap "$udid" "$out/$duo_dir/orientation-probe.png"
+      echo "  $duo_dir orientation probe: $(png_size "$out/$duo_dir/orientation-probe.png")"
       return 0
     fi
     # Folded (cover display, ~466x678 pt) or landscape: send the angle again.
@@ -297,7 +303,6 @@ for key in $devices; do
   echo "== $key ($udid)"
   prepare "$udid"
   display=""
-  mkdir -p "$out/$key"
   if [ "$key" = iphone-duo ]; then
     # Folded first (the simulator boots folded): the cover display set.
     build_hinge || true
@@ -316,18 +321,21 @@ for key in $devices; do
     display=""
     if ! unfold_duo "$udid"; then
       finish "$udid"
-      rm -rf "${out:?}/$key"
+      rm -rf "${out:?}/iphone-duo" "${out:?}/iphone-duo-wide"
       if [ "${DUO_REQUIRED:-0}" = 1 ]; then exit 1; fi
       echo "::warning::Skipping iPhone Duo screenshots"
       continue
     fi
     screens=("${duo_screens[@]}")
+    dest="$out/$duo_dir"
   else
     screens=("${phone_screens[@]}")
+    dest="$out/$key"
   fi
+  mkdir -p "$dest"
   n=1
   for screen in "${screens[@]}"; do
-    capture "$udid" "$screen" "$out/$key/$n-$screen.png"
+    capture "$udid" "$screen" "$dest/$n-$screen.png"
     n=$((n + 1))
   done
   xcrun simctl terminate "$udid" "$bundle_id" 2>/dev/null || true

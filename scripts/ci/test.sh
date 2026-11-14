@@ -20,6 +20,10 @@ print(best[1] if best else "")
 ')
 [ -n "$device" ] || { echo "No iPhone simulator available" >&2; exit 1; }
 echo "Testing on simulator $device"
+# Cold-booting the simulator on a fresh runner takes 1.5-4 min. Start it in the background so it overlaps
+# the ~1 min build (xcodebuild waits for it); it is shut down after the tests (trap below), so it never
+# competes with the archive that follows in the same job.
+xcrun simctl boot "$device" > /dev/null 2>&1 &
 
 # No index store: CI never uses it and it costs build time.
 args=(-project Attnd.xcodeproj -scheme Attnd -destination "id=$device" CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO

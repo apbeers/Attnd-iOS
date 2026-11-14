@@ -31,7 +31,9 @@ jobs:
         run: bash scripts/ci/select_xcode.sh
       - name: Unit tests
         env:
-          ATTND_API_KEY: ${{ secrets.ATTND_API_KEY }}
+          # Live API tests are opt-in: set repo variable LIVE_API_TESTS=true (and LIVE_API_SERVER).
+          ATTND_API_KEY: ${{ vars.LIVE_API_TESTS == 'true' && secrets.ATTND_API_KEY || '' }}
+          ATTND_SERVER: ${{ vars.LIVE_API_SERVER || 'attnd-dev.herokuapp.com' }}
         run: bash scripts/ci/test.sh
       - name: Keep test results
         if: always()

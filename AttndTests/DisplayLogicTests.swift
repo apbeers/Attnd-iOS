@@ -39,8 +39,9 @@ final class DisplayLogicTests: XCTestCase {
         let chicagoDays = ScheduleGrouping.byDay(items, timeZone: chicago)
         XCTAssertEqual(chicagoDays.map { $0.items.map(\.id) }, [[1], [2, 3]])
 
+        // In UTC all three are on the 15th (05:30Z, 07:00Z, 16:00Z).
         let utcDays = ScheduleGrouping.byDay(items, timeZone: utc)
-        XCTAssertEqual(utcDays.map { $0.items.map(\.id) }, [[1, 2], [3]])
+        XCTAssertEqual(utcDays.map { $0.items.map(\.id) }, [[1, 2, 3]])
     }
 
     func testByDay_SortsDaysAndPutsUndatedLast() {

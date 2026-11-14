@@ -178,10 +178,11 @@ In Xcode: **Product → Test** (`⌘U`), or `./run_tests.command`. Unit tests (`
 
 | Trigger | What happens |
 |---------|--------------|
-| Push to `develop`/`main`, or a PR | Xcode `XCODE_VERSION` (default 27.2) on the `xcode-27` runner (macOS 27, Apple silicon; override with `MACOS_RUNNER`), unit tests on the newest iPhone simulator (`scripts/ci/test.sh`). Live API tests run only if the `ATTND_API_KEY` secret is set. |
-| Push to `develop` | Archive with the `dev` environment's `ATTND_SERVER` (the Heroku dev app), upload, wait until TestFlight processing is `VALID` (`asc.py testflight`); internal testers get it via automatic distribution. |
-| Push to `main` | Archive against `attnd.app`, upload, submit for App Review (`scripts/ci/asc.py release`); releases after approval. |
+| Pull request | Xcode `XCODE_VERSION` (default 27.2) on the `xcode-27` runner, unit tests on the newest iPhone simulator (`scripts/ci/test.sh`, which boots the simulator during the build). Live API tests only if `LIVE_API_TESTS` is set. |
+| Push to `develop` | One Mac job: unit tests, then archive with the `dev` environment's `ATTND_SERVER` and upload; a Linux job waits for TestFlight processing (internal testers get every build). |
+| Push to `main` | The same against `attnd.app`; the Linux job submits for App Review (`scripts/ci/asc.py release`), released after approval. |
 
+- Docs-only commits (`*.md`) don't run; a newer push to `develop` cancels the older run (`main` never cancels). Anything that only waits on Apple runs on Linux (Mac minutes cost ~10×).
 - Version = contents of `VERSION` + `.` + run number (e.g. `2.0.57`); build number = run number. Bump `VERSION` for a new major/minor line.
 - Signing is cloud-managed via the App Store Connect API key (`ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` secrets; the key needs the **Admin** role). No certificates or profiles are stored anywhere.
 - Server host: `ATTND_SERVER` build setting → `Info.plist` → `APIClient.serverHost` (default `attnd.app`).

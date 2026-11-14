@@ -18,7 +18,7 @@ echo "Archiving $MARKETING_VERSION ($BUILD_NUMBER) for server ${ATTND_SERVER:-at
 xcodebuild archive -project Attnd.xcodeproj -scheme Attnd -configuration Release \
   -destination 'generic/platform=iOS' -archivePath build/Attnd.xcarchive "${auth[@]}" \
   CURRENT_PROJECT_VERSION="$BUILD_NUMBER" MARKETING_VERSION="$MARKETING_VERSION" \
-  ATTND_SERVER="${ATTND_SERVER:-attnd.app}" ATTND_API_KEY=
+  ATTND_SERVER="${ATTND_SERVER:-attnd.app}" ATTND_API_KEY= COMPILER_INDEX_STORE_ENABLE=NO
 
 cat > build/ExportOptions.plist <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

@@ -20,8 +20,11 @@ print(best[1] if best else "")
 ')
 [ -n "$device" ] || { echo "No iPhone simulator available" >&2; exit 1; }
 echo "Testing on simulator $device"
+# Start booting now so the simulator is ready by the time the build finishes.
+xcrun simctl boot "$device" 2>/dev/null || true
 
-args=(-project Attnd.xcodeproj -scheme Attnd -destination "id=$device" CODE_SIGNING_ALLOWED=NO
+# No index store: CI never uses it and it costs build time.
+args=(-project Attnd.xcodeproj -scheme Attnd -destination "id=$device" CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO
       -resultBundlePath build/TestResults.xcresult)
 if [ -n "${ATTND_API_KEY:-}" ]; then
   args+=(ATTND_API_KEY="$ATTND_API_KEY" ATTND_SERVER="${ATTND_SERVER:-attnd.app}")

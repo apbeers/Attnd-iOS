@@ -1,7 +1,10 @@
 # iOS pipeline
-#   push to develop/main, or a PR   → build + unit tests on the newest iPhone simulator
-#   push to develop   → archive, upload, TestFlight internal testers (talks to the dev server)
-#   push to main      → archive, upload, submit to App Review (released when approved)
+#   pull request      → build + unit tests on the newest iPhone simulator
+#   push to develop   → one Mac job: unit tests, then archive + upload; a Linux job waits for TestFlight
+#                       processing (internal testers get every build; the build talks to the dev server)
+#   push to main      → the same, then the Linux job submits to App Review (released when approved)
+# Mac minutes cost ~10x Linux minutes, so anything that only waits on Apple runs on Linux.
+# Docs-only commits don't run; a newer push to develop cancels the older run (main never cancels).
 #
 # Signing is automatic via an App Store Connect API key — see SETUP.md.
 # Version: <VERSION file>.<run number>; build number: run number (always increasing).
@@ -10,12 +13,14 @@ name: iOS
 on:
   push:
     branches: [main, develop]
+    paths-ignore: ['**/*.md']
   pull_request:
+    paths-ignore: ['**/*.md']
   workflow_dispatch:
 
 concurrency:
   group: ios-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/develop' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -23,6 +28,8 @@ permissions:
 jobs:
   test:
     name: Build & test
+    # Delivery runs the same tests in its own job, so this one is only for pull requests and other refs.
+    if: github.event_name == 'pull_request' || (github.ref != 'refs/heads/develop' && github.ref != 'refs/heads/main')
     runs-on: ${{ vars.MACOS_RUNNER || 'xcode-27' }}
     timeout-minutes: 45
     steps:
@@ -47,11 +54,10 @@ jobs:
           retention-days: 7
 
   deliver:
-    name: ${{ github.ref == 'refs/heads/main' && 'App Store' || 'TestFlight' }}
+    name: Test, archive & upload
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
-    needs: test
     runs-on: ${{ vars.MACOS_RUNNER || 'xcode-27' }}
-    timeout-minutes: 120
+    timeout-minutes: 90
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'dev' }}
     env:
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -75,10 +81,49 @@ jobs:
           echo "$RUNNER_TEMP/asc/bin" >> "$GITHUB_PATH"
       - name: Check App Store Connect key
         run: python scripts/ci/asc.py check
+      - name: Unit tests
+        env:
+          ATTND_API_KEY: ${{ vars.LIVE_API_TESTS == 'true' && secrets.ATTND_API_KEY || '' }}
+          ATTND_SERVER: ${{ vars.LIVE_API_SERVER || 'attnd-dev-7ab893f37020.herokuapp.com' }}
+        run: bash scripts/ci/test.sh
+      - name: Keep test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ios-test-results
+          path: build/TestResults.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Archive & upload
         run: bash scripts/ci/archive_upload.sh
-      # Internal testers get every build automatically; this just waits until the
-      # build has finished processing (VALID) so the job confirms it is usable.
+
+  # Waiting on Apple's processing (and submitting for review) needs no Mac.
+  publish:
+    name: ${{ github.ref == 'refs/heads/main' && 'Submit for App Review' || 'TestFlight processing' }}
+    needs: deliver
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'dev' }}
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: |
+            scripts/ci
+            VERSION
+      - name: Version
+        run: |
+          echo "MARKETING_VERSION=$(tr -d '[:space:]' < VERSION).${{ github.run_number }}" >> "$GITHUB_ENV"
+          echo "BUILD_NUMBER=${{ github.run_number }}" >> "$GITHUB_ENV"
+      - name: App Store Connect tooling
+        run: |
+          python3 -m venv "$RUNNER_TEMP/asc"
+          "$RUNNER_TEMP/asc/bin/pip" install --quiet "pyjwt[crypto]"
+          echo "$RUNNER_TEMP/asc/bin" >> "$GITHUB_PATH"
+      # Internal testers get every build automatically; this confirms it finished processing (VALID).
       - name: Wait for TestFlight processing
         if: github.ref == 'refs/heads/develop'
         run: python scripts/ci/asc.py testflight --version "$MARKETING_VERSION" --build "$BUILD_NUMBER"

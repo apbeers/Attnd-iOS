@@ -18,7 +18,8 @@ App Store Connect automation for CI (App Store Connect API, no fastlane).
 
     asc.py screenshots [--dir build/screenshots/composed] [--locale en-US] [--version 2.0]
         Replace the editable version's screenshots for our display types with the composed PNGs
-        (<dir>/iphone-69 -> APP_IPHONE_67, iphone-63 -> APP_IPHONE_61, iphone-duo -> APP_IPHONE_DUO),
+        (<dir>/iphone-69 -> APP_IPHONE_67, iphone-63 -> APP_IPHONE_61, iphone-duo (unfolded) then
+        iphone-duo-cover (folded) -> APP_IPHONE_DUO),
         in file-name order, and wait until App Store Connect has processed them.
 
     The editable version is the one in an editable state (e.g. Prepare for Submission). metadata and
@@ -347,11 +348,14 @@ def metadata(args, app):
 # not yet in Apple's ScreenshotDisplayType reference, but the live API creates the set and accepts uploads
 # at the inner (2007x2853) and outer (1398x2034) display sizes. Duo screenshots are required from April 2027
 # for apps built with the iOS 27.1 SDK or later (we are), and add the "made for iPhone Duo" badge.
-SCREENSHOT_TYPES = {
-    'iphone-69': ('APP_IPHONE_67', (1320, 2868)),
-    'iphone-63': ('APP_IPHONE_61', (1206, 2622)),
-    'iphone-duo': ('APP_IPHONE_DUO', (2007, 2853)),
-}
+# Folder -> (display type, exact size), in upload order. Several folders can share a display type: the
+# iPhone Duo set gets the unfolded (inner display) screenshots first, then the folded (cover display) ones.
+SCREENSHOT_TYPES = [
+    ('iphone-69', 'APP_IPHONE_67', (1320, 2868)),
+    ('iphone-63', 'APP_IPHONE_61', (1206, 2622)),
+    ('iphone-duo', 'APP_IPHONE_DUO', (2007, 2853)),
+    ('iphone-duo-cover', 'APP_IPHONE_DUO', (1398, 2034)),
+]
 
 
 def png_info(path):
@@ -365,22 +369,24 @@ def png_info(path):
 
 
 def screenshot_plan(root):
-    plan = []
-    for folder, (display_type, size) in SCREENSHOT_TYPES.items():
+    """[(display type, [paths])] with each display type once, files in folder then file-name order."""
+    grouped = {}
+    for folder, display_type, size in SCREENSHOT_TYPES:
         files = sorted((pathlib.Path(root) / folder).glob('*.png'))
         if not files:
-            print(f'::warning::No screenshots in {root}/{folder}; {display_type} left as it is')
+            print(f'::warning::No screenshots in {root}/{folder}')
             continue
-        if len(files) > 10:
-            sys.exit(f'{root}/{folder}: {len(files)} screenshots (App Store maximum is 10)')
         for path in files:
             width, height, colour = png_info(path)
             if (width, height) != size or colour != 2:
                 sys.exit(f'{path}: {width}x{height} colour type {colour}; expected {size[0]}x{size[1]} RGB')
-        plan.append((display_type, files))
-    if not plan:
+        grouped.setdefault(display_type, []).extend(files)
+    for display_type, files in grouped.items():
+        if len(files) > 10:
+            sys.exit(f'{display_type}: {len(files)} screenshots (App Store maximum is 10)')
+    if not grouped:
         sys.exit(f'No screenshots under {root}')
-    return plan
+    return list(grouped.items())
 
 
 def http_upload(operation, chunk):

@@ -13,7 +13,8 @@ the device, PNG, RGB (no alpha):
 
     iphone-69   1320 x 2868   (iPhone with Dynamic Island, large display  -> APP_IPHONE_67)
     iphone-63   1206 x 2622   (iPhone with Dynamic Island, medium display -> APP_IPHONE_61)
-    iphone-duo  2007 x 2853   (iPhone Duo, inner display                  -> APP_IPHONE_DUO)
+    iphone-duo        2007 x 2853   (iPhone Duo unfolded, inner display    -> APP_IPHONE_DUO)
+    iphone-duo-cover  1398 x 2034   (iPhone Duo folded, cover display      -> APP_IPHONE_DUO, after the unfolded ones)
 
 A device folder may hold orientation-probe.png (the app's red-over-blue probe screen, captured on
 the same display): every capture in that folder is then rotated the way that makes the probe upright.
@@ -34,6 +35,7 @@ SIZES = {
     'iphone-69': (1320, 2868),
     'iphone-63': (1206, 2622),
     'iphone-duo': (2007, 2853),
+    'iphone-duo-cover': (1398, 2034),
 }
 
 TOP = (0x43, 0x1F, 0x86)     # brand purple

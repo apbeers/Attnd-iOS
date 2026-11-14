@@ -12,14 +12,18 @@
 # Devices (newest iOS runtime; device types picked from `simctl list runtimes/devicetypes -j`):
 #   iphone-69   newest "iPhone NN Pro Max"  (6.9", 1320x2868)
 #   iphone-63   newest "iPhone NN Pro"      (6.3", 1206x2622)
-#   iphone-duo  "iPhone Duo"                (inner display unfolded, 2007x2853). The simulator boots
-#               folded on its cover display and simctl can't unfold it, so scripts/ci/duo_hinge.m (an
+#   iphone-duo  "iPhone Duo", captured twice:
+#                 folded   -> raw/iphone-duo-cover/  (cover display, 1398x2034)
+#                 unfolded -> raw/iphone-duo/        (inner display, 2007x2853)
+#               The simulator boots folded on its cover display and simctl can't unfold it, so scripts/ci/duo_hinge.m (an
 #               in-simulator helper using private SPI, see there) sets the hinge flat. The app's ready
 #               marker reports its window size, which must be the inner display (>= 600 pt wide,
 #               portrait) before anything is captured; a foldable needs `screenshot --display=<name>`
 #               (the active display, from devicectl). An orientation probe (red over blue) is captured
 #               too, so compose_screenshots.py can rotate the inner display's captures upright. If
 #               unfolding fails, the Duo screenshots are skipped with a warning (DUO_REQUIRED=1: fail).
+#               The folded set is checked the same way (window < 600 pt wide, portrait) and has its own
+#               probe; if it fails only the folded set is skipped.
 # Env: ATTND_API_KEY (required: static key for the dev server)
 #      ATTND_SERVER (default attnd-dev-7ab893f37020.herokuapp.com; the static key only works there)
 #      SCREENSHOT_DEVICES (default "iphone-69 iphone-63 iphone-duo")
@@ -33,7 +37,8 @@ devices="${SCREENSHOT_DEVICES:-iphone-69 iphone-63 iphone-duo}"
 event_code="${SCREENSHOT_EVENT_CODE:-DEMO}"
 settle="${SETTLE_SECONDS:-5}"
 phone_screens=(map schedule location locations updates)
-duo_screens=(map-pane location schedule updates)
+duo_screens=(map-pane location schedule updates)          # unfolded, inner display
+duo_cover_screens=(map schedule location updates)           # folded, cover display
 
 out=build/screenshots/raw
 display=""     # the display to capture (set for the iPhone Duo only)
@@ -216,15 +221,48 @@ duo_hinge() {  # udid args…  (runs the helper inside the simulator)
   xcrun simctl spawn "$udid" "$PWD/build/duo-hinge" "$@"
 }
 
-# Unfolds the Duo flat in portrait and checks that the app's window is on the inner display.
-unfold_duo() {  # udid → 0 when the inner display hosts the app in portrait
-  local udid=$1 attempt width height
+build_hinge() {  # → 0 when build/duo-hinge is ready
+  [ -x build/duo-hinge ] && return 0
   if ! xcrun -sdk iphonesimulator clang -arch "$(uname -m)" -mios-simulator-version-min=17.0 -O2 -fobjc-arc \
       -o build/duo-hinge scripts/ci/duo_hinge.m -framework IOKit -framework CoreFoundation \
       -framework Foundation -framework CoreMotion \
       || ! codesign -f -s - build/duo-hinge; then
-    echo "::warning::Could not build the iPhone Duo hinge helper"; return 1
+    echo "::warning::Could not build the iPhone Duo hinge helper"; rm -f build/duo-hinge; return 1
   fi
+}
+
+# Folds the Duo (it boots folded; closing again is harmless) and checks that the app's window is on
+# the cover display in portrait. Captures the orientation probe for the cover set.
+fold_duo() {  # udid → 0 when the cover display hosts the app in portrait
+  local udid=$1 attempt width height
+  for attempt in 1 2 3; do
+    if [ -x build/duo-hinge ]; then
+      duo_hinge "$udid" set 0 5 > /dev/null 2>&1 || true
+      duo_hinge "$udid" orient portrait > /dev/null 2>&1 || true
+      sleep 3
+    fi
+    display=$(active_display "$udid")
+    [ -n "$display" ] || display=LCD
+    clean_status_bar "$udid"
+    launch_screen "$udid" orientation-probe || return 1
+    width=${ready_size%x*}; height=${ready_size#*x}
+    echo "iPhone Duo folded: display $display, app window $ready_size pt"
+    if [ "$width" -lt 600 ] 2>/dev/null && [ "$height" -gt "$width" ]; then
+      mkdir -p "$out/iphone-duo-cover"
+      snap "$udid" "$out/iphone-duo-cover/orientation-probe.png"
+      echo "  orientation probe: $(png_size "$out/iphone-duo-cover/orientation-probe.png")"
+      return 0
+    fi
+    [ -x build/duo-hinge ] || break
+  done
+  echo "::warning::The iPhone Duo never showed the app on its folded cover display in portrait (last: ${ready_size:-?} pt)"
+  return 1
+}
+
+# Unfolds the Duo flat in portrait and checks that the app's window is on the inner display.
+unfold_duo() {  # udid → 0 when the inner display hosts the app in portrait
+  local udid=$1 attempt width height
+  build_hinge || return 1
   for attempt in 1 2 3; do
     duo_hinge "$udid" set 180 5 || { echo "::warning::Could not unfold the iPhone Duo simulator (attempt $attempt)"; continue; }
     duo_hinge "$udid" orient portrait || true
@@ -257,6 +295,21 @@ for key in $devices; do
   display=""
   mkdir -p "$out/$key"
   if [ "$key" = iphone-duo ]; then
+    # Folded first (the simulator boots folded): the cover display set.
+    build_hinge || true
+    if fold_duo "$udid"; then
+      n=1
+      for screen in "${duo_cover_screens[@]}"; do
+        capture "$udid" "$screen" "$out/iphone-duo-cover/$n-$screen.png"
+        n=$((n + 1))
+      done
+    else
+      rm -rf "${out:?}/iphone-duo-cover"
+      if [ "${DUO_REQUIRED:-0}" = 1 ]; then exit 1; fi
+      echo "::warning::Skipping folded iPhone Duo screenshots"
+    fi
+    # Then unfolded: the inner display set.
+    display=""
     if ! unfold_duo "$udid"; then
       finish "$udid"
       rm -rf "${out:?}/$key"

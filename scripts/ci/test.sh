@@ -20,8 +20,6 @@ print(best[1] if best else "")
 ')
 [ -n "$device" ] || { echo "No iPhone simulator available" >&2; exit 1; }
 echo "Testing on simulator $device"
-# Start booting now so the simulator is ready by the time the build finishes.
-xcrun simctl boot "$device" 2>/dev/null || true
 
 # No index store: CI never uses it and it costs build time.
 args=(-project Attnd.xcodeproj -scheme Attnd -destination "id=$device" CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO
@@ -33,4 +31,6 @@ else
   args+=(-skip-testing:AttndTests/APIClientIntegrationTests)
 fi
 rm -rf build/TestResults.xcresult
+# Shut the simulator down afterwards: left running, it slows the archive that follows in the same job.
+trap 'xcrun simctl shutdown all 2>/dev/null || true' EXIT
 xcodebuild test "${args[@]}"

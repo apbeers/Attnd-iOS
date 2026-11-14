@@ -14,3 +14,12 @@ fi
 sudo xcode-select -s "$app/Contents/Developer"
 xcodebuild -version
 xcrun --sdk iphoneos --show-sdk-version
+
+# The runner image ships tvOS/watchOS simulator devices whose runtimes aren't installed. Every xcodebuild
+# run then logs "DVTAssertions: Warning ... SimDevice native architecture is nil" for each of them; the
+# devices can never boot, so delete them (only devices simctl itself reports as unavailable).
+unavailable=$(xcrun simctl list devices unavailable | grep -c '(unavailable' || true)
+if [ "$unavailable" -gt 0 ]; then
+  xcrun simctl delete unavailable
+  echo "Deleted $unavailable unavailable simulator device(s) (runtime not installed)"
+fi

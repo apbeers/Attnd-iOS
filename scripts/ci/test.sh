@@ -19,7 +19,16 @@ for runtime, devs in data.items():
 print(best[1] if best else "")
 ')
 [ -n "$device" ] || { echo "No iPhone simulator available" >&2; exit 1; }
-echo "Testing on simulator $device"
+device_label=$(xcrun simctl list devices -j | python3 -c '
+import json, sys
+udid = sys.argv[1]
+for runtime, devices in json.load(sys.stdin)["devices"].items():
+    for d in devices:
+        if d["udid"] == udid:
+            version = runtime.rsplit(".", 1)[-1].replace("iOS-", "iOS ").replace("-", ".")
+            print(d["name"] + ", " + version)
+' "$device" 2>/dev/null || true)
+echo "Testing on ${device_label:-simulator} ($device)"
 # Cold-booting the simulator on a fresh runner takes 1.5-4 min. Start it in the background so it overlaps
 # the ~1 min build (xcodebuild waits for it); it is shut down after the tests (trap below), so it never
 # competes with the archive that follows in the same job.
@@ -35,6 +44,11 @@ else
   args+=(-skip-testing:AttndTests/APIClientIntegrationTests)
 fi
 rm -rf build/TestResults.xcresult
+mkdir -p build
 # Shut the simulator down afterwards: left running, it slows the archive that follows in the same job.
 trap 'xcrun simctl shutdown all 2>/dev/null || true' EXIT
-xcodebuild test "${args[@]}"
+# The log is kept for the warnings summary (annotations only; it never changes the result).
+status=0
+xcodebuild test "${args[@]}" 2>&1 | tee build/xcodebuild-test.log || status=$?
+python3 scripts/ci/warnings.py build/xcodebuild-test.log "Build & unit tests" || true
+exit "$status"

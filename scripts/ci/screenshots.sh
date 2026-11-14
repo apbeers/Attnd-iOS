@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Capture raw App Store screenshots on simulators (macOS runner; see .github/workflows/store-listing.yml).
+# Capture raw App Store screenshots on simulators (macOS runner; see .github/workflows/store-screenshots.yml).
 #
 #   ATTND_API_KEY=… scripts/ci/screenshots.sh
 #
@@ -127,10 +127,14 @@ done <<< "$plan"
 xcrun simctl shutdown all 2>/dev/null || true  # nothing else competing with the build
 echo "Building for the simulator against $server"
 build_started=$SECONDS
+# A concrete simulator as the destination: the generic "Any iOS Simulator Device" placeholder makes
+# xcodebuild log "missing operatingSystemVersion". The build runs on every screenshot simulator (same SDK).
+build_udid=$(printf '%s' "$udids" | head -n 1 | cut -d' ' -f2)
 xcodebuild build -project Attnd.xcodeproj -scheme Attnd -configuration Debug \
-  -destination 'generic/platform=iOS Simulator' -derivedDataPath build/ScreenshotsDerivedData \
+  -destination "id=$build_udid" -derivedDataPath build/ScreenshotsDerivedData \
   ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO \
-  ATTND_API_KEY="$ATTND_API_KEY" ATTND_SERVER="$server" -quiet
+  ATTND_API_KEY="$ATTND_API_KEY" ATTND_SERVER="$server" -quiet 2>&1 | tee build/xcodebuild-screenshots.log
+python3 scripts/ci/warnings.py build/xcodebuild-screenshots.log "Screenshot build" || true
 app=build/ScreenshotsDerivedData/Build/Products/Debug-iphonesimulator/Attnd.app
 bundle_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")
 echo "Built $app ($bundle_id) in $((SECONDS - build_started)) s"

@@ -153,9 +153,9 @@ private struct DataScannerRepresentable: UIViewControllerRepresentable {
     }
 }
 
-// The delegate protocol is main-actor bound in VisionKit; @preconcurrency keeps
-// this compiling (with a runtime check) should an SDK declare it nonisolated.
-extension DataScannerRepresentable.Coordinator: @preconcurrency DataScannerViewControllerDelegate {
+// DataScannerViewControllerDelegate is @MainActor in VisionKit, like the coordinator, so the
+// conformance is isolated as is (no @preconcurrency needed).
+extension DataScannerRepresentable.Coordinator: DataScannerViewControllerDelegate {
     func dataScanner(
         _ dataScanner: DataScannerViewController,
         didAdd addedItems: [RecognizedItem],

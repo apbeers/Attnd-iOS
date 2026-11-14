@@ -41,11 +41,17 @@ printf '%s\n' "$ASC_KEY_P8" > "$key_path"
 auth=(-allowProvisioningUpdates -authenticationKeyPath "$key_path"
       -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID")
 
+# Both xcodebuild runs are logged for the warnings summary (annotations only; never fails the job).
+mkdir -p build
+log=build/xcodebuild-archive.log
+: > "$log"
+trap 'python3 scripts/ci/warnings.py "$log" "Archive & upload" || true; cleanup' EXIT
+
 echo "Archiving $MARKETING_VERSION ($BUILD_NUMBER) for server ${ATTND_SERVER:-attnd.app}"
 xcodebuild archive -project Attnd.xcodeproj -scheme Attnd -configuration Release \
   -destination 'generic/platform=iOS' -archivePath build/Attnd.xcarchive "${auth[@]}" \
   CURRENT_PROJECT_VERSION="$BUILD_NUMBER" MARKETING_VERSION="$MARKETING_VERSION" \
-  ATTND_SERVER="${ATTND_SERVER:-attnd.app}" ATTND_API_KEY= COMPILER_INDEX_STORE_ENABLE=NO
+  ATTND_SERVER="${ATTND_SERVER:-attnd.app}" ATTND_API_KEY= COMPILER_INDEX_STORE_ENABLE=NO 2>&1 | tee -a "$log"
 
 cat > build/ExportOptions.plist <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -63,5 +69,5 @@ PLIST
 
 # destination=upload sends the build straight to App Store Connect.
 xcodebuild -exportArchive -archivePath build/Attnd.xcarchive -exportPath build/export \
-  -exportOptionsPlist build/ExportOptions.plist "${auth[@]}"
+  -exportOptionsPlist build/ExportOptions.plist "${auth[@]}" 2>&1 | tee -a "$log"
 echo "Uploaded build $BUILD_NUMBER"

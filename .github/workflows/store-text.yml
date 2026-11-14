@@ -24,7 +24,7 @@ permissions:
 jobs:
   text:
     name: ${{ inputs.upload && 'Validate & upload listing text' || 'Validate listing text' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'dev' }}
     env:
@@ -48,7 +48,7 @@ jobs:
         if: inputs.upload
         run: |
           python3 -m venv "$RUNNER_TEMP/asc"
-          "$RUNNER_TEMP/asc/bin/pip" install --quiet "pyjwt[crypto]"
+          "$RUNNER_TEMP/asc/bin/pip" install --quiet --disable-pip-version-check "pyjwt[crypto]"
           echo "$RUNNER_TEMP/asc/bin" >> "$GITHUB_PATH"
       - name: Upload listing text
         if: inputs.upload

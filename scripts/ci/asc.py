@@ -351,12 +351,14 @@ def metadata(args, app):
 # for apps built with the iOS 27.1 SDK or later (we are), and add the "made for iPhone Duo" badge.
 # Folder -> (display type, exact size), in upload order. Several folders can share a display type: the
 # iPhone Duo set gets the unfolded (inner display) screenshots first, then the folded (cover display) ones.
+# (folder, display type, size, slot). Folders that share a slot are alternatives: screenshots.sh writes the
+# unfolded iPhone Duo set to iphone-duo (portrait) or iphone-duo-wide (landscape), never both.
 SCREENSHOT_TYPES = [
-    ('iphone-69', 'APP_IPHONE_67', (1320, 2868)),
-    ('iphone-63', 'APP_IPHONE_61', (1206, 2622)),
-    ('iphone-duo', 'APP_IPHONE_DUO', (2007, 2853)),
-    ('iphone-duo-wide', 'APP_IPHONE_DUO', (2853, 2007)),
-    ('iphone-duo-cover', 'APP_IPHONE_DUO', (1398, 2034)),
+    ('iphone-69', 'APP_IPHONE_67', (1320, 2868), 'iPhone 6.9"'),
+    ('iphone-63', 'APP_IPHONE_61', (1206, 2622), 'iPhone 6.3"'),
+    ('iphone-duo', 'APP_IPHONE_DUO', (2007, 2853), 'iPhone Duo unfolded'),
+    ('iphone-duo-wide', 'APP_IPHONE_DUO', (2853, 2007), 'iPhone Duo unfolded'),
+    ('iphone-duo-cover', 'APP_IPHONE_DUO', (1398, 2034), 'iPhone Duo folded'),
 ]
 
 
@@ -372,17 +374,21 @@ def png_info(path):
 
 def screenshot_plan(root):
     """[(display type, [paths])] with each display type once, files in folder then file-name order."""
-    grouped = {}
-    for folder, display_type, size in SCREENSHOT_TYPES:
+    grouped, filled = {}, set()
+    for folder, display_type, size, slot in SCREENSHOT_TYPES:
         files = sorted((pathlib.Path(root) / folder).glob('*.png'))
         if not files:
-            print(f'::warning::No screenshots in {root}/{folder}')
             continue
+        filled.add(slot)
         for path in files:
             width, height, colour = png_info(path)
             if (width, height) != size or colour != 2:
                 sys.exit(f'{path}: {width}x{height} colour type {colour}; expected {size[0]}x{size[1]} RGB')
         grouped.setdefault(display_type, []).extend(files)
+    for slot in dict.fromkeys(slot for *_, slot in SCREENSHOT_TYPES):
+        if slot not in filled:
+            folders = ' or '.join(f'{root}/{f}' for f, *_, s in SCREENSHOT_TYPES if s == slot)
+            print(f'::warning::No {slot} screenshots (expected in {folders})')
     for display_type, files in grouped.items():
         if len(files) > 10:
             sys.exit(f'{display_type}: {len(files)} screenshots (App Store maximum is 10)')
@@ -444,7 +450,7 @@ def wait_for_screenshots(ids, timeout_min=15):
 
 
 def screenshots(args, app):
-    plan = screenshot_plan(args.dir)
+    plan = args.plan
     version_id, version_string = editable_version(app, args.version)
     print(f'Editable App Store version: {version_string} ({version_id})')
     loc_id = version_localization(version_id, args.locale)
@@ -571,7 +577,7 @@ def main():
             print('Store listing OK')
             return
     if args.command == 'screenshots':
-        screenshot_plan(args.dir)  # validate sizes before touching anything
+        args.plan = screenshot_plan(args.dir)  # validate sizes before touching anything
     app = app_id(os.environ.get('ASC_BUNDLE_ID', 'com.arcu.Attnd'))
     {'testflight': testflight, 'release': release, 'metadata': metadata, 'screenshots': screenshots}[args.command](args, app)
 

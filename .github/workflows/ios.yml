@@ -82,7 +82,7 @@ jobs:
       - name: App Store Connect tooling
         run: |
           python3 -m venv "$RUNNER_TEMP/asc"
-          "$RUNNER_TEMP/asc/bin/pip" install --quiet "pyjwt[crypto]"
+          "$RUNNER_TEMP/asc/bin/pip" install --quiet --disable-pip-version-check "pyjwt[crypto]"
           echo "$RUNNER_TEMP/asc/bin" >> "$GITHUB_PATH"
       - name: Check App Store Connect key
         run: python scripts/ci/asc.py check
@@ -118,7 +118,7 @@ jobs:
   publish:
     name: ${{ github.ref == 'refs/heads/main' && 'Submit for App Review' || 'TestFlight processing' }}
     needs: deliver
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 90
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'dev' }}
     env:
@@ -139,7 +139,7 @@ jobs:
       - name: App Store Connect tooling
         run: |
           python3 -m venv "$RUNNER_TEMP/asc"
-          "$RUNNER_TEMP/asc/bin/pip" install --quiet "pyjwt[crypto]"
+          "$RUNNER_TEMP/asc/bin/pip" install --quiet --disable-pip-version-check "pyjwt[crypto]"
           echo "$RUNNER_TEMP/asc/bin" >> "$GITHUB_PATH"
       # Internal testers get every build automatically; this confirms it finished processing (VALID).
       - name: Wait for TestFlight processing

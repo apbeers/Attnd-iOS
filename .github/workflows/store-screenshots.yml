@@ -37,7 +37,7 @@ jobs:
       - name: Pillow
         run: |
           python3 -m venv "$RUNNER_TEMP/shots"
-          "$RUNNER_TEMP/shots/bin/pip" install --quiet Pillow
+          "$RUNNER_TEMP/shots/bin/pip" install --quiet --disable-pip-version-check Pillow
       - name: Capture (simulators, dev server, event DEMO)
         env:
           # Static key: only valid on the dev server, which has the always-live DEMO event.
@@ -65,7 +65,7 @@ jobs:
     name: Upload screenshots to App Store Connect
     needs: screenshots
     if: github.event_name == 'push' || inputs.upload
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'dev' }}
     permissions:
@@ -84,7 +84,7 @@ jobs:
       - name: App Store Connect tooling
         run: |
           python3 -m venv "$RUNNER_TEMP/asc"
-          "$RUNNER_TEMP/asc/bin/pip" install --quiet "pyjwt[crypto]"
+          "$RUNNER_TEMP/asc/bin/pip" install --quiet --disable-pip-version-check "pyjwt[crypto]"
           echo "$RUNNER_TEMP/asc/bin" >> "$GITHUB_PATH"
       - name: Check App Store Connect key
         run: python scripts/ci/asc.py check

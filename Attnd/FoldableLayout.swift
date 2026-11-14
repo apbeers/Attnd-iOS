@@ -46,6 +46,8 @@ enum ReservedRegionReader {
     /// Reserved hardware regions in the proxy's local coordinate space, leading = minX.
     @MainActor
     static func rects(in proxy: GeometryProxy) -> [CGRect] {
+        // Compiled only with the iOS 27 SDK (Xcode 27 / Swift 6.3+); older toolchains skip it.
+        #if compiler(>=6.3)
         if #available(iOS 27.0, *) {
             // ⚠️ VERIFY: exact parameter types/values and the element's rect property.
             // Intent: every kind of hardware occlusion (fold + camera), in local
@@ -57,6 +59,7 @@ enum ReservedRegionReader {
             )
             return regions.map { $0.frame }
         }
+        #endif
         return []
     }
 }
@@ -67,9 +70,11 @@ extension ToolbarItemPlacement {
     /// A trailing item the system keeps visible (never moved to the overflow menu,
     /// still shown in the vertical bars of iPhone Duo's wide postures).
     static var pinnedTrailing: ToolbarItemPlacement {
+        #if compiler(>=6.3)
         if #available(iOS 27.0, *) {
             return .topBarPinnedTrailing // ⚠️ VERIFY spelling
         }
+        #endif
         return .topBarTrailing
     }
 }

@@ -23,7 +23,7 @@ permissions:
 jobs:
   test:
     name: Build & test
-    runs-on: macos-latest
+    runs-on: ${{ vars.MACOS_RUNNER || 'macos-26' }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
@@ -46,7 +46,7 @@ jobs:
     name: ${{ github.ref == 'refs/heads/main' && 'App Store' || 'TestFlight' }}
     if: github.event_name == 'push' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
     needs: test
-    runs-on: macos-latest
+    runs-on: ${{ vars.MACOS_RUNNER || 'macos-26' }}
     timeout-minutes: 120
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'dev' }}
     env:

@@ -15,6 +15,7 @@
 //     List or ScrollView. Each pane brings its own NavigationStack.
 //   - Layout decisions use size classes and container geometry, never screen size.
 
+import MapKit
 import SwiftUI
 
 struct MapTab: View {
@@ -54,6 +55,7 @@ struct MapArrangement<Primary: View, Secondary: View>: View {
     @ViewBuilder var secondary: Secondary
 
     var body: some View {
+        #if compiler(>=6.3)
         if #available(iOS 27.0, *) {
             ArrangementView {
                 primary
@@ -64,6 +66,9 @@ struct MapArrangement<Primary: View, Secondary: View>: View {
         } else {
             FallbackArrangement(primary: primary, secondary: secondary)
         }
+        #else
+        FallbackArrangement(primary: primary, secondary: secondary)
+        #endif
     }
 }
 

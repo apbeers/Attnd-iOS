@@ -155,7 +155,7 @@ In Xcode: **Product → Test** (`⌘U`), or `./run_tests.command`. Unit tests (`
 
 | Trigger | What happens |
 |---------|--------------|
-| Any push / PR | Newest Xcode on `macos-latest`, unit tests on the newest iPhone simulator (`scripts/ci/test.sh`). Live API tests run only if the `ATTND_API_KEY` secret is set. |
+| Push to `develop`/`main`, or a PR | Newest Xcode on `macos-latest`, unit tests on the newest iPhone simulator (`scripts/ci/test.sh`). Live API tests run only if the `ATTND_API_KEY` secret is set. |
 | Push to `develop` | Archive with the `dev` environment's `ATTND_SERVER` (the Heroku dev app), upload, add to the TestFlight group in `TESTFLIGHT_GROUP`. |
 | Push to `main` | Archive against `attnd.app`, upload, submit for App Review (`scripts/ci/asc.py release`); releases after approval. |
 

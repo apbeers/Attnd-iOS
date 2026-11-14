@@ -1,5 +1,5 @@
 # iOS pipeline
-#   every push / PR   → build + unit tests on the newest iPhone simulator
+#   push to develop/main, or a PR   → build + unit tests on the newest iPhone simulator
 #   push to develop   → archive, upload, TestFlight internal testers (talks to the dev server)
 #   push to main      → archive, upload, submit to App Review (released when approved)
 #
@@ -9,7 +9,7 @@ name: iOS
 
 on:
   push:
-    branches: ['**']
+    branches: [main, develop]
   pull_request:
   workflow_dispatch:
 

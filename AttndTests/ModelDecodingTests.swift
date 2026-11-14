@@ -324,4 +324,80 @@ final class ModelDecodingTests: XCTestCase {
         let empty = try JSONDecoder().decode(AppStatus.self, from: Data("{}".utf8))
         XCTAssertEqual(empty.update, .upToDate)
     }
+
+
+    // MARK: - Saved event (API-007 offline copy)
+
+    private func savedEvent(eventId: Int = 1, code: String = "FWFM2026", json: String? = nil) -> SavedEvent {
+        SavedEvent(
+            eventId: eventId,
+            eventCode: code,
+            etag: "\"v15\"",
+            lastRefreshed: Date(timeIntervalSince1970: 1_800_000_000),
+            bundleJSON: Data((json ?? #"{"content_version":15,"event":\#(fullEvent)}"#).utf8)
+        )
+    }
+
+    func testSavedEvent_RoundTripsAndDecodesTheRawBundle() throws {
+        let saved = savedEvent()
+        let restored = try SavedEvent.decode(SavedEvent.encode(saved))
+        XCTAssertEqual(restored, saved)
+        let bundle = try restored.decodedBundle()
+        XCTAssertEqual(bundle.event.id, 1)
+        XCTAssertEqual(bundle.contentVersion, 15)
+        XCTAssertEqual(bundle.event.eventCode, "FWFM2026")
+        XCTAssertEqual(restored.etag, "\"v15\"")
+        XCTAssertEqual(restored.lastRefreshed, Date(timeIntervalSince1970: 1_800_000_000))
+    }
+
+    func testSavedEvent_KeepsUnknownKeysForNewerBuilds() throws {
+        // The raw server body is stored as is, so fields this build ignores survive on disk.
+        let json = #"{"event":{"id":1,"name":"X","future_field":42},"future_list":[1,2]}"#
+        let saved = savedEvent(json: json)
+        let restored = try SavedEvent.decode(SavedEvent.encode(saved))
+        XCTAssertEqual(String(decoding: restored.bundleJSON, as: UTF8.self), json)
+        XCTAssertEqual(try restored.decodedBundle().event.name, "X")
+    }
+
+    func testSavedEvent_RejectsAnotherEventsBundle() {
+        let saved = savedEvent(eventId: 2)
+        XCTAssertThrowsError(try saved.decodedBundle())
+    }
+
+    func testSavedEvent_RejectsUnknownFormatAndCorruptBundle() {
+        var future = savedEvent()
+        future.format = SavedEvent.currentFormat + 1
+        XCTAssertThrowsError(try future.decodedBundle())
+        XCTAssertThrowsError(try savedEvent(json: "not json").decodedBundle())
+        XCTAssertThrowsError(try SavedEvent.decode(Data("{}".utf8)))
+    }
+
+    func testSavedEvent_BelongsToSavedCodeCaseInsensitively() {
+        let saved = savedEvent(code: "FWFM2026")
+        XCTAssertTrue(saved.belongs(toEventCode: "fwfm2026"))
+        XCTAssertFalse(saved.belongs(toEventCode: "OTHER"))
+        XCTAssertFalse(saved.belongs(toEventCode: nil), "no saved code means the user left")
+        XCTAssertFalse(saved.belongs(toEventCode: ""))
+    }
+
+    // MARK: - Push token in requests (API-007)
+
+    func testEmptyPushToken_IsOmittedNotSentEmpty() throws {
+        XCTAssertNil(APIClient.nonEmpty(""))
+        XCTAssertNil(APIClient.nonEmpty("  "))
+        XCTAssertNil(APIClient.nonEmpty(nil))
+        XCTAssertEqual(APIClient.nonEmpty("ff00"), "ff00")
+        let body = DeviceRequest(deviceId: "abc", pushToken: APIClient.nonEmpty(""), appVersion: nil, subscribed: false)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(body)) as? [String: Any])
+        XCTAssertFalse(json.keys.contains("push_token"))
+        XCTAssertEqual(json["subscribed"] as? Bool, false)
+    }
+
+    func testDeviceRequest_TokenWithSubscribedFalse() throws {
+        // Silent pushes need the token on the server even when alerts are off.
+        let body = DeviceRequest(deviceId: "abc", pushToken: "ff00", appVersion: nil, subscribed: false)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(body)) as? [String: Any])
+        XCTAssertEqual(json["push_token"] as? String, "ff00")
+        XCTAssertEqual(json["subscribed"] as? Bool, false)
+    }
 }

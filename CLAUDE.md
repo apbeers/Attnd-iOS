@@ -37,23 +37,23 @@ attnd-web is the coordinating repo. The API contract ([`API_V2.md`](https://gith
 |------|---------|
 | `AttndApp.swift` | App entry point; installs `AppDelegate`, wires Universal Links |
 | `AppDelegate.swift` | Owns `AppState`; APNs token registration, silent pushes, notification taps |
-| `AppState.swift` | `@MainActor @Observable` state: event, bundle content, display config, selected tab, device ID, push token, preferences; bundle refresh with ETag; `track(_:detail:)` and `UsageReporter` (API-005) |
+| `AppState.swift` | `@MainActor @Observable` state: event, bundle content, display config, selected tab, device ID, push token, preferences; bundle refresh with ETag; restore/save of the offline copy, `content_updated` handling, `liveRefreshInterval` (API-007); `track(_:detail:)` and `UsageReporter` (API-005); actors `EventStore` (saved bundle on disk) and `ImageStore` (image/flyer cache) + `ImageMemoryCache` |
 | `APIClient.swift` | Stateless, `Sendable` v2 client; async/await; 401 → re-attest → retry once |
-| `Models.swift` | v2 models (`Event`, `Location`, `ScheduleItem`, `AppNotification`, `DisplayConfig`, `EventBundle`, request bodies, `PushPayload`) with lenient decoding; usage types (`UsageMetric`, `UsageEntry`, `UsageRequest`, pure `UsageAggregator`) |
+| `Models.swift` | v2 models (`Event`, `Location`, `ScheduleItem`, `AppNotification`, `DisplayConfig`, `EventBundle`, request bodies, `PushPayload`) with lenient decoding; usage types (`UsageMetric`, `UsageEntry`, `UsageRequest`, pure `UsageAggregator`); `SavedEvent` (the on-disk format of the offline copy) |
 | `DisplayLogic.swift` | Pure, unit-tested logic: schedule grouping (timeline/by day/by location/now-next), location grouping, search, map clustering & framing, fold-avoiding insets |
-| `Helpers.swift` | ISO 8601 parsing, event-time-zone formatting, hex colours, deep-link/QR parsing, `SupportInfo` (support code, copyable support text, device model), `ScreenshotMode` (App Store screenshots, see Store listing) |
+| `Helpers.swift` | ISO 8601 parsing, event-time-zone formatting, hex colours, deep-link/QR parsing, `SupportInfo` (support code, copyable support text, device model), live-update rules (`LiveRefreshPolicy`, `ContentUpdatePolicy`, `RefreshProblem`, `LastUpdatedText`), `MediaCache` (image cache naming, prefetch set, pruning, MIME sniffing), `ScreenshotMode` (App Store screenshots, see Store listing) |
 | `AttestationManager.swift` | Apple App Attest key generation, attestation, and JWT token caching |
 | `KeychainHelper.swift` | Keychain read/write wrapper |
 | `LocationPermissionManager.swift` | One-shot async location request |
-| `ContentView.swift` | `AppRootView` (launch vs. event) and the server-driven `TabView`; refresh triggers (incl. 5 s live poll); floating demo / ended badge; accent tint |
+| `ContentView.swift` | `AppRootView` (launch vs. event) and the server-driven `TabView`; refresh triggers (activation, fallback poll at `liveRefreshInterval`); floating demo / ended / offline badges; accent tint |
 | `LaunchScreen.swift` | Nearby events, system search for a code/exact name, QR scanner |
 | `MapArrangement.swift` | Map tab: map + secondary pane via `ArrangementView` on regular width |
 | `MapView.swift` | Map with clustering, fit-all, category chips, fold-aware overlays |
 | `FoldableLayout.swift` | Wrappers for foldable-era APIs (`reservedRegions`, pinned toolbar placement) |
-| `LocationsView.swift` | Locations tab (`NavigationSplitView`), cards/list/grouped styles, detail view |
+| `LocationsView.swift` | Locations tab (`NavigationSplitView`), cards/list/grouped styles, detail view; `CachedImage` (AsyncImage replacement: memory → disk → network) and `ImageDecoding` |
 | `ScheduleView.swift` | Schedule tab (`NavigationSplitView`), styles, filter menu, item detail |
 | `NotificationsView.swift` | Organizer updates from the bundle |
-| `FlyerView.swift` | Event flyer (image/PDF) from `flyer_url` |
+| `FlyerView.swift` | Event flyer (image/PDF) from `flyer_url`, loaded from the image cache when present |
 | `QRScannerView.swift` | `DataScannerViewController` sheet; pauses/restarts across scene and size changes |
 | `SettingsView.swift` | Options tab: internal-test-build warning, event header (logo), location dot, notifications, About & support, leave event |
 
@@ -61,9 +61,12 @@ attnd-web is the coordinating repo. The API contract ([`API_V2.md`](https://gith
 
 ```
 Launch
-├── POST devices/ (registration, push token, subscribed)
-├── Saved event code? → GET events/lookup/?q=<code> → join silently
-│   └── On failure / none saved → LaunchScreen
+├── registerForRemoteNotifications() (full app, every launch, opt-in or not)
+├── POST devices/ (registration, push token if any — never "", subscribed = alert opt-in)
+├── Saved copy on disk for the saved event code? → shown at once (works offline), then
+│   POST join/ + GET bundle/ in the background (join retried after a later successful refresh)
+├── Else saved event code? → GET events/lookup/?q=<code> → join silently
+│   └── 404 → code forgotten; offline / none saved → LaunchScreen
 │
 LaunchScreen
 ├── GET events/nearby/?lat=&lng=
@@ -75,13 +78,16 @@ Join event
 │
 ContentView (tabs and default tab from bundle.display; Options always last)
 ├── Map / Locations / Schedule / Flyer / Updates
-├── Bundle refetched on: foreground, pull-to-refresh, every 5 s while the scene is
-│   active (silent live updates; also how the App Clip stays live), every 5 min on
-│   event days, content_updated / notification pushes (304 when unchanged)
+├── Bundle refetched on: foreground, pull-to-refresh, a content_updated push with a newer
+│   content_version (random 0–10 s delay; foreground or background), notification pushes,
+│   and a fallback poll while active: 60 s without a push token (always in the App Clip),
+│   5 min with one, 15 s after a failed refresh (304 when unchanged)
+├── Every applied bundle → saved to disk + images prefetched; a 404 → event forgotten
 └── POST events/<id>/usage/ (anonymous counts): every ~60 s with pending data, on background
 │
-Leave event
+Leave event (or switch)
 ├── Pending usage counts flushed first
+├── Saved copy and cached images deleted
 └── POST events/<id>/leave/ {device_id}
 ```
 
@@ -103,9 +109,11 @@ Leave event
 - Coordinates may be `null`; `0,0` is treated as unknown. Never drop a pin without a valid coordinate.
 - Schedule items may have no location — shown under "General".
 - All times are displayed in the **event's** `timezone` (`EventTimeFormat`), never the device's.
-- `is_demo` / `status == "archived"` → a small floating capsule badge ("Demo event" / "Event ended") at the top of each tab's content (`eventStatusBanners()` in `ContentView.swift`): an overlay, so content scrolls under it; touches pass through; kept clear of reserved regions. Map chips move down by `EventStatusBadgeKind.reservedHeight`.
+- `is_demo` / `status == "archived"` → a small floating capsule badge ("Demo event" / "Event ended") at the top of each tab's content (`eventStatusBanners()` in `ContentView.swift`): an overlay, so content scrolls under it; touches pass through; kept clear of reserved regions. While the last refresh failed, a second capsule says "Offline · Updated 3:41 PM" (or "Can't update · …"; `LastUpdatedText`, last successful refresh in the **device's** time zone). Map chips move down by `EventStatusBadgeKind.reservedTopHeight(_:)` (one `reservedHeight` per badge).
 - `display.accent_color` (or the event's) tints the app. Otherwise the tint is the asset `AccentColor` (brand purple `#431F86`, `#9D7BEA` in dark mode; same in the App Clip's asset catalog), never system blue.
-- Live updates: `ContentView` calls `refreshBundle(silent: true)` every 5 s while the scene is active (no `isLoading` spinners; a failed poll retries next tick). Lives in shared code so the App Clip gets it too.
+- Live updates (API-007): silent `content_updated` pushes drive them; `ContentView` adds a fallback `refreshBundle(silent: true)` poll at `AppState.liveRefreshInterval` (`LiveRefreshPolicy`: 60 s without a push token — not registered, registration failed, or the App Clip — 5 min safety poll with one, 15 s while the last refresh failed). No `isLoading` spinners for polls/pushes. Lives in shared code so the App Clip gets it too.
+- Offline copy (API-007): every applied bundle is saved as one `SavedEvent` (raw bundle JSON + ETag + last refresh, atomic write) in `Application Support/attnd-event/event.json` (`EventStore`, excluded from backup) and restored at launch before any network, so the event opens offline. Network/server errors never clear it; only a 404 from the bundle (or lookup), leaving or switching events does (with the images). The App Clip uses the same code (the system may purge its storage).
+- Image cache (API-007): `ImageStore` keeps location images, the logo(s) and the flyer (image or PDF) in `Application Support/attnd-images/<sha256(url)>.<ext>` — Application Support rather than Caches because Caches may be purged exactly when the attendee is offline at the venue; excluded from backup. After every applied bundle (and on restore) it prefetches every referenced URL (4 at a time; files older than 24 h are re-downloaded, keeping the old one on failure), then deletes files the bundle no longer references; ≤ 15 MB per file, 300 MB total (largest referenced files dropped first). Views use `CachedImage` (memory → disk → network), never `AsyncImage`; `FlyerView` loads the cached file into its `WKWebView` with a sniffed MIME type.
 
 ## Display Config (`bundle.display`)
 
@@ -120,9 +128,10 @@ Leave event
 
 ## Push Notifications
 
-- Enabling notifications in Options requests authorization, calls `registerForRemoteNotifications()`, and sends the hex token with `POST devices/`.
-- `type = "notification"` → alert; tapping opens the Updates tab for that event.
-- `type = "content_updated"` → silent (`content-available`); refetches the bundle. Requires the `remote-notification` background mode (in `Info.plist`).
+- The full app registers for remote notifications at **every launch** (`AppDelegate` → `AppState.registerForRemoteNotifications()`), whatever the opt-in: silent pushes need no permission (API-007). The hex token goes to `POST devices/` with `subscribed` = the Options opt-in; the server keeps the token even when `subscribed` is false. A missing token is omitted, never sent as `""` (that clears it on the server; `APIClient.nonEmpty`). Registration failure (`pushRegistrationDidFail`) switches the poll to 60 s. Not in screenshot mode or the App Clip.
+- Enabling notifications in Options only requests alert authorization (and re-registers); turning it off sends `subscribed: false` and keeps the token.
+- `type = "notification"` → alert (subscribed devices only); tapping opens the Updates tab for that event.
+- `type = "content_updated"` → silent (`content-available`), sent to every device in the event with a token (debounced, ≤ 1 per 15 s per event). `handlePush` refetches only when its `content_version` is newer than the shown bundle's (`ContentUpdatePolicy`), after a random 0–10 s delay, in the foreground or background; `didReceiveRemoteNotification` returns after the fetch and the save to disk. A push that wakes a terminated app restores the saved event first. Requires the `remote-notification` background mode (in `Info.plist`).
 - `aps-environment` is `development` in `Attnd.entitlements`; distribution signing switches it to production.
 
 ## iPhone Duo / Foldables

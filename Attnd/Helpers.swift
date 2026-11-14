@@ -2,8 +2,11 @@
 // Attnd
 //
 // Small shared utilities: ISO 8601 parsing, event-time-zone formatting,
-// hex colours and deep-link parsing. Everything here is pure and testable.
+// hex colours, deep-link parsing, live-update rules (API-007: polling intervals,
+// content_updated handling, "last updated" text) and the offline media cache's
+// naming / pruning rules. Everything here is pure and testable.
 
+import CryptoKit
 import Foundation
 
 // MARK: - ISO 8601 parsing
@@ -141,6 +144,191 @@ enum DeepLink {
             return nil
         }
         return trimmed
+    }
+}
+
+// MARK: - Live updates (API-007)
+
+/// How often an open app re-checks the bundle while the scene is active. A silent
+/// `content_updated` push does the real work; the timer is only a fallback.
+enum LiveRefreshPolicy {
+    /// No push token (not registered, registration failed, or the App Clip, which can't get pushes).
+    static let withoutPush: Duration = .seconds(60)
+    /// Push works: a slow safety poll in case a silent push is dropped or throttled.
+    static let withPush: Duration = .seconds(5 * 60)
+    /// The last refresh failed (offline): try again sooner, so the offline badge clears quickly.
+    static let afterFailure: Duration = .seconds(15)
+
+    static func interval(canReceivePush: Bool, lastRefreshFailed: Bool = false) -> Duration {
+        if lastRefreshFailed { return afterFailure }
+        return canReceivePush ? withPush : withoutPush
+    }
+
+    /// Silent pushes can reach this install only with a token, a working registration, and not in the App Clip.
+    static func canReceivePush(pushToken: String?, registrationFailed: Bool, isAppClip: Bool) -> Bool {
+        guard !isAppClip, !registrationFailed, let pushToken else { return false }
+        return !pushToken.isEmpty
+    }
+}
+
+/// What to do with a `content_updated` silent push.
+enum ContentUpdatePolicy {
+    /// Refreshes are spread over a random 0–10 s so an event's open apps don't all hit the server at once.
+    static let maxJitterMilliseconds = 10_000
+
+    /// Refetch only when the push announces a newer `content_version` than the one shown.
+    /// A push without a version, or no content loaded yet, always refetches (a 304 is cheap).
+    static func shouldRefresh(pushedVersion: Int?, currentVersion: Int?) -> Bool {
+        guard let pushedVersion, let currentVersion else { return true }
+        return pushedVersion > currentVersion
+    }
+
+    static func jitter() -> Duration {
+        .milliseconds(Int.random(in: 0...maxJitterMilliseconds))
+    }
+}
+
+/// Why the last bundle refresh failed. Saved content stays on screen either way.
+enum RefreshProblem: Hashable, Sendable {
+    /// No connection (or it timed out).
+    case offline
+    /// The server answered with an error.
+    case serverError
+
+    init(_ error: Error) {
+        if let apiError = error as? APIError, case .networkError = apiError {
+            self = .offline
+        } else {
+            self = .serverError
+        }
+    }
+}
+
+/// "Offline · Updated 3:41 PM" for the floating status badge. "Last updated" is a moment
+/// on this device, so it uses the device's time zone (event times use the event's).
+enum LastUpdatedText {
+    /// "3:41 PM" when `date` is today, otherwise "Nov 13, 3:41 PM".
+    static func time(_ date: Date, now: Date = .now, timeZone: TimeZone = .current, locale: Locale = .current) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        var style = calendar.isDate(date, inSameDayAs: now)
+            ? Date.FormatStyle.dateTime.hour().minute()
+            : Date.FormatStyle.dateTime.month(.abbreviated).day().hour().minute()
+        style.timeZone = timeZone
+        style.locale = locale
+        return date.formatted(style)
+    }
+
+    static func badgeTitle(
+        _ problem: RefreshProblem,
+        lastRefreshed: Date?,
+        now: Date = .now,
+        timeZone: TimeZone = .current,
+        locale: Locale = .current
+    ) -> String {
+        let state = problem == .offline ? "Offline" : "Can't update"
+        guard let lastRefreshed else { return state }
+        return "\(state) · Updated \(time(lastRefreshed, now: now, timeZone: timeZone, locale: locale))"
+    }
+
+    static func accessibilityText(
+        _ problem: RefreshProblem,
+        lastRefreshed: Date?,
+        now: Date = .now,
+        timeZone: TimeZone = .current,
+        locale: Locale = .current
+    ) -> String {
+        let state = problem == .offline ? "You're offline." : "Attnd can't reach the server right now."
+        guard let lastRefreshed else { return state }
+        return "\(state) Showing content last updated \(time(lastRefreshed, now: now, timeZone: timeZone, locale: locale))."
+    }
+}
+
+// MARK: - Offline media cache rules
+
+/// Naming, selection and pruning rules for `ImageStore` (location images, logos and the flyer,
+/// kept on disk so the event works offline). Pure; the actor does the I/O.
+enum MediaCache {
+    /// Larger files are never cached (they're shown from the network as before).
+    static let maxFileBytes = 15 * 1024 * 1024
+    /// Total budget for the cache directory.
+    static let maxTotalBytes = 300 * 1024 * 1024
+    static let maxConcurrentDownloads = 4
+    /// A cached file older than this is downloaded again on the next prefetch (kept if that fails).
+    static let revalidateAfter: TimeInterval = 24 * 60 * 60
+
+    /// A file in the cache directory.
+    struct CachedFile: Hashable, Sendable {
+        var name: String
+        var bytes: Int
+        var modified: Date
+    }
+
+    /// "<sha256 of the URL>.<ext>": stable per URL, safe as a file name. The extension comes
+    /// from the URL path when it looks like one, else "bin" (the content is sniffed when needed).
+    static func fileName(for url: URL) -> String {
+        let digest = SHA256.hash(data: Data(url.absoluteString.utf8))
+        let hex = digest.map { String(format: "%02x", $0) }.joined()
+        let ext = url.pathExtension.lowercased()
+        let isSane = (1...5).contains(ext.count) && ext.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) }
+        return "\(hex).\(isSane ? ext : "bin")"
+    }
+
+    /// Every http(s) media URL the bundle shows, deduplicated, most visible first:
+    /// logo(s), location images in organizer order, then the flyer (image or PDF).
+    static func referencedURLs(for bundle: EventBundle) -> [URL] {
+        referencedURLs(event: bundle.event, display: bundle.display, locations: bundle.locations)
+    }
+
+    static func referencedURLs(event: Event?, display: DisplayConfig, locations: [Location]) -> [URL] {
+        var candidates: [URL?] = [display.logoUrl, event?.logoUrl]
+        candidates += locations.map(\.imageUrl)
+        candidates.append(event?.flyerUrl)
+        var seen = Set<String>()
+        return candidates.compactMap { $0 }.filter { url in
+            guard let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http" else { return false }
+            return seen.insert(url.absoluteString).inserted
+        }
+    }
+
+    /// Whether a URL must be downloaded: never cached, or cached long enough ago to re-check.
+    static func needsDownload(existing: CachedFile?, now: Date = .now) -> Bool {
+        guard let existing else { return true }
+        return now.timeIntervalSince(existing.modified) > revalidateAfter
+    }
+
+    /// Files to delete after a prefetch: everything the current bundle no longer references,
+    /// then, if the referenced files alone exceed `maxTotalBytes`, the largest of them until
+    /// the rest fits. Returned in deletion order.
+    static func filesToDelete(_ files: [CachedFile], referenced: Set<String>, maxTotalBytes: Int = maxTotalBytes) -> [String] {
+        var doomed = files.filter { !referenced.contains($0.name) }.map(\.name)
+        let kept = files.filter { referenced.contains($0.name) }
+        var total = kept.reduce(0) { $0 + $1.bytes }
+        for file in kept.sorted(by: { $0.bytes > $1.bytes || ($0.bytes == $1.bytes && $0.name < $1.name) }) {
+            guard total > maxTotalBytes else { break }
+            doomed.append(file.name)
+            total -= file.bytes
+        }
+        return doomed
+    }
+
+    /// The MIME type of a cached file from its first bytes (PDF, PNG, JPEG, GIF, WebP, HEIC), or nil.
+    static func sniffMIMEType(_ data: Data) -> String? {
+        let bytes = [UInt8](data.prefix(12))
+        func starts(_ prefix: [UInt8], at offset: Int = 0) -> Bool {
+            bytes.count >= offset + prefix.count && Array(bytes[offset..<offset + prefix.count]) == prefix
+        }
+        if starts(Array("%PDF".utf8)) { return "application/pdf" }
+        if starts([0x89, 0x50, 0x4E, 0x47]) { return "image/png" }
+        if starts([0xFF, 0xD8, 0xFF]) { return "image/jpeg" }
+        if starts(Array("GIF8".utf8)) { return "image/gif" }
+        if starts(Array("RIFF".utf8)), starts(Array("WEBP".utf8), at: 8) { return "image/webp" }
+        if starts(Array("ftyp".utf8), at: 4) {
+            for brand in ["heic", "heix", "mif1", "msf1", "hevc"] where starts(Array(brand.utf8), at: 8) {
+                return "image/heic"
+            }
+        }
+        return nil
     }
 }
 

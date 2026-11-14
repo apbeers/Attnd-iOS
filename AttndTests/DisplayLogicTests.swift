@@ -3,7 +3,8 @@
 //
 // The pure logic behind the server-driven display config: schedule grouping
 // (by day in the event's time zone, by location, now/next), location grouping,
-// search, map clustering and framing, and fold-avoiding overlay insets.
+// search, map clustering and framing, fold-avoiding overlay insets, and the
+// offline media cache rules (API-007: file names, prefetch set, pruning, sniffing).
 
 import XCTest
 @testable import Attnd
@@ -268,5 +269,76 @@ final class DisplayLogicTests: XCTestCase {
             avoiding: [CGRect(x: 500, y: 0, width: 20, height: 800)]
         )
         XCTAssertEqual(insets, .init())
+    }
+
+
+    // MARK: - Offline media cache (API-007)
+
+    func testMediaFileName_StablePerURLWithSaneExtension() throws {
+        let a = try XCTUnwrap(URL(string: "https://res.cloudinary.com/x/image/upload/v1/stage.JPG"))
+        let name = MediaCache.fileName(for: a)
+        XCTAssertEqual(name, MediaCache.fileName(for: a), "stable")
+        XCTAssertTrue(name.hasSuffix(".jpg"))
+        XCTAssertEqual(name.count, 64 + 4, "sha256 hex + extension")
+        let b = try XCTUnwrap(URL(string: "https://example.com/image?id=5"))
+        XCTAssertTrue(MediaCache.fileName(for: b).hasSuffix(".bin"))
+        XCTAssertNotEqual(MediaCache.fileName(for: b), MediaCache.fileName(for: URL(string: "https://example.com/image?id=6")!))
+        let weird = try XCTUnwrap(URL(string: "https://example.com/file.reallylongext"))
+        XCTAssertTrue(MediaCache.fileName(for: weird).hasSuffix(".bin"))
+    }
+
+    func testMediaReferencedURLs_LogosImagesThenFlyer_Deduplicated() throws {
+        let logo = URL(string: "https://attnd.app/media/logo.png")!
+        let img = URL(string: "https://attnd.app/media/a.jpg")!
+        let flyer = URL(string: "https://attnd.app/media/flyer.pdf")!
+        var event = Event(id: 1, name: "E", eventCode: "E")
+        event.logoUrl = logo
+        event.flyerUrl = flyer
+        var display = DisplayConfig.default
+        display.logoUrl = logo
+        let locations = [
+            Location(id: 1, name: "A", imageUrl: img),
+            Location(id: 2, name: "B"),
+            Location(id: 3, name: "C", imageUrl: img),
+            Location(id: 4, name: "D", imageUrl: URL(string: "file:///etc/passwd")),
+        ]
+        let bundle = EventBundle(event: event, display: display, locations: locations)
+        XCTAssertEqual(MediaCache.referencedURLs(for: bundle), [logo, img, flyer])
+        XCTAssertEqual(MediaCache.referencedURLs(event: nil, display: .default, locations: []), [])
+    }
+
+    func testMediaNeedsDownload_MissingOrStale() {
+        let now = date("2026-11-14T12:00:00Z")
+        XCTAssertTrue(MediaCache.needsDownload(existing: nil, now: now))
+        let fresh = MediaCache.CachedFile(name: "a", bytes: 1, modified: now.addingTimeInterval(-3600))
+        XCTAssertFalse(MediaCache.needsDownload(existing: fresh, now: now))
+        let stale = MediaCache.CachedFile(name: "a", bytes: 1, modified: now.addingTimeInterval(-2 * 86_400))
+        XCTAssertTrue(MediaCache.needsDownload(existing: stale, now: now))
+    }
+
+    func testMediaPrune_UnreferencedFirstThenLargestOverBudget() {
+        let t = date("2026-11-14T12:00:00Z")
+        let files = [
+            MediaCache.CachedFile(name: "old", bytes: 10, modified: t),
+            MediaCache.CachedFile(name: "big", bytes: 60, modified: t),
+            MediaCache.CachedFile(name: "mid", bytes: 30, modified: t),
+            MediaCache.CachedFile(name: "small", bytes: 5, modified: t),
+        ]
+        let referenced: Set<String> = ["big", "mid", "small"]
+        XCTAssertEqual(MediaCache.filesToDelete(files, referenced: referenced, maxTotalBytes: 1000), ["old"])
+        XCTAssertEqual(MediaCache.filesToDelete(files, referenced: referenced, maxTotalBytes: 40), ["old", "big"])
+        XCTAssertEqual(MediaCache.filesToDelete(files, referenced: referenced, maxTotalBytes: 4), ["old", "big", "mid", "small"])
+        XCTAssertEqual(MediaCache.filesToDelete([], referenced: referenced), [])
+    }
+
+    func testMediaSniffMIMEType() {
+        XCTAssertEqual(MediaCache.sniffMIMEType(Data("%PDF-1.7".utf8)), "application/pdf")
+        XCTAssertEqual(MediaCache.sniffMIMEType(Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A])), "image/png")
+        XCTAssertEqual(MediaCache.sniffMIMEType(Data([0xFF, 0xD8, 0xFF, 0xE0])), "image/jpeg")
+        XCTAssertEqual(MediaCache.sniffMIMEType(Data("GIF89a".utf8)), "image/gif")
+        XCTAssertEqual(MediaCache.sniffMIMEType(Data("RIFF\u{0}\u{0}\u{0}\u{0}WEBPVP8 ".utf8)), "image/webp")
+        XCTAssertEqual(MediaCache.sniffMIMEType(Data([0, 0, 0, 0x18] + Array("ftypheic".utf8))), "image/heic")
+        XCTAssertNil(MediaCache.sniffMIMEType(Data("<html>".utf8)))
+        XCTAssertNil(MediaCache.sniffMIMEType(Data()))
     }
 }

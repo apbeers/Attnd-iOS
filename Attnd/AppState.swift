@@ -6,10 +6,17 @@
 // push registration and user preferences.
 //
 // Content always comes from one `GET events/<id>/bundle/` call (ETag-cached).
-// It is refetched on join, on foreground, on pull-to-refresh, every 5 seconds
-// while the scene is active (silent live updates), every 5 minutes while
-// foregrounded on event days (ContentView drives those), and when a
-// `content_updated` or notification push arrives.
+// It is refetched on join, on foreground, on pull-to-refresh, when a
+// `content_updated` push announces a newer content_version (after a random
+// 0–10 s delay) or a notification push arrives, and by ContentView's slow poll
+// while the scene is active (`LiveRefreshPolicy`: every 60 s without a push
+// token, e.g. the App Clip; a 5-minute safety poll with one).
+//
+// Offline (API-007): every applied bundle is saved to Application Support
+// (`EventStore`, raw JSON + ETag + last refresh) and restored at launch before
+// any network, so the event opens offline. Its images, logo and flyer are
+// prefetched into `ImageStore`. Only a 404 for the event, leaving or switching
+// events deletes the saved copy; network and server errors never do.
 
 import Foundation
 import Observation
@@ -47,6 +54,9 @@ final class AppState {
 
     private(set) var isLoading = false
     private(set) var loadError: String?
+    /// Why the last refresh failed (nil after a success); drives the floating offline badge.
+    private(set) var refreshProblem: RefreshProblem?
+    /// The last successful refresh (restored from disk at launch).
     private(set) var lastRefreshed: Date?
 
     // MARK: - Navigation
@@ -73,6 +83,25 @@ final class AppState {
     /// APNs device token (hex). Persisted so join requests can include it.
     private(set) var pushToken: String? {
         didSet { UserDefaults.standard.set(pushToken, forKey: Keys.pushToken) }
+    }
+
+    /// APNs registration failed this launch (simulator, no entitlement, no network);
+    /// the live poll then runs every 60 s instead of relying on silent pushes.
+    private(set) var pushRegistrationFailed = false
+
+    /// The App Clip can't receive pushes; it always uses the 60 s poll.
+    static let isAppClip = Bundle.main.bundleIdentifier?.hasSuffix(".clip") ?? false
+
+    /// How often ContentView re-checks the bundle while active (API-007).
+    var liveRefreshInterval: Duration {
+        LiveRefreshPolicy.interval(
+            canReceivePush: LiveRefreshPolicy.canReceivePush(
+                pushToken: pushToken,
+                registrationFailed: pushRegistrationFailed,
+                isAppClip: Self.isAppClip
+            ),
+            lastRefreshFailed: refreshProblem != nil
+        )
     }
 
     // MARK: - Preferences (persisted)
@@ -113,6 +142,24 @@ final class AppState {
     }
 
     @ObservationIgnored private var etag: String?
+    /// `content_version` of the applied bundle; compared with `content_updated` pushes.
+    @ObservationIgnored private var contentVersion: Int?
+    /// The raw JSON of the applied bundle, re-saved with a new `lastRefreshed` after a 304.
+    @ObservationIgnored private var bundleData: Data?
+    /// `lastRefreshed` as last written to disk (304s re-save at most every few minutes).
+    @ObservationIgnored private var lastSavedRefresh: Date?
+    /// The event the server has confirmed our `join/` for. A failed join (offline launch)
+    /// is retried after the next successful refresh.
+    @ObservationIgnored private var joinedEventId: Int?
+    @ObservationIgnored private var joiningEventId: Int?
+    /// Restoring the saved event runs once per process (launch, or a silent push that woke the app).
+    @ObservationIgnored private var restoreTask: Task<Void, Never>?
+    /// Serial chain of disk writes/deletes for `EventStore`, so they land in order.
+    @ObservationIgnored private var diskTask: Task<Void, Never>?
+    /// Serial chain of image prefetches / clears; a new prefetch cancels the previous one.
+    @ObservationIgnored private var imageTask: Task<Void, Never>?
+    /// The last prefetch left something missing (e.g. offline); retried after a successful refresh.
+    @ObservationIgnored private var imagesIncomplete = false
     @ObservationIgnored private var hasAppliedDefaultTab = false
     /// A notification tap that arrived before its event finished loading (cold launch).
     @ObservationIgnored private var pendingNotificationsEventId: Int?
@@ -203,15 +250,11 @@ final class AppState {
         schedule.filter { $0.locationId == locationId }
     }
 
-    func isEventDay(_ now: Date = .now) -> Bool {
-        guard let event = currentEvent else { return false }
-        return ScheduleTiming.isEventDay(now: now, start: event.startTime, end: event.endTime, timeZone: event.timeZone)
-    }
-
     // MARK: - Launch
 
-    /// Registers the device, then silently rejoins the last event if there was one.
-    /// On lookup failure the saved code is cleared and the user lands on the launch screen.
+    /// Registers the device, then reopens the last event: from the copy saved on disk when
+    /// there is one (shown immediately, even offline; join and refresh follow in the
+    /// background), otherwise by looking the saved code up. Only a 404 forgets the event.
     func launch() async {
         if let screenshot = ScreenshotMode.current {
             await launchForScreenshots(screenshot)
@@ -219,6 +262,13 @@ final class AppState {
         }
         Task { await syncDevice() }
         Task { await checkForUpdate() }
+        await restoreSavedEventIfNeeded()
+        if currentEvent != nil {
+            track(.appOpen)
+            Task { await self.ensureJoined() }
+            Task { await self.refreshBundle() }
+            return
+        }
         guard let code = savedEventCode else { return }
         do {
             let event = try await APIClient.shared.lookupEvent(query: code)
@@ -227,7 +277,96 @@ final class AppState {
         } catch APIError.notFound {
             savedEventCode = nil
         } catch {
-            // Offline or server trouble: forget nothing, but show the launch screen.
+            // Offline or server trouble with nothing saved on disk: show the launch screen
+            // but keep the code, so the next launch tries again.
+        }
+    }
+
+    // MARK: - Offline copy (API-007)
+
+    /// Restores the saved event from disk once per process. Called by `launch()` and by a
+    /// push that may have woken the app in the background before any scene launched.
+    func restoreSavedEventIfNeeded() async {
+        if let restoreTask {
+            await restoreTask.value
+            return
+        }
+        let task = Task { await self.restoreSavedEvent() }
+        restoreTask = task
+        await task.value
+    }
+
+    private func restoreSavedEvent() async {
+        guard !ScreenshotMode.isActive, currentEvent == nil else { return }
+        let code = savedEventCode
+        guard let restored = await EventStore.shared.load() else { return }
+        let (saved, bundle) = restored
+        guard saved.belongs(toEventCode: code) else {
+            // Left over from an event the user left or switched away from.
+            enqueueDisk { await EventStore.shared.delete() }
+            clearImages()
+            return
+        }
+        // A deep link may have joined another event while we read the file.
+        guard currentEvent == nil else { return }
+        etag = saved.etag
+        lastRefreshed = saved.lastRefreshed
+        lastSavedRefresh = saved.lastRefreshed
+        bundleData = saved.bundleJSON
+        apply(bundle)
+    }
+
+    /// Saves the applied bundle (raw JSON) with its ETag and refresh time. Atomic, in order.
+    private func saveEvent() {
+        guard let event = currentEvent, let data = bundleData else { return }
+        let saved = SavedEvent(
+            eventId: event.id,
+            eventCode: event.eventCode,
+            etag: etag,
+            lastRefreshed: lastRefreshed,
+            bundleJSON: data
+        )
+        lastSavedRefresh = lastRefreshed
+        enqueueDisk { await EventStore.shared.save(saved) }
+    }
+
+    /// Deletes the saved event and its cached images (leave, switch, 404).
+    private func deleteSavedEvent() {
+        enqueueDisk { await EventStore.shared.delete() }
+        clearImages()
+    }
+
+    private func enqueueDisk(_ operation: @escaping @Sendable () async -> Void) {
+        let previous = diskTask
+        diskTask = Task {
+            await previous?.value
+            await operation()
+        }
+    }
+
+    /// Prefetches every image the current content references; a newer call cancels the older one.
+    private func scheduleImageSync() {
+        let urls = MediaCache.referencedURLs(event: currentEvent, display: display, locations: locations)
+        let previous = imageTask
+        imagesIncomplete = false
+        imageTask = Task {
+            previous?.cancel()
+            await previous?.value
+            guard !Task.isCancelled else { return }
+            let complete = await ImageStore.shared.sync(urls)
+            if !complete, !Task.isCancelled { self.imagesIncomplete = true }
+        }
+    }
+
+    /// Removes every cached image (after any running prefetch has stopped).
+    private func clearImages() {
+        let previous = imageTask
+        imagesIncomplete = false
+        ImageMemoryCache.shared.removeAll()
+        imageTask = Task {
+            previous?.cancel()
+            await previous?.value
+            await ImageStore.shared.removeAll()
         }
     }
 
@@ -282,13 +421,26 @@ final class AppState {
             // Send the old event's counts before switching.
             usage.flush()
             resetContent()
+            deleteSavedEvent()
         }
         savedEventCode = event.eventCode
         currentEvent = event
-        Task {
-            _ = try? await APIClient.shared.joinEvent(eventId: event.id, deviceId: self.deviceId, pushToken: self.pushToken)
-        }
+        Task { await self.ensureJoined() }
         await refreshBundle()
+    }
+
+    /// `POST events/<id>/join/` until the server has accepted it once for this event.
+    /// Failures (offline) are retried after the next successful bundle refresh.
+    private func ensureJoined() async {
+        guard let event = currentEvent, joinedEventId != event.id, joiningEventId != event.id else { return }
+        joiningEventId = event.id
+        defer { if joiningEventId == event.id { joiningEventId = nil } }
+        do {
+            _ = try await APIClient.shared.joinEvent(eventId: event.id, deviceId: deviceId, pushToken: pushToken)
+            if currentEvent?.id == event.id { joinedEventId = event.id }
+        } catch {
+            // Retried later; the bundle works without it.
+        }
     }
 
     func leaveEvent() async {
@@ -299,18 +451,33 @@ final class AppState {
         }
         currentEvent = nil
         resetContent()
+        deleteSavedEvent()
+    }
+
+    /// The event is gone (404 from the bundle): forget it and return to the launch screen.
+    private func forgetEvent() {
+        usage.flush()
+        savedEventCode = nil
+        currentEvent = nil
+        resetContent()
+        deleteSavedEvent()
     }
 
     private func resetContent() {
         inflightRefresh?.task.cancel()
         inflightRefresh = nil
         etag = nil
+        contentVersion = nil
+        bundleData = nil
+        lastSavedRefresh = nil
+        joinedEventId = nil
         display = .default
         categories = []
         locations = []
         schedule = []
         notifications = []
         loadError = nil
+        refreshProblem = nil
         lastRefreshed = nil
         hasAppliedDefaultTab = false
         mapFocusLocationId = nil
@@ -320,8 +487,8 @@ final class AppState {
 
     /// Fetches the bundle for the current event. Concurrent calls for the same
     /// event share one request; a 304 just marks the content as fresh.
-    /// `silent` (the 5-second live-update poll) doesn't toggle `isLoading`, so
-    /// no spinners flash; errors are recorded the same way as any refresh.
+    /// `silent` (polls and pushes) doesn't toggle `isLoading`, so no spinners
+    /// flash; errors are recorded the same way as any refresh.
     func refreshBundle(silent: Bool = false) async {
         guard let eventId = currentEvent?.id else { return }
         if let inflight = inflightRefresh, inflight.eventId == eventId {
@@ -335,6 +502,9 @@ final class AppState {
         if inflightRefresh?.token == token { inflightRefresh = nil }
     }
 
+    /// A 304 re-saves `lastRefreshed` at most this often (the content itself is unchanged).
+    private static let refreshSaveInterval: TimeInterval = 5 * 60
+
     private func fetchBundle(eventId: Int, silent: Bool) async {
         if !silent { isLoading = true }
         defer { if !silent { isLoading = false } }
@@ -342,22 +512,42 @@ final class AppState {
             let result = try await APIClient.shared.bundle(eventId: eventId, etag: etag, deviceId: deviceId)
             // The user may have left or switched events while we waited.
             guard currentEvent?.id == eventId, !Task.isCancelled else { return }
-            if case .updated(let bundle, let newEtag) = result {
-                apply(bundle)
-                etag = newEtag
-            }
-            // Avoid needless observation churn from the 5-second poll.
+            let now = Date.now
+            lastRefreshed = now
+            // Avoid needless observation churn from the polls.
             if loadError != nil { loadError = nil }
-            lastRefreshed = .now
+            if refreshProblem != nil { refreshProblem = nil }
+            switch result {
+            case .updated(let bundle, let newEtag, let data):
+                etag = newEtag
+                bundleData = data
+                apply(bundle)
+                saveEvent()
+            case .notModified:
+                if lastSavedRefresh.map({ now.timeIntervalSince($0) >= Self.refreshSaveInterval }) ?? true {
+                    saveEvent()
+                }
+                if imagesIncomplete { scheduleImageSync() }
+            }
+            if joinedEventId != eventId {
+                Task { await self.ensureJoined() }
+            }
+        } catch APIError.notFound {
+            // The event was deleted or unpublished: the only error that drops the saved copy.
+            guard currentEvent?.id == eventId else { return }
+            forgetEvent()
         } catch {
             guard currentEvent?.id == eventId else { return }
+            // Saved content stays on screen; the badge shows the last successful refresh.
             loadError = error.localizedDescription
+            refreshProblem = RefreshProblem(error)
         }
     }
 
     private func apply(_ bundle: EventBundle) {
         let isFirstApply = !hasAppliedDefaultTab
         currentEvent = bundle.event
+        contentVersion = bundle.contentVersion
         display = ScreenshotMode.current?.adjusted(bundle.display) ?? bundle.display
         categories = bundle.categories
         locations = bundle.locations
@@ -379,6 +569,8 @@ final class AppState {
             // The tab the event opens on (later changes are counted in selectedTab's didSet).
             track(.tabView, detail: selectedTab.usageDetail)
         }
+        // New images download first; files the new content no longer uses are deleted after.
+        scheduleImageSync()
     }
 
     /// Pull to refresh: counted, then a normal bundle refresh.
@@ -413,8 +605,9 @@ final class AppState {
 
     // MARK: - Push notifications
 
-    /// Turns notifications on (asking for permission if needed) or off, registers
-    /// with APNs and tells the server. Returns false if permission was denied.
+    /// Turns alert notifications on (asking for permission if needed) or off and tells the
+    /// server (`subscribed`). The APNs token is registered either way (silent
+    /// `content_updated` pushes need no permission). Returns false if permission was denied.
     @discardableResult
     func setNotificationsEnabled(_ enabled: Bool) async -> Bool {
         guard enabled else {
@@ -424,27 +617,33 @@ final class AppState {
         }
         let granted = await Self.requestNotificationAuthorization()
         notificationsEnabled = granted
-        if granted {
-            UIApplication.shared.registerForRemoteNotifications()
-        }
+        registerForRemoteNotifications()
         await syncDevice()
         return granted
     }
 
-    /// Called at launch: refreshes the APNs token if the user has opted in.
-    func registerForPushIfEnabled() {
-        guard notificationsEnabled else { return }
+    /// Called at every launch of the full app (AppDelegate), whatever the notification
+    /// opt-in: silent `content_updated` pushes keep the event live without polling (API-007).
+    func registerForRemoteNotifications() {
+        guard !ScreenshotMode.isActive, !Self.isAppClip else { return }
         UIApplication.shared.registerForRemoteNotifications()
     }
 
     /// Stores a new APNs token and sends it to the server.
     func updatePushToken(_ token: String) {
-        guard token != pushToken else { return }
+        pushRegistrationFailed = false
+        guard !token.isEmpty, token != pushToken else { return }
         pushToken = token
         Task { await syncDevice() }
     }
 
-    /// `POST devices/` with the current token and preference.
+    /// APNs registration failed: no silent pushes this launch, so poll more often.
+    func pushRegistrationDidFail() {
+        pushRegistrationFailed = true
+    }
+
+    /// `POST devices/` with the current token (omitted while there is none) and the alert
+    /// preference as `subscribed`. The server keeps the token even when `subscribed` is false.
     func syncDevice() async {
         guard !ScreenshotMode.isActive else { return }
         _ = try? await APIClient.shared.registerDevice(
@@ -454,24 +653,43 @@ final class AppState {
         )
     }
 
-    /// A push arrived. Refetches the bundle for our event; when the user opened a
-    /// notification, switches to the Notifications tab.
-    func handlePush(_ payload: PushPayload, opened: Bool) async {
-        guard let eventId = payload.eventId else { return }
+    /// A push arrived. `content_updated` refetches the bundle (after a random 0–10 s delay)
+    /// only when it announces a newer content_version; other pushes refetch right away, and
+    /// an opened notification switches to the Notifications tab. Returns whether a refresh
+    /// ran (for the background fetch result). The saved copy is on disk before this returns,
+    /// so a background wake leaves fresh content for the next launch.
+    @discardableResult
+    func handlePush(_ payload: PushPayload, opened: Bool) async -> Bool {
+        guard let eventId = payload.eventId else { return false }
         if opened, currentEvent == nil || currentEvent?.id == eventId {
             // Counted against the push's event, so a tap that cold-launches the app counts too.
             usage.record(.notificationOpen, detail: payload.notificationId.map { String($0) }, eventId: eventId)
         }
-        guard let current = currentEvent else {
-            // Cold launch: the event is still being rejoined. Apply once it loads.
-            if opened { pendingNotificationsEventId = eventId }
-            return
+        if currentEvent == nil {
+            // A silent push may wake the app in the background before any scene launched.
+            await restoreSavedEventIfNeeded()
         }
-        guard current.id == eventId else { return }
+        guard let current = currentEvent else {
+            // Cold launch with nothing saved: the event is still being rejoined. Apply once it loads.
+            if opened { pendingNotificationsEventId = eventId }
+            return false
+        }
+        guard current.id == eventId else { return false }
         if opened, tabs.contains(.notifications) {
             selectedTab = .event(.notifications)
         }
-        await refreshBundle()
+        if payload.kind == .contentUpdated, !opened {
+            guard ContentUpdatePolicy.shouldRefresh(pushedVersion: payload.contentVersion, currentVersion: contentVersion) else {
+                return false
+            }
+            try? await Task.sleep(for: ContentUpdatePolicy.jitter())
+            guard currentEvent?.id == eventId else { return false }
+            await refreshBundle(silent: true)
+        } else {
+            await refreshBundle()
+        }
+        await diskTask?.value
+        return true
     }
 
     // MARK: - Usage (API-005)
@@ -583,5 +801,255 @@ final class UsageReporter {
             self.timer = nil
             self.flush()
         }
+    }
+}
+
+// MARK: - Offline event copy (API-007)
+
+/// The joined event's bundle on disk: `Application Support/attnd-event/event.json`, one
+/// `SavedEvent` written atomically. Application Support (not Caches) because the system
+/// may purge Caches under storage pressure, and the point is that the event still opens
+/// with no signal at the venue; the directory is excluded from backups (it's re-downloadable).
+/// The App Clip has its own container, which the system may purge; that's fine.
+actor EventStore {
+    static let shared = EventStore()
+
+    private let fileURL: URL?
+
+    init(directoryName: String = "attnd-event") {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        fileURL = base?.appendingPathComponent(directoryName, isDirectory: true)
+            .appendingPathComponent("event.json")
+    }
+
+    /// The saved event and its decoded bundle, or nil (none, unreadable or another format).
+    /// An unreadable file is deleted.
+    func load() -> (SavedEvent, EventBundle)? {
+        guard let fileURL, let data = try? Data(contentsOf: fileURL) else { return nil }
+        do {
+            let saved = try SavedEvent.decode(data)
+            return (saved, try saved.decodedBundle())
+        } catch {
+            try? FileManager.default.removeItem(at: fileURL)
+            return nil
+        }
+    }
+
+    func save(_ saved: SavedEvent) {
+        guard let fileURL, let data = try? SavedEvent.encode(saved) else { return }
+        let directory = fileURL.deletingLastPathComponent()
+        StorageDirectory.prepare(directory)
+        try? data.write(to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+    }
+
+    func delete() {
+        guard let fileURL else { return }
+        try? FileManager.default.removeItem(at: fileURL)
+    }
+}
+
+/// Creates an Application Support subdirectory (once) and excludes it from backups.
+enum StorageDirectory {
+    static func prepare(_ directory: URL) {
+        guard !FileManager.default.fileExists(atPath: directory.path) else { return }
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var url = directory
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? url.setResourceValues(values)
+    }
+}
+
+// MARK: - Offline images (API-007)
+
+/// Location images, the event logo and the flyer (image or PDF), on disk in
+/// `Application Support/attnd-images/<sha256(url)>.<ext>` (see `MediaCache` for the rules).
+/// Application Support for the same reason as `EventStore`: Caches can be purged right when
+/// the attendee is offline at the venue. Excluded from backups; capped at 300 MB.
+///
+/// `sync` prefetches everything the current bundle references (4 downloads at a time), and
+/// only after all of them were attempted deletes files the bundle no longer references. A
+/// failed download keeps the old file. Views load through `data(for:)` (disk first, then the
+/// network, stored for next time). `removeAll` (leave / switch) bumps a generation so
+/// downloads that were already running never land in the emptied directory.
+actor ImageStore {
+    static let shared = ImageStore()
+
+    private let directory: URL?
+    private let session: URLSession
+    private var generation = 0
+    /// The newest prefetch; an older one skips pruning so it can't delete the newer set.
+    private var latestSync: UUID?
+    private var inflight: [URL: (id: UUID, task: Task<Bool, Never>)] = [:]
+    /// URLs that turned out larger than `MediaCache.maxFileBytes`, not retried this session.
+    private var tooLarge: Set<URL> = []
+
+    init(directoryName: String = "attnd-images") {
+        directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent(directoryName, isDirectory: true)
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 30
+        config.timeoutIntervalForResource = 120
+        config.urlCache = nil
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        session = URLSession(configuration: config)
+    }
+
+    private func fileURL(for url: URL) -> URL? {
+        directory?.appendingPathComponent(MediaCache.fileName(for: url))
+    }
+
+    /// The cached bytes for `url`, without touching the network.
+    func cachedData(for url: URL) -> Data? {
+        guard let file = fileURL(for: url) else { return nil }
+        return try? Data(contentsOf: file, options: .mappedIfSafe)
+    }
+
+    /// Disk first; otherwise downloads (and keeps) the file. nil when neither works or the
+    /// file is too large to cache.
+    func data(for url: URL) async -> Data? {
+        if let data = cachedData(for: url) { return data }
+        _ = await fetch(url)
+        return cachedData(for: url)
+    }
+
+    /// Prefetches `urls`, then prunes. Returns false when something referenced could not be
+    /// fetched (offline, server error), so the caller can try again later.
+    func sync(_ urls: [URL]) async -> Bool {
+        guard let directory else { return false }
+        let token = UUID()
+        latestSync = token
+        let startGeneration = generation
+        let files = Dictionary(listFiles().map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
+        let total = files.values.reduce(0) { $0 + $1.bytes }
+        let now = Date.now
+        let todo = urls.filter { url in
+            !tooLarge.contains(url)
+                && MediaCache.needsDownload(existing: files[MediaCache.fileName(for: url)], now: now)
+        }
+        var allFetched = true
+        await withTaskGroup(of: Bool.self) { group in
+            var running = 0
+            for url in todo {
+                guard !Task.isCancelled, generation == startGeneration else { break }
+                let isNew = files[MediaCache.fileName(for: url)] == nil
+                // Over budget: keep re-checking what we have, but don't add new files.
+                // (The budget is checked against the size at the start; pruning below
+                // enforces it exactly once the downloads are done.)
+                if isNew, total >= MediaCache.maxTotalBytes { allFetched = false; continue }
+                if running >= MediaCache.maxConcurrentDownloads {
+                    if await group.next() == false { allFetched = false }
+                    running -= 1
+                }
+                running += 1
+                group.addTask { await self.fetch(url) }
+            }
+            for await ok in group where !ok { allFetched = false }
+        }
+        guard !Task.isCancelled, generation == startGeneration, latestSync == token else { return false }
+        // Prune: unreferenced files, then the largest referenced ones while over budget.
+        let referenced = Set(urls.map(MediaCache.fileName(for:)))
+        for name in MediaCache.filesToDelete(listFiles(), referenced: referenced) {
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
+        }
+        let missing = urls.contains { url in
+            guard !tooLarge.contains(url), let file = fileURL(for: url) else { return false }
+            return !FileManager.default.fileExists(atPath: file.path)
+        }
+        return allFetched && !missing
+    }
+
+    /// Deletes every cached file (leave / switch events).
+    func removeAll() {
+        generation += 1
+        latestSync = nil
+        inflight = [:]
+        tooLarge = []
+        guard let directory else { return }
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    // MARK: Downloads
+
+    /// One download per URL at a time; prefetch and views share it.
+    private func fetch(_ url: URL) async -> Bool {
+        if let existing = inflight[url] { return await existing.task.value }
+        let id = UUID()
+        let startGeneration = generation
+        let task = Task { await self.download(url, generation: startGeneration) }
+        inflight[url] = (id, task)
+        let ok = await task.value
+        if inflight[url]?.id == id { inflight[url] = nil }
+        return ok
+    }
+
+    private func download(_ url: URL, generation startGeneration: Int) async -> Bool {
+        guard let directory, let destination = fileURL(for: url) else { return false }
+        let temporary: URL
+        let response: URLResponse
+        do {
+            (temporary, response) = try await session.download(from: url)
+        } catch {
+            return false
+        }
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { return false }
+        let bytes = (try? temporary.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        guard bytes > 0 else { return false }
+        guard bytes <= MediaCache.maxFileBytes else {
+            tooLarge.insert(url)
+            return false
+        }
+        // Left or switched events while downloading: don't repopulate the emptied cache.
+        guard generation == startGeneration else { return false }
+        StorageDirectory.prepare(directory)
+        do {
+            if FileManager.default.fileExists(atPath: destination.path) {
+                _ = try FileManager.default.replaceItemAt(destination, withItemAt: temporary)
+            } else {
+                try FileManager.default.moveItem(at: temporary, to: destination)
+            }
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func listFiles() -> [MediaCache.CachedFile] {
+        guard let directory else { return [] }
+        let keys: [URLResourceKey] = [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey]
+        let urls = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: keys)) ?? []
+        return urls.compactMap { url in
+            guard let values = try? url.resourceValues(forKeys: Set(keys)), values.isRegularFile == true else { return nil }
+            return MediaCache.CachedFile(
+                name: url.lastPathComponent,
+                bytes: values.fileSize ?? 0,
+                modified: values.contentModificationDate ?? .distantPast
+            )
+        }
+    }
+}
+
+/// Decoded images in memory (NSCache is thread-safe), so lists scroll without re-decoding.
+final class ImageMemoryCache: @unchecked Sendable {
+    static let shared = ImageMemoryCache()
+
+    private let cache = NSCache<NSURL, UIImage>()
+
+    init() {
+        cache.totalCostLimit = 96 * 1024 * 1024
+    }
+
+    func image(for url: URL) -> UIImage? {
+        cache.object(forKey: url as NSURL)
+    }
+
+    func insert(_ image: UIImage, for url: URL) {
+        let cost = image.cgImage.map { $0.bytesPerRow * $0.height } ?? 0
+        cache.setObject(image, forKey: url as NSURL, cost: cost)
+    }
+
+    func removeAll() {
+        cache.removeAllObjects()
     }
 }

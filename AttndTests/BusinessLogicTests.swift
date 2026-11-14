@@ -9,6 +9,7 @@
 //   - hex colours, ISO 8601 parsing, event-day detection
 //   - usage counts (API-005): hour bucketing, aggregation, request body shape
 //   - support code and support info text (API-004)
+//   - live updates (API-007): poll intervals, content_updated handling, "last updated" text
 
 import XCTest
 @testable import Attnd
@@ -271,5 +272,72 @@ final class BusinessLogicTests: XCTestCase {
         XCTAssertTrue(text.contains("Event: Fall Fest (code FALL26, id 7)"))
         XCTAssertTrue(text.contains("Content version: 12"))
         XCTAssertTrue(text.contains("Last refresh: 2026-11-14T16:05:00Z"))
+    }
+
+
+    // MARK: - Live updates (API-007)
+
+    func testLiveRefreshInterval_DependsOnPush() {
+        XCTAssertEqual(LiveRefreshPolicy.interval(canReceivePush: true), .seconds(300))
+        XCTAssertEqual(LiveRefreshPolicy.interval(canReceivePush: false), .seconds(60))
+        XCTAssertEqual(LiveRefreshPolicy.interval(canReceivePush: true, lastRefreshFailed: true), .seconds(15))
+        XCTAssertEqual(LiveRefreshPolicy.interval(canReceivePush: false, lastRefreshFailed: true), .seconds(15))
+    }
+
+    func testCanReceivePush_NeedsTokenRegistrationAndFullApp() {
+        XCTAssertTrue(LiveRefreshPolicy.canReceivePush(pushToken: "ff00", registrationFailed: false, isAppClip: false))
+        XCTAssertFalse(LiveRefreshPolicy.canReceivePush(pushToken: nil, registrationFailed: false, isAppClip: false))
+        XCTAssertFalse(LiveRefreshPolicy.canReceivePush(pushToken: "", registrationFailed: false, isAppClip: false))
+        XCTAssertFalse(LiveRefreshPolicy.canReceivePush(pushToken: "ff00", registrationFailed: true, isAppClip: false))
+        XCTAssertFalse(LiveRefreshPolicy.canReceivePush(pushToken: "ff00", registrationFailed: false, isAppClip: true),
+                       "the App Clip can't get pushes")
+    }
+
+    func testContentUpdated_RefreshesOnlyForNewerVersions() {
+        XCTAssertTrue(ContentUpdatePolicy.shouldRefresh(pushedVersion: 16, currentVersion: 15))
+        XCTAssertFalse(ContentUpdatePolicy.shouldRefresh(pushedVersion: 15, currentVersion: 15))
+        XCTAssertFalse(ContentUpdatePolicy.shouldRefresh(pushedVersion: 14, currentVersion: 15))
+        XCTAssertTrue(ContentUpdatePolicy.shouldRefresh(pushedVersion: nil, currentVersion: 15), "no version: refetch")
+        XCTAssertTrue(ContentUpdatePolicy.shouldRefresh(pushedVersion: 3, currentVersion: nil), "nothing loaded yet")
+    }
+
+    func testContentUpdated_JitterIsWithinTenSeconds() {
+        for _ in 0..<200 {
+            let delay = ContentUpdatePolicy.jitter()
+            XCTAssertGreaterThanOrEqual(delay, .zero)
+            XCTAssertLessThanOrEqual(delay, .seconds(10))
+        }
+    }
+
+    func testRefreshProblem_FromErrors() {
+        XCTAssertEqual(RefreshProblem(APIError.networkError("offline")), .offline)
+        XCTAssertEqual(RefreshProblem(APIError.serverError(503)), .serverError)
+        XCTAssertEqual(RefreshProblem(APIError.unauthorized), .serverError)
+    }
+
+    func testLastUpdatedText_UsesDeviceZoneAndShowsDateWhenNotToday() throws {
+        let posix = Locale(identifier: "en_US_POSIX")
+        let utc = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let now = try XCTUnwrap(ISODate.parse("2026-11-14T18:00:00Z"))
+        let today = try XCTUnwrap(ISODate.parse("2026-11-14T15:41:00Z"))
+        let yesterday = try XCTUnwrap(ISODate.parse("2026-11-13T15:41:00Z"))
+
+        let todayText = LastUpdatedText.time(today, now: now, timeZone: utc, locale: posix)
+        XCTAssertTrue(todayText.contains("3:41"), todayText)
+        XCTAssertFalse(todayText.contains("Nov"), todayText)
+
+        let olderText = LastUpdatedText.time(yesterday, now: now, timeZone: utc, locale: posix)
+        XCTAssertTrue(olderText.contains("Nov 13"), olderText)
+
+        // The same instant in another device zone reads differently ("last updated" is device time).
+        let tokyo = try XCTUnwrap(TimeZone(identifier: "Asia/Tokyo"))
+        XCTAssertTrue(LastUpdatedText.time(today, now: now, timeZone: tokyo, locale: posix).contains("12:41"))
+
+        let badge = LastUpdatedText.badgeTitle(.offline, lastRefreshed: today, now: now, timeZone: utc, locale: posix)
+        XCTAssertTrue(badge.hasPrefix("Offline · Updated "), badge)
+        XCTAssertTrue(badge.contains("3:41"), badge)
+        XCTAssertEqual(LastUpdatedText.badgeTitle(.offline, lastRefreshed: nil), "Offline")
+        XCTAssertTrue(LastUpdatedText.badgeTitle(.serverError, lastRefreshed: today, now: now, timeZone: utc, locale: posix)
+            .hasPrefix("Can't update · Updated "))
     }
 }

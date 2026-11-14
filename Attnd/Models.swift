@@ -393,6 +393,52 @@ extension EventBundle: Decodable {
     }
 }
 
+// MARK: - Saved event (offline copy)
+
+/// The joined event as saved on disk (`EventStore`): the raw bundle JSON exactly as the
+/// server sent it, plus the ETag and the time of the last successful refresh. Keeping the
+/// raw body means a newer build decodes fields an older build didn't know about.
+/// One file, written atomically, so the ETag can never be newer than the content.
+struct SavedEvent: Codable, Hashable, Sendable {
+    static let currentFormat = 1
+
+    var format: Int = SavedEvent.currentFormat
+    var eventId: Int
+    var eventCode: String
+    var etag: String?
+    var lastRefreshed: Date?
+    /// The bundle response body (base64 in the file).
+    var bundleJSON: Data
+
+    /// Decodes the saved bundle with the normal lenient decoder. Fails when the file is
+    /// from an unknown format or belongs to a different event than its metadata says.
+    func decodedBundle() throws -> EventBundle {
+        guard format == Self.currentFormat else { throw SavedEventError.unsupportedFormat }
+        let bundle = try JSONDecoder().decode(EventBundle.self, from: bundleJSON)
+        guard bundle.event.id == eventId else { throw SavedEventError.eventMismatch }
+        return bundle
+    }
+
+    /// Whether this copy belongs to the event the app last joined (`pref.savedEventCode`).
+    func belongs(toEventCode code: String?) -> Bool {
+        guard let code, !code.isEmpty else { return false }
+        return eventCode.caseInsensitiveCompare(code) == .orderedSame
+    }
+
+    static func encode(_ saved: SavedEvent) throws -> Data {
+        try JSONEncoder().encode(saved)
+    }
+
+    static func decode(_ data: Data) throws -> SavedEvent {
+        try JSONDecoder().decode(SavedEvent.self, from: data)
+    }
+}
+
+enum SavedEventError: Error, Sendable {
+    case unsupportedFormat
+    case eventMismatch
+}
+
 // MARK: - Write endpoints
 
 struct JoinRequest: Encodable, Sendable {

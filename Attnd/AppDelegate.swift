@@ -7,7 +7,12 @@
 //
 // Pushes (see API_V2.md):
 //   - type "notification": visible alert. Tapping it opens the Notifications tab.
-//   - type "content_updated": silent (content-available). Refetch the bundle.
+//   - type "content_updated": silent (content-available), sent to every device in
+//     the event with a token, opted in or not (API-007). Refetch the bundle when its
+//     content_version is newer, after a random 0–10 s delay.
+//
+// The app registers with APNs at every launch, whatever the notification opt-in:
+// silent pushes need no permission. The opt-in only controls alerts (`subscribed`).
 
 import SwiftUI
 import UIKit
@@ -23,7 +28,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = self
-        appState.registerForPushIfEnabled()
+        appState.registerForRemoteNotifications()
         return true
     }
 
@@ -36,19 +41,22 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
         // Simulators without APNs and devices without the entitlement end up here.
-        // The app keeps working; it just won't receive pushes.
+        // The app keeps working; it polls every 60 s instead of waiting for pushes.
+        appState.pushRegistrationDidFail()
     }
 
     // MARK: - Silent pushes (content_updated)
 
+    /// Foreground and background. Returns once the refresh (and its save to disk) is done,
+    /// which is when iOS may suspend the app again.
     func application(
         _ application: UIApplication,
         didReceiveRemoteNotification userInfo: [AnyHashable: Any]
     ) async -> UIBackgroundFetchResult {
         let payload = PushPayload(userInfo: userInfo)
         guard payload.kind == .contentUpdated || payload.kind == .notification else { return .noData }
-        await appState.handlePush(payload, opened: false)
-        return .newData
+        let refreshed = await appState.handlePush(payload, opened: false)
+        return refreshed ? .newData : .noData
     }
 }
 

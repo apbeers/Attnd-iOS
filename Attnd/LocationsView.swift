@@ -7,7 +7,9 @@
 // Display config: `locations_style` (cards / list / grouped by category),
 // `show_location_images`, `enable_search` and `group_by_category` (filter chips).
 
+import ImageIO
 import SwiftUI
+import UIKit
 import MapKit
 
 // MARK: - Tab
@@ -276,19 +278,18 @@ struct LocationCard: View {
     }
 }
 
-/// Remote image with placeholder and failure states.
+/// Remote image with placeholder and failure states, from the offline cache when it has it.
 struct LocationImage: View {
     let url: URL?
 
     var body: some View {
         if let url {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().scaledToFill()
-                case .failure:
+            CachedImage(url: url) { image in
+                image.resizable().scaledToFill()
+            } placeholder: { failed in
+                if failed {
                     placeholder(systemImage: "photo")
-                default:
+                } else {
                     Color(.systemGray5).overlay(ProgressView())
                 }
             }
@@ -300,6 +301,87 @@ struct LocationImage: View {
     private func placeholder(systemImage: String) -> some View {
         Color(.systemGray5)
             .overlay(Image(systemName: systemImage).foregroundStyle(.secondary))
+    }
+}
+
+// MARK: - Cached image
+
+/// AsyncImage replacement backed by the offline cache (API-007): memory, then disk
+/// (`ImageStore`, prefetched after every bundle), then the network (kept for next time).
+/// Decoding and downsampling run off the main actor.
+struct CachedImage<Content: View, Placeholder: View>: View {
+    let url: URL
+    private let content: (Image) -> Content
+    private let placeholder: (_ failed: Bool) -> Placeholder
+
+    @State private var loaded: LoadedImage?
+    @State private var failedURL: URL?
+
+    init(
+        url: URL,
+        @ViewBuilder content: @escaping (Image) -> Content,
+        @ViewBuilder placeholder: @escaping (_ failed: Bool) -> Placeholder
+    ) {
+        self.url = url
+        self.content = content
+        self.placeholder = placeholder
+    }
+
+    var body: some View {
+        // The memory cache answers synchronously, so scrolling back never flashes a placeholder.
+        let image = loaded.flatMap { $0.url == url ? $0.image : nil } ?? ImageMemoryCache.shared.image(for: url)
+        ZStack {
+            if let image {
+                content(Image(uiImage: image))
+            } else {
+                placeholder(failedURL == url)
+            }
+        }
+        .task(id: url) { await load() }
+    }
+
+    private func load() async {
+        let url = self.url
+        if let hit = ImageMemoryCache.shared.image(for: url) {
+            loaded = LoadedImage(url: url, image: hit)
+            return
+        }
+        guard let data = await ImageStore.shared.data(for: url),
+              let image = await ImageDecoding.decode(data) else {
+            if !Task.isCancelled { failedURL = url }
+            return
+        }
+        ImageMemoryCache.shared.insert(image, for: url)
+        guard !Task.isCancelled else { return }
+        loaded = LoadedImage(url: url, image: image)
+        failedURL = nil
+    }
+}
+
+private struct LoadedImage {
+    let url: URL
+    let image: UIImage
+}
+
+enum ImageDecoding {
+    /// Large enough for a full-width hero on the widest iPhone display; smaller originals stay as they are.
+    static let maxPixelSize = 2400
+
+    /// Decodes and downsamples (ImageIO) off the main actor. nil for data that isn't an image.
+    static func decode(_ data: Data) async -> UIImage? {
+        let maxPixelSize = ImageDecoding.maxPixelSize
+        return await Task.detached(priority: .userInitiated) { () -> UIImage? in
+            let sourceOptions: [CFString: Any] = [kCGImageSourceShouldCache: false]
+            guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions as CFDictionary) else { return nil }
+            let thumbnailOptions: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+            ]
+            guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary) else { return nil }
+            return UIImage(cgImage: cgImage)
+        }.value
     }
 }
 

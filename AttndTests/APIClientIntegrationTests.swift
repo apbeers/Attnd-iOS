@@ -50,7 +50,7 @@ final class APIClientIntegrationTests: XCTestCase {
 
     func testBundle_LoadsEverything() async throws {
         let event = try await api.lookupEvent(query: "FWFM2026")
-        guard case .updated(let bundle, let etag) = try await api.bundle(eventId: event.id, etag: nil, deviceId: nil) else {
+        guard case .updated(let bundle, let etag, _) = try await api.bundle(eventId: event.id, etag: nil, deviceId: nil) else {
             return XCTFail("A request without If-None-Match must return content")
         }
         XCTAssertEqual(bundle.event.id, event.id)
@@ -66,7 +66,7 @@ final class APIClientIntegrationTests: XCTestCase {
 
     func testBundle_ETagGives304() async throws {
         let event = try await api.lookupEvent(query: "FWFM2026")
-        guard case .updated(_, let etag?) = try await api.bundle(eventId: event.id, etag: nil, deviceId: nil) else {
+        guard case .updated(_, let etag?, _) = try await api.bundle(eventId: event.id, etag: nil, deviceId: nil) else {
             return XCTFail("Expected content with an ETag")
         }
         let second = try await api.bundle(eventId: event.id, etag: etag, deviceId: "ios-test-\(UUID().uuidString)")

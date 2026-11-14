@@ -201,9 +201,9 @@ private struct EventHeader: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             if let logoUrl {
-                AsyncImage(url: logoUrl) { image in
+                CachedImage(url: logoUrl) { image in
                     image.resizable().scaledToFit()
-                } placeholder: {
+                } placeholder: { _ in
                     Color(.systemGray5)
                 }
                 .frame(width: 56, height: 56)

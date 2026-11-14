@@ -4,9 +4,11 @@
 // AppRootView switches between the launch flow and the joined event.
 // ContentView is the tab container for a joined event: the tabs, their order and
 // the initial tab come from the server's `display` config; Options is always last.
-// It also drives bundle refreshes (foreground, every 5 seconds while active for
-// live updates, every 5 minutes on event days) and applies the event's accent
-// colour, falling back to the brand purple asset colour (AccentColor).
+// It also drives bundle refreshes (on becoming active, plus a slow poll while
+// active: every 60 s without a push token, e.g. the App Clip; a 5-minute safety
+// poll when silent `content_updated` pushes can arrive; 15 s after a failure) and
+// applies the event's accent colour, falling back to the brand purple asset
+// colour (AccentColor).
 
 import SwiftUI
 
@@ -145,11 +147,6 @@ struct ContentView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.scenePhase) private var scenePhase
 
-    private static let refreshInterval: Duration = .seconds(5 * 60)
-    /// Live updates: organizers edit on the website and watch the app follow.
-    /// A conditional GET (If-None-Match → 304) every few seconds is cheap.
-    private static let liveRefreshInterval: Duration = .seconds(5)
-
     /// Re-tapping the selected Map tab re-centres the map.
     /// (assumeIsolated: the closures always run on the main actor, whether or not
     /// the SDK declares Binding's closures @Sendable.)
@@ -189,24 +186,16 @@ struct ContentView: View {
                 Task { await appState.refreshBundle() }
             }
         }
-        // Every 5 minutes while in the foreground on event days.
-        .task(id: scenePhase) {
-            guard scenePhase == .active else { return }
-            while !Task.isCancelled {
-                try? await Task.sleep(for: Self.refreshInterval)
-                guard !Task.isCancelled else { break }
-                if appState.isEventDay() {
-                    await appState.refreshBundle()
-                }
-            }
-        }
-        // Live updates every 5 seconds while the scene is active and an event is
-        // joined (ContentView only exists then). Shared with the App Clip, which
-        // has no push. Silent: no spinners; a failed poll just retries next tick.
-        .task(id: LivePollKey(phase: scenePhase, eventId: appState.currentEvent?.id)) {
+        // Fallback poll while the scene is active and an event is joined (ContentView
+        // only exists then); silent `content_updated` pushes do the real work (API-007).
+        // The interval (`LiveRefreshPolicy`) restarts the loop when it changes: 60 s
+        // without a push token (always in the App Clip), 5 min with one, 15 s while
+        // the last refresh failed. Silent: no spinners.
+        .task(id: LivePollKey(phase: scenePhase, eventId: appState.currentEvent?.id, interval: appState.liveRefreshInterval)) {
             guard scenePhase == .active, appState.currentEvent != nil else { return }
+            let interval = appState.liveRefreshInterval
             while !Task.isCancelled {
-                try? await Task.sleep(for: Self.liveRefreshInterval)
+                try? await Task.sleep(for: interval)
                 guard !Task.isCancelled, scenePhase == .active, appState.currentEvent != nil else { break }
                 await appState.refreshBundle(silent: true)
             }
@@ -216,6 +205,7 @@ struct ContentView: View {
     private struct LivePollKey: Equatable {
         let phase: ScenePhase
         let eventId: Int?
+        let interval: Duration
     }
 
     @ViewBuilder
@@ -248,26 +238,40 @@ struct ContentView: View {
 // MARK: - Event status badge
 
 extension View {
-    /// Floats a small "Demo event" / "Event ended" capsule at the top of the
-    /// content (below the navigation bar, so clear of the status bar and Dynamic
-    /// Island). Content scrolls underneath it; it never takes layout space and
-    /// passes touches through. On iPhone Duo it stays clear of the fold and
-    /// camera housings via ReservedRegionAvoiding.
+    /// Floats small capsules at the top of the content (below the navigation bar,
+    /// so clear of the status bar and Dynamic Island): "Demo event" / "Event ended",
+    /// and "Offline · Updated 3:41 PM" while refreshes fail (saved content stays on
+    /// screen). Content scrolls underneath; they never take layout space and pass
+    /// touches through. On iPhone Duo they stay clear of the fold and camera housings
+    /// via ReservedRegionAvoiding.
     func eventStatusBanners() -> some View {
         modifier(EventStatusBadgeModifier())
     }
 }
 
-/// What the floating status badge says, if anything.
+/// What a floating status badge says.
 struct EventStatusBadgeKind: Equatable {
     let title: String
     let systemImage: String
     let accessibilityText: String
 
-    /// Height of the capsule plus its top padding; overlays that also sit at the
-    /// top of the content (map category chips) move down by this much.
+    /// Height of one capsule plus its top padding; overlays that also sit at the
+    /// top of the content (map category chips) move down by this much per badge.
     static let reservedHeight: CGFloat = 36
 
+    /// Every badge to show, top to bottom (empty in screenshot mode).
+    @MainActor
+    static func all(_ appState: AppState) -> [EventStatusBadgeKind] {
+        [current(appState), refresh(appState)].compactMap { $0 }
+    }
+
+    /// Space the badges take at the top of the content.
+    @MainActor
+    static func reservedTopHeight(_ appState: AppState) -> CGFloat {
+        CGFloat(all(appState).count) * Self.reservedHeight
+    }
+
+    /// The event's demo / ended state.
     @MainActor
     static func current(_ appState: AppState) -> EventStatusBadgeKind? {
         // App Store screenshots show the demo event's content without the badge.
@@ -295,6 +299,17 @@ struct EventStatusBadgeKind: Equatable {
             return nil
         }
     }
+
+    /// "Offline · Updated 3:41 PM" (device time zone) while the last refresh failed.
+    @MainActor
+    static func refresh(_ appState: AppState) -> EventStatusBadgeKind? {
+        guard !ScreenshotMode.isActive, appState.currentEvent != nil, let problem = appState.refreshProblem else { return nil }
+        return EventStatusBadgeKind(
+            title: LastUpdatedText.badgeTitle(problem, lastRefreshed: appState.lastRefreshed),
+            systemImage: problem == .offline ? "wifi.slash" : "exclamationmark.icloud",
+            accessibilityText: LastUpdatedText.accessibilityText(problem, lastRefreshed: appState.lastRefreshed)
+        )
+    }
 }
 
 private struct EventStatusBadgeModifier: ViewModifier {
@@ -302,11 +317,14 @@ private struct EventStatusBadgeModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content.overlay(alignment: .top) {
-            if let kind = EventStatusBadgeKind.current(appState) {
+            let kinds = EventStatusBadgeKind.all(appState)
+            if !kinds.isEmpty {
                 ReservedRegionAvoiding {
                     VStack(spacing: 0) {
-                        EventStatusBadge(kind: kind)
-                            .padding(.top, 6)
+                        ForEach(kinds, id: \.title) { kind in
+                            EventStatusBadge(kind: kind)
+                                .padding(.top, 6)
+                        }
                         Spacer(minLength: 0)
                     }
                     .frame(maxWidth: .infinity)

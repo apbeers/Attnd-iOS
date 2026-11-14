@@ -68,7 +68,8 @@ final class APIClient: Sendable {
 
     /// Result of a conditional bundle fetch.
     enum BundleResult: Sendable {
-        case updated(EventBundle, etag: String?)
+        /// `data` is the raw response body, saved as the offline copy (`EventStore`).
+        case updated(EventBundle, etag: String?, data: Data)
         case notModified
     }
 
@@ -115,7 +116,7 @@ final class APIClient: Sendable {
         let (data, http) = try await send("events/\(eventId)/bundle/", headers: headers)
         if http.statusCode == 304 { return .notModified }
         let bundle: EventBundle = try decode(data)
-        return .updated(bundle, etag: http.value(forHTTPHeaderField: "ETag"))
+        return .updated(bundle, etag: http.value(forHTTPHeaderField: "ETag"), data: data)
     }
 
     // MARK: - Devices
@@ -123,7 +124,7 @@ final class APIClient: Sendable {
     /// POST events/<id>/join/
     @discardableResult
     func joinEvent(eventId: Int, deviceId: String, pushToken: String?) async throws -> StatusResponse {
-        let body = JoinRequest(deviceId: deviceId, pushToken: pushToken, appVersion: appVersion)
+        let body = JoinRequest(deviceId: deviceId, pushToken: Self.nonEmpty(pushToken), appVersion: appVersion)
         return try await post("events/\(eventId)/join/", body: body)
     }
 
@@ -136,8 +137,15 @@ final class APIClient: Sendable {
     /// POST devices/ — registration, push token and notification preference.
     @discardableResult
     func registerDevice(deviceId: String, pushToken: String?, subscribed: Bool?) async throws -> StatusResponse {
-        let body = DeviceRequest(deviceId: deviceId, pushToken: pushToken, appVersion: appVersion, subscribed: subscribed)
+        let body = DeviceRequest(deviceId: deviceId, pushToken: Self.nonEmpty(pushToken), appVersion: appVersion, subscribed: subscribed)
         return try await post("devices/", body: body)
+    }
+
+    /// API-007: `"push_token": ""` clears the server's stored token, so a missing token is
+    /// omitted from the JSON (nil), never sent as an empty string.
+    static func nonEmpty(_ token: String?) -> String? {
+        guard let token = token?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty else { return nil }
+        return token
     }
 
     // MARK: - Usage (API-005)

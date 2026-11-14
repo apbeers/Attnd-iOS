@@ -28,7 +28,7 @@ attnd-web is the coordinating repo. The API contract ([`API_V2.md`](https://gith
 - **APNs** (`UserNotifications`) — organizer notifications and silent `content_updated` pushes
 - **DataScannerViewController** (VisionKit) — QR code scanning
 - **MapKit** — map view
-- **Xcode project**: `Attnd.xcodeproj`. **Xcode 27.1 or later** (iOS 27.1 SDK) is required for the iPhone Duo APIs; CI uses the newest released Xcode on the `xcode-27` runner (27.2 as of Nov 2026) and refuses anything older than 27.1, betas and RCs
+- **Xcode project**: `Attnd.xcodeproj` in Xcode 27.2's JSON format (`project.xcproj`, converted by the one-off `convert-project.yml` workflow; JSON with trailing commas — edit carefully or in Xcode). **Xcode 27.2** (build 27B52) is required: the JSON project format needs 27.2 and the iPhone Duo APIs need 27.1. CI pins it with `XCODE_VERSION` (repo variable, default `27.2`) on the `xcode-27` runner; bump it when a newer release lands on the image. Xcode Cloud is not used (it would number builds independently and collide with CI's).
 - **Targets**: `Attnd` (iPhone only, including iPhone Duo; all orientations; no iPad), `AttndAppClip`, `AttndTests`
 
 ## Source Structure (`Attnd/`)
@@ -176,7 +176,7 @@ In Xcode: **Product → Test** (`⌘U`), or `./run_tests.command`. Unit tests (`
 
 | Trigger | What happens |
 |---------|--------------|
-| Push to `develop`/`main`, or a PR | Newest non-beta Xcode on the `xcode-27` runner (macOS 27; override with the `MACOS_RUNNER` variable), unit tests on the newest iPhone simulator (`scripts/ci/test.sh`). Live API tests run only if the `ATTND_API_KEY` secret is set. |
+| Push to `develop`/`main`, or a PR | Xcode `XCODE_VERSION` (default 27.2) on the `xcode-27` runner (macOS 27, Apple silicon; override with `MACOS_RUNNER`), unit tests on the newest iPhone simulator (`scripts/ci/test.sh`). Live API tests run only if the `ATTND_API_KEY` secret is set. |
 | Push to `develop` | Archive with the `dev` environment's `ATTND_SERVER` (the Heroku dev app), upload, add to the TestFlight group in `TESTFLIGHT_GROUP`. |
 | Push to `main` | Archive against `attnd.app`, upload, submit for App Review (`scripts/ci/asc.py release`); releases after approval. |
 

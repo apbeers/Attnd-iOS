@@ -27,7 +27,9 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
-      - name: Select newest Xcode
+      - name: Select Xcode ${{ vars.XCODE_VERSION || '27.2' }}
+        env:
+          XCODE_VERSION: ${{ vars.XCODE_VERSION || '27.2' }}
         run: bash scripts/ci/select_xcode.sh
       - name: Unit tests
         env:
@@ -58,7 +60,9 @@ jobs:
       ATTND_SERVER: ${{ vars.ATTND_SERVER || 'attnd.app' }}
     steps:
       - uses: actions/checkout@v7
-      - name: Select newest Xcode
+      - name: Select Xcode ${{ vars.XCODE_VERSION || '27.2' }}
+        env:
+          XCODE_VERSION: ${{ vars.XCODE_VERSION || '27.2' }}
         run: bash scripts/ci/select_xcode.sh
       - name: Version
         run: |

@@ -1,22 +1,16 @@
 #!/usr/bin/env bash
-# Use the newest *released* Xcode on the runner. The iPhone Duo APIs need Xcode 27.1+ (iOS 27.1 SDK),
-# and App Store Connect rejects builds from beta or release-candidate Xcodes.
-# Override with XCODE_APP=/Applications/Xcode_27.2.app
+# Select the pinned Xcode (XCODE_VERSION, default 27.2 = build 27B52, the newest release as of Nov 2026).
+# The iPhone Duo APIs need Xcode 27.1+ and the JSON project format (project.xcproj) needs 27.2+.
+# Bump XCODE_VERSION (repo variable, or the default below) when a newer release is on the runner image.
 set -euo pipefail
-MIN_VERSION="27.1"
+XCODE_VERSION="${XCODE_VERSION:-27.2}"
+app="${XCODE_APP:-/Applications/Xcode_${XCODE_VERSION}.app}"
 
 echo "Installed Xcodes:"; ls -d /Applications/Xcode*.app
-if [[ -n "${XCODE_APP:-}" ]]; then
-  app="$XCODE_APP"
-else
-  app="$(ls -d /Applications/Xcode_*.app | grep -viE 'beta|release_candidate|_rc' | sort -V | tail -1)"
+if [[ ! -d "$app" ]]; then
+  echo "::error::$app is not on this runner image. Pick one of the versions listed above (repo variable XCODE_VERSION) or a newer runner (MACOS_RUNNER)."
+  exit 1
 fi
 sudo xcode-select -s "$app/Contents/Developer"
 xcodebuild -version
-
-version="$(xcodebuild -version | awk '/^Xcode/ {print $2}')"
-if [[ "$(printf '%s\n%s\n' "$MIN_VERSION" "$version" | sort -V | head -1)" != "$MIN_VERSION" ]]; then
-  echo "::error::Xcode $version is older than $MIN_VERSION, which the iPhone Duo APIs need. Use a newer runner image (MACOS_RUNNER) or set XCODE_APP."
-  exit 1
-fi
 xcrun --sdk iphoneos --show-sdk-version

@@ -210,3 +210,126 @@ struct SupportInfo: Hashable, Sendable {
         return machine.isEmpty ? "unknown" : machine
     }
 }
+
+// MARK: - Screenshot mode (App Store screenshots)
+
+/// App Store screenshot mode, driven by launch arguments from `scripts/ci/screenshots.sh`:
+///
+///     -AttndScreenshotMode YES -AttndScreen <map|map-pane|locations|location|schedule|updates|orientation-probe>
+///     [-AttndEventCode DEMO] [-AttndLocation "Main Stage"] [-AttndScheduleStyle now_next]
+///     [-AttndPane now_next] [-AttndSettleSeconds 4]
+///
+/// (or the environment: ATTND_SCREENSHOT_MODE=1, ATTND_SCREEN=map — `simctl launch` passes
+/// SIMCTL_CHILD_-prefixed variables). Launch arguments land in UserDefaults' volatile argument
+/// domain, so nothing is persisted and normal launches never enter this mode.
+///
+/// In this mode the app joins `eventCode` through the normal lookup → join → bundle path at
+/// launch (skipping the launch screen and any saved event), opens the requested screen, and
+/// skips the update check, device registration, usage counts, the demo badge, the blue dot
+/// and push registration. The map shows every pin (fit all, no clustering). When the content
+/// has loaded and settled it writes `Documents/attnd-screenshot-ready` ("ready <screen> <W>x<H>",
+/// the key window's size in points, or "failed <reason>"), which the script waits for before
+/// capturing (and uses to check that the iPhone Duo really shows its unfolded inner display).
+struct ScreenshotMode: Sendable, Equatable {
+
+    enum Screen: String, Sendable, CaseIterable {
+        case map
+        /// The map beside the secondary pane (iPhone Duo, unfolded).
+        case mapPane = "map-pane"
+        case locations
+        /// The detail page of `locationName` (list + detail side by side on wide layouts).
+        case location
+        case schedule
+        case updates
+        /// Not a store screenshot: a red top half over a blue bottom half, shown without joining
+        /// an event, so the capture script can tell which way a display's capture is rotated.
+        case orientationProbe = "orientation-probe"
+
+        var tab: EventTab {
+            switch self {
+            case .map, .mapPane, .orientationProbe: return .map
+            case .locations, .location: return .locations
+            case .schedule:             return .schedule
+            case .updates:              return .notifications
+            }
+        }
+    }
+
+    var screen: Screen = .map
+    var eventCode: String = "DEMO"
+    var locationName: String = "Main Stage"
+    var scheduleStyle: ScheduleStyle = .nowNext
+    var pane: SecondaryPane = .nowNext
+    var settleSeconds: Double = 4
+
+    /// Read once per launch.
+    static let current: ScreenshotMode? = ScreenshotMode(
+        arguments: UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain),
+        environment: ProcessInfo.processInfo.environment
+    )
+
+    static var isActive: Bool { current != nil }
+
+    /// nil unless `AttndScreenshotMode` (argument) or `ATTND_SCREENSHOT_MODE` (environment) is truthy.
+    init?(arguments: [String: Any], environment: [String: String]) {
+        func value(_ argument: String, _ variable: String) -> String? {
+            let raw = (arguments[argument] as? String) ?? environment[variable]
+            let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        guard let flag = value("AttndScreenshotMode", "ATTND_SCREENSHOT_MODE"),
+              ["yes", "true", "1"].contains(flag.lowercased()) else { return nil }
+        if let raw = value("AttndScreen", "ATTND_SCREEN"), let screen = Screen(rawValue: raw.lowercased()) {
+            self.screen = screen
+        }
+        if let code = value("AttndEventCode", "ATTND_EVENT_CODE") { eventCode = code }
+        if let name = value("AttndLocation", "ATTND_LOCATION") { locationName = name }
+        if let raw = value("AttndScheduleStyle", "ATTND_SCHEDULE_STYLE"), let style = ScheduleStyle(rawValue: raw) {
+            scheduleStyle = style
+        }
+        if let raw = value("AttndPane", "ATTND_PANE"), let pane = SecondaryPane(rawValue: raw), pane != .none {
+            self.pane = pane
+        }
+        if let raw = value("AttndSettleSeconds", "ATTND_SETTLE_SECONDS"), let seconds = Double(raw), seconds >= 0 {
+            settleSeconds = seconds
+        }
+    }
+
+    /// The server's display config with what makes screenshots complete and deterministic:
+    /// every pin framed, the chosen schedule style and pane, and the requested tab first.
+    func adjusted(_ display: DisplayConfig) -> DisplayConfig {
+        var display = display
+        display.mapFitAll = true
+        display.mapClustering = false
+        display.scheduleStyle = scheduleStyle
+        display.secondaryPane = pane
+        display.defaultTab = screen.tab
+        return display
+    }
+
+    /// The location shown by the `location` screen: by name, else the first with an image.
+    func screenshotLocation(in locations: [Location]) -> Location? {
+        locations.first { $0.name.caseInsensitiveCompare(locationName) == .orderedSame }
+            ?? locations.first { $0.imageUrl != nil }
+            ?? locations.first
+    }
+
+    // MARK: Ready marker
+
+    private static var markerURL: URL? {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("attnd-screenshot-ready")
+    }
+
+    static func clearMarker() {
+        guard let url = markerURL else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    /// "ready <screen> <W>x<H>" or "failed <reason>" for the capture script.
+    static func writeMarker(_ text: String) {
+        guard let url = markerURL else { return }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? Data((text + "\n").utf8).write(to: url, options: .atomic)
+    }
+}

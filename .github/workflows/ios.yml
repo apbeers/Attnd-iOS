@@ -13,9 +13,11 @@ name: iOS
 on:
   push:
     branches: [main, develop]
-    paths-ignore: ['**/*.md']
+    # Store listing changes have their own workflow (store-listing.yml).
+    paths-ignore: ['**/*.md', 'store/**', 'scripts/ci/screenshots.sh', 'scripts/ci/compose_screenshots.py',
+                   'scripts/ci/duo_hinge.m', '.github/workflows/store-listing.yml']
   pull_request:
-    paths-ignore: ['**/*.md']
+    paths-ignore: ['**/*.md', 'store/**']
   workflow_dispatch:
 
 concurrency:

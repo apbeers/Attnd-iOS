@@ -41,7 +41,7 @@ attnd-web is the coordinating repo. The API contract ([`API_V2.md`](https://gith
 | `APIClient.swift` | Stateless, `Sendable` v2 client; async/await; 401 → re-attest → retry once |
 | `Models.swift` | v2 models (`Event`, `Location`, `ScheduleItem`, `AppNotification`, `DisplayConfig`, `EventBundle`, request bodies, `PushPayload`) with lenient decoding; usage types (`UsageMetric`, `UsageEntry`, `UsageRequest`, pure `UsageAggregator`) |
 | `DisplayLogic.swift` | Pure, unit-tested logic: schedule grouping (timeline/by day/by location/now-next), location grouping, search, map clustering & framing, fold-avoiding insets |
-| `Helpers.swift` | ISO 8601 parsing, event-time-zone formatting, hex colours, deep-link/QR parsing, `SupportInfo` (support code, copyable support text, device model) |
+| `Helpers.swift` | ISO 8601 parsing, event-time-zone formatting, hex colours, deep-link/QR parsing, `SupportInfo` (support code, copyable support text, device model), `ScreenshotMode` (App Store screenshots, see Store listing) |
 | `AttestationManager.swift` | Apple App Attest key generation, attestation, and JWT token caching |
 | `KeychainHelper.swift` | Keychain read/write wrapper |
 | `LocationPermissionManager.swift` | One-shot async location request |
@@ -178,7 +178,7 @@ In Xcode: **Product → Test** (`⌘U`), or `./run_tests.command`. Unit tests (`
 
 | Trigger | What happens |
 |---------|--------------|
-| Pull request | Xcode `XCODE_VERSION` (default 27.2) on the `xcode-27` runner, unit tests on the newest iPhone simulator (`scripts/ci/test.sh`, which boots the simulator during the build). Live API tests only if `LIVE_API_TESTS` is set. |
+| Pull request | Xcode `XCODE_VERSION` (default 27.2) on the `xcode-27` runner, unit tests on the newest iPhone simulator (`scripts/ci/test.sh`, which shuts the simulator down afterwards so the archive in the same job runs at full speed). Live API tests only if `LIVE_API_TESTS` is set. |
 | Push to `develop` | One Mac job: unit tests, then archive with the `dev` environment's `ATTND_SERVER` and upload; a Linux job waits for TestFlight processing (internal testers get every build). |
 | Push to `main` | The same against `attnd.app`; the Linux job submits for App Review (`scripts/ci/asc.py release`), released after approval. |
 
@@ -187,3 +187,15 @@ In Xcode: **Product → Test** (`⌘U`), or `./run_tests.command`. Unit tests (`
 - Signing is cloud-managed via the App Store Connect API key (`ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` secrets; the key needs the **Admin** role). No certificates or profiles are stored anywhere.
 - Server host: `ATTND_SERVER` build setting → `Info.plist` → `APIClient.serverHost` (default `attnd.app`).
 - Full setup checklist: `SETUP.md` in attnd-web.
+
+## Store listing (`.github/workflows/store-listing.yml`)
+
+App Store text and screenshots are generated and uploaded by CI to the **editable** App Store version (e.g. "1.1 Prepare for Submission"); nothing goes live until that version is submitted by `ios.yml` on `main`.
+
+- **Text**: `store/en-US/*.txt` — `name`, `subtitle` (≤30), `promotional_text` (≤170), `description` (≤4000), `keywords` (≤100, comma-separated, no spaces after commas, not the app name), `release_notes` (sent as What's New, skipped for an app's first version), `support_url`, `marketing_url`, `privacy_url`, `review_notes` (App Review notes; no demo account), `captions.txt` (`<screen>=<caption>`, ≤2 lines, `|` forces the break). `python3 scripts/ci/asc.py metadata --dry-run` validates locally. Keep claims accurate to what the app does.
+- **Screenshot mode** (`ScreenshotMode` in `Helpers.swift`; launch arguments only, never persisted): `-AttndScreenshotMode YES -AttndScreen <map|map-pane|locations|location|schedule|updates|orientation-probe>` joins event `DEMO` through the normal lookup/join path, skips the launch screen, update check, device registration, usage counts, demo badge, blue dot and push, forces fit-all/no clustering/now-next, opens the screen (`location` = "Main Stage" detail; `map-pane` = map + side pane) and writes `Documents/attnd-screenshot-ready` (`ready <screen> <W>x<H>` window points, or `failed <reason>`). Needs a simulator Debug build with `ATTND_API_KEY` + `ATTND_SERVER` = the dev server (the static key only works there).
+- **`scripts/ci/screenshots.sh`** (macOS): builds once; picks the newest `iPhone NN Pro Max` (6.9", 1320×2868), `iPhone NN Pro` (6.3", 1206×2622) and `iPhone Duo` from `simctl list … -j`, creates/boots them, light mode, 9:41 status bar, captures each screen into `build/screenshots/raw/<device>/<n>-<screen>.png`. The Duo boots folded and Xcode has no public hinge control: `scripts/ci/duo_hinge.m` (private SPI, run inside the simulator with `simctl spawn`) unfolds it; the app's reported window size confirms the inner display (≥600 pt wide, portrait), captures use `--display=<active display>` (devicectl), and an orientation probe lets the composer rotate sideways captures. If unfolding fails the Duo set is skipped with a warning (repo variable `DUO_SCREENSHOTS_REQUIRED=true` makes it fatal).
+- **`scripts/ci/compose_screenshots.py`** (Pillow): purple gradient `#431F86 → #7B4FD6`, bold white caption (SF from the macOS runner, fallbacks), rounded/shadowed capture; outputs exactly 1320×2868, 1206×2622, 2007×2853 RGB PNG in `build/screenshots/composed/`.
+- **`asc.py metadata`** / **`asc.py screenshots`**: version localization, app info localization (name, subtitle, privacy URL), App Review details; screenshot sets `APP_IPHONE_67` (6.9"), `APP_IPHONE_61` (Dynamic Island medium display, 1206×2622) and `APP_IPHONE_DUO` (missing from Apple's API reference; if the API rejects it, the accepted values are printed and the run continues). Existing screenshots in those sets are replaced.
+- **Workflow**: push to `develop`/`main` touching `store/**`, the screenshot scripts or the workflow, or run it manually (inputs `screenshots`, `upload`). Linux validates and decides; the Mac job only captures + composes (text-only changes skip it); a Linux job uploads (environment `production` on `main`, else `dev`).
+- **Repo variables** (optional): `REVIEW_CONTACT_FIRST_NAME`, `REVIEW_CONTACT_LAST_NAME`, `REVIEW_CONTACT_PHONE`, `REVIEW_CONTACT_EMAIL` (App Review contact; left unchanged when unset), `SCREENSHOT_SERVER` (default the dev server), `DUO_SCREENSHOTS_REQUIRED`. Secrets: `ATTND_API_KEY` (repo) and the environments' `ASC_*`.

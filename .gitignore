@@ -11,3 +11,6 @@ xcuserdata/
 Config/Secrets.xcconfig
 __pycache__/
 .DS_Store
+
+# CI / script output (screenshots, derived data)
+build/

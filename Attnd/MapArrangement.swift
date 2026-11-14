@@ -26,7 +26,9 @@ struct MapTab: View {
 
     var body: some View {
         let pane = appState.display.secondaryPane
-        if horizontalSizeClass == .regular, pane != .none {
+        // The `map-pane` App Store screenshot (iPhone Duo) always shows the arrangement.
+        let showsPane = horizontalSizeClass == .regular || ScreenshotMode.current?.screen == .mapPane
+        if showsPane, pane != .none {
             MapArrangement {
                 mapStack
             } secondary: {

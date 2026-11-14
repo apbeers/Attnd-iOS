@@ -141,8 +141,11 @@ final class AppState {
             defaults.set(newId, forKey: Keys.deviceId)
             deviceId = newId
         }
-        showUserLocation = defaults.object(forKey: Keys.showUserLocation) as? Bool ?? true
-        notificationsEnabled = defaults.object(forKey: Keys.notificationsEnabled) as? Bool ?? false
+        // Screenshot mode: no blue dot and no push (property observers don't run in init,
+        // so the stored preferences are left untouched).
+        let isScreenshot = ScreenshotMode.isActive
+        showUserLocation = isScreenshot ? false : defaults.object(forKey: Keys.showUserLocation) as? Bool ?? true
+        notificationsEnabled = isScreenshot ? false : defaults.object(forKey: Keys.notificationsEnabled) as? Bool ?? false
         pushToken = defaults.string(forKey: Keys.pushToken)
         dismissedUpdateVersion = defaults.string(forKey: Keys.dismissedUpdateVersion)
         // Any API call answered with 410/426 means this build's API version is retired.
@@ -155,6 +158,8 @@ final class AppState {
 
     /// Asks the server whether this build should update. Failures leave the last answer in place.
     func checkForUpdate() async {
+        // Screenshot mode never shows the update banner.
+        guard !ScreenshotMode.isActive else { return }
         guard let status = try? await APIClient.shared.appStatus() else { return }
         appStatus = status
     }
@@ -208,6 +213,10 @@ final class AppState {
     /// Registers the device, then silently rejoins the last event if there was one.
     /// On lookup failure the saved code is cleared and the user lands on the launch screen.
     func launch() async {
+        if let screenshot = ScreenshotMode.current {
+            await launchForScreenshots(screenshot)
+            return
+        }
         Task { await syncDevice() }
         Task { await checkForUpdate() }
         guard let code = savedEventCode else { return }
@@ -220,6 +229,50 @@ final class AppState {
         } catch {
             // Offline or server trouble: forget nothing, but show the launch screen.
         }
+    }
+
+    /// Screenshot mode (`ScreenshotMode`): joins the demo event through the normal
+    /// lookup → join → bundle path, retrying while the dev server wakes up, then writes
+    /// the ready marker once the content has had time to settle (map tiles, images).
+    private func launchForScreenshots(_ screenshot: ScreenshotMode) async {
+        ScreenshotMode.clearMarker()
+        if screenshot.screen == .orientationProbe {
+            // AppRootView shows the probe instead of any event; nothing to load.
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                ScreenshotMode.writeMarker("ready \(screenshot.screen.rawValue) \(Self.keyWindowSize)")
+            }
+            return
+        }
+        for attempt in 1...8 {
+            if currentEvent == nil {
+                _ = await join(code: screenshot.eventCode)
+            } else {
+                await refreshBundle()
+            }
+            if hasAppliedDefaultTab { break }
+            if attempt < 8 { try? await Task.sleep(for: .seconds(5)) }
+        }
+        guard hasAppliedDefaultTab else {
+            let reason = currentEvent == nil ? "no event for code \(screenshot.eventCode)" : (loadError ?? "bundle not loaded")
+            ScreenshotMode.writeMarker("failed \(reason)")
+            return
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(screenshot.settleSeconds))
+            ScreenshotMode.writeMarker("ready \(screenshot.screen.rawValue) \(Self.keyWindowSize)")
+        }
+    }
+
+    /// The key window's size in points ("669x951") for the screenshot ready marker, so the
+    /// capture script can check which iPhone Duo display hosts the app. Diagnostics only.
+    private static var keyWindowSize: String {
+        let window = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first { $0.isKeyWindow }
+        guard let size = window?.bounds.size else { return "unknown" }
+        return "\(Int(size.width.rounded()))x\(Int(size.height.rounded()))"
     }
 
     // MARK: - Join / Leave
@@ -305,7 +358,7 @@ final class AppState {
     private func apply(_ bundle: EventBundle) {
         let isFirstApply = !hasAppliedDefaultTab
         currentEvent = bundle.event
-        display = bundle.display
+        display = ScreenshotMode.current?.adjusted(bundle.display) ?? bundle.display
         categories = bundle.categories
         locations = bundle.locations
         schedule = bundle.schedule
@@ -393,6 +446,7 @@ final class AppState {
 
     /// `POST devices/` with the current token and preference.
     func syncDevice() async {
+        guard !ScreenshotMode.isActive else { return }
         _ = try? await APIClient.shared.registerDevice(
             deviceId: deviceId,
             pushToken: pushToken,
@@ -425,6 +479,8 @@ final class AppState {
     /// Counts one anonymous usage event for the joined event. No-op when not in an event.
     /// Never pass identifying data or search text as `detail`.
     func track(_ metric: UsageMetric, detail: String? = nil) {
+        // Screenshot runs don't count as usage.
+        guard !ScreenshotMode.isActive else { return }
         guard let eventId = currentEvent?.id else { return }
         usage.record(metric, detail: detail, eventId: eventId)
     }

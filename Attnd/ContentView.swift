@@ -20,7 +20,9 @@ struct AppRootView: View {
 
     var body: some View {
         Group {
-            if appState.mustUpdate {
+            if ScreenshotMode.current?.screen == .orientationProbe {
+                ScreenshotOrientationProbe()
+            } else if appState.mustUpdate {
                 UpdateRequiredView()
                     .transition(.opacity)
             } else if isLaunching {
@@ -57,6 +59,19 @@ struct AppRootView: View {
                 appState.flushUsage()
             }
         }
+    }
+}
+
+/// Screenshot mode's `orientation-probe` screen: red top half, blue bottom half, edge to edge.
+/// `compose_screenshots.py` uses its capture to rotate a display's captures upright.
+private struct ScreenshotOrientationProbe: View {
+    var body: some View {
+        VStack(spacing: 0) {
+            Color(red: 1, green: 0, blue: 0)
+            Color(red: 0, green: 0, blue: 1)
+        }
+        .ignoresSafeArea()
+        .statusBarHidden()
     }
 }
 
@@ -255,7 +270,8 @@ struct EventStatusBadgeKind: Equatable {
 
     @MainActor
     static func current(_ appState: AppState) -> EventStatusBadgeKind? {
-        guard let event = appState.currentEvent else { return nil }
+        // App Store screenshots show the demo event's content without the badge.
+        guard !ScreenshotMode.isActive, let event = appState.currentEvent else { return nil }
         switch (event.isDemo, event.isArchived) {
         case (true, true):
             return EventStatusBadgeKind(

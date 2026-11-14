@@ -1,0 +1,9 @@
+# One caption per screen: <screen>=<caption>. At most two lines on the image (wrapped
+# automatically; use " | " to force the break). Screens: map, map-pane, locations,
+# location, schedule, updates. Order and devices are set in scripts/ci/screenshots.sh.
+map=Every stage, vendor and restroom on one map
+map-pane=Unfold for the map and more, side by side
+schedule=See what's on now | and what's up next
+location=Details and walking directions for every spot
+locations=Find any place at the event in seconds
+updates=Updates from the organizer, as they happen

@@ -32,7 +32,15 @@ struct LocationsTab: View {
         .onChange(of: appState.locations) {
             // Drop a selection the organizer removed.
             if let id = selection?.id, appState.location(id: id) == nil { selection = nil }
+            selectScreenshotLocationIfNeeded()
         }
+        .onAppear(perform: selectScreenshotLocationIfNeeded)
+    }
+
+    /// The `location` App Store screenshot opens one location's detail (ScreenshotMode).
+    private func selectScreenshotLocationIfNeeded() {
+        guard selection == nil, let screenshot = ScreenshotMode.current, screenshot.screen == .location else { return }
+        selection = screenshot.screenshotLocation(in: appState.locations)
     }
 }
 

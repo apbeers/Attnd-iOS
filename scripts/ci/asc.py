@@ -9,20 +9,37 @@ App Store Connect automation for CI (App Store Connect API, no fastlane).
         Wait for processing, point the App Store version at this build, set release notes,
         and submit it for App Review (released automatically after approval).
 
+    asc.py metadata [--store store] [--locale en-US] [--version 2.0] [--dry-run]
+        Validate the listing text in store/<locale>/ and set it on the editable App Store version:
+        version localization (description, keywords, promotional text, what's new, support and
+        marketing URLs), app info localization (name, subtitle, privacy policy URL) and the App Review
+        details (notes, no demo account; contact from REVIEW_CONTACT_FIRST_NAME / _LAST_NAME / _PHONE /
+        _EMAIL when set). --dry-run only validates (no key needed).
+
+    asc.py screenshots [--dir build/screenshots/composed] [--locale en-US] [--version 2.0]
+        Replace the editable version's screenshots for our display types with the composed PNGs
+        (<dir>/iphone-69 -> APP_IPHONE_67, iphone-63 -> APP_IPHONE_61, iphone-duo -> APP_IPHONE_DUO),
+        in file-name order, and wait until App Store Connect has processed them.
+
+    The editable version is the one in an editable state (e.g. Prepare for Submission). metadata and
+    screenshots never rename it; --version is only used to create one when none exists. Nothing goes
+    live until that version is submitted and released.
+
 Env: ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8, ASC_BUNDLE_ID (default com.arcu.Attnd)
 Requires: PyJWT + cryptography (pip install "pyjwt[crypto]").
 """
 
 import argparse
+import hashlib
 import json
 import os
+import pathlib
+import struct
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
-
-import jwt
 
 API = 'https://api.appstoreconnect.apple.com'
 # Versions that can still be edited / re-pointed at a new build
@@ -30,6 +47,8 @@ EDITABLE_STATES = 'PREPARE_FOR_SUBMISSION,READY_FOR_REVIEW,DEVELOPER_REJECTED,RE
 
 
 def token():
+    import jwt  # PyJWT; imported here so `metadata --dry-run` runs without it
+
     now = int(time.time())
     return jwt.encode(
         {'iss': os.environ['ASC_ISSUER_ID'], 'iat': now, 'exp': now + 15 * 60, 'aud': 'appstoreconnect-v1'},
@@ -112,22 +131,34 @@ def testflight(args, app):
     print(f'Build {args.build} is available to TestFlight group "{args.group}"')
 
 
-def release(args, app):
-    build = wait_for_build(app, args.version, args.build)
-
-    # Reuse an editable version if one exists (renaming it), otherwise create one.
+def editable_version(app, version=None, rename=False):
+    """The editable App Store version (id, versionString). Reuses one in an editable state (renaming
+    it to `version` when `rename`), otherwise creates `version`."""
     versions = must('GET', f'/v1/apps/{app}/appStoreVersions',
                     {'filter[platform]': 'IOS', 'filter[appVersionState]': EDITABLE_STATES})['data']
     if versions:
         version_id = versions[0]['id']
-        if versions[0]['attributes']['versionString'] != args.version:
+        current = versions[0]['attributes']['versionString']
+        if rename and version and current != version:
             must('PATCH', f'/v1/appStoreVersions/{version_id}', body={'data': {
-                'type': 'appStoreVersions', 'id': version_id, 'attributes': {'versionString': args.version}}})
-    else:
-        version_id = must('POST', '/v1/appStoreVersions', body={'data': {
-            'type': 'appStoreVersions',
-            'attributes': {'platform': 'IOS', 'versionString': args.version, 'releaseType': 'AFTER_APPROVAL'},
-            'relationships': {'app': {'data': {'type': 'apps', 'id': app}}}}})['data']['id']
+                'type': 'appStoreVersions', 'id': version_id, 'attributes': {'versionString': version}}})
+            current = version
+        return version_id, current
+    if not version:
+        sys.exit('No editable App Store version, and no --version to create one with.')
+    version_id = must('POST', '/v1/appStoreVersions', body={'data': {
+        'type': 'appStoreVersions',
+        'attributes': {'platform': 'IOS', 'versionString': version, 'releaseType': 'AFTER_APPROVAL'},
+        'relationships': {'app': {'data': {'type': 'apps', 'id': app}}}}})['data']['id']
+    print(f'Created App Store version {version}')
+    return version_id, version
+
+
+def release(args, app):
+    build = wait_for_build(app, args.version, args.build)
+
+    # Reuse an editable version if one exists (renaming it), otherwise create one.
+    version_id, _ = editable_version(app, args.version, rename=True)
     print(f'App Store version {args.version}: {version_id}')
 
     must('PATCH', f'/v1/appStoreVersions/{version_id}/relationships/build',
@@ -162,6 +193,291 @@ def release(args, app):
     print(f'Submitted {args.version} ({args.build}) for App Review; it releases automatically when approved.')
 
 
+# --- Store listing: metadata ---------------------------------------------------------------------
+
+# file in store/<locale>/ -> (max length, required)
+LISTING_FILES = {
+    'name': (30, True),
+    'subtitle': (30, True),
+    'promotional_text': (170, False),
+    'description': (4000, True),
+    'keywords': (100, True),
+    'release_notes': (4000, False),
+    'support_url': (None, True),
+    'marketing_url': (None, False),
+    'privacy_url': (None, True),
+    'review_notes': (4000, False),
+}
+
+
+def read_listing(store, locale):
+    """Reads and validates store/<locale>/*.txt. Exits with every problem listed."""
+    folder = pathlib.Path(store) / locale
+    texts, problems = {}, []
+    for key, (limit, required) in LISTING_FILES.items():
+        path = folder / f'{key}.txt'
+        text = path.read_text(encoding='utf-8').strip() if path.exists() else ''
+        texts[key] = text
+        if required and not text:
+            problems.append(f'{path} is missing or empty')
+        if limit and len(text) > limit:
+            problems.append(f'{path}: {len(text)} characters (max {limit})')
+        if key.endswith('_url') and text and (not text.startswith('https://') or any(c.isspace() for c in text)):
+            problems.append(f'{path}: not a single https:// URL')
+    keywords = texts['keywords']
+    if keywords:
+        if '\n' in keywords:
+            problems.append('keywords.txt: keep the keywords on one line')
+        if ', ' in keywords or ' ,' in keywords:
+            problems.append('keywords.txt: no spaces around commas (they count against the 100 characters)')
+        words = [w.strip().casefold() for w in keywords.split(',')]
+        if any(not w for w in words):
+            problems.append('keywords.txt: empty keyword (double or trailing comma)')
+        if len(set(words)) != len(words):
+            problems.append('keywords.txt: repeated keyword')
+        name = texts['name'].casefold()
+        if name and any(name in w for w in words):
+            problems.append('keywords.txt: don\'t repeat the app name (it is indexed already)')
+    if problems:
+        sys.exit('Store listing problems:\n- ' + '\n- '.join(problems))
+    for key, (limit, _) in LISTING_FILES.items():
+        if limit and texts[key]:
+            print(f'  {key}: {len(texts[key])}/{limit}')
+    return texts
+
+
+def version_localization(version_id, locale):
+    locs = must('GET', f'/v1/appStoreVersions/{version_id}/appStoreVersionLocalizations', {'limit': 50})['data']
+    for loc in locs:
+        if loc['attributes'].get('locale') == locale:
+            return loc['id']
+    print(f'Creating the {locale} localization of the App Store version')
+    return must('POST', '/v1/appStoreVersionLocalizations', body={'data': {
+        'type': 'appStoreVersionLocalizations', 'attributes': {'locale': locale},
+        'relationships': {'appStoreVersion': {'data': {'type': 'appStoreVersions', 'id': version_id}}}}})['data']['id']
+
+
+# App info states in which name / subtitle / privacy URL can no longer be edited.
+APP_INFO_LOCKED = {'ACCEPTED', 'IN_REVIEW', 'PENDING_RELEASE', 'READY_FOR_DISTRIBUTION', 'READY_FOR_SALE',
+                   'REPLACED_WITH_NEW_INFO', 'WAITING_FOR_REVIEW', 'PROCESSING_FOR_APP_STORE',
+                   'PENDING_DEVELOPER_RELEASE', 'PENDING_APPLE_RELEASE'}
+
+
+def set_app_info(app, locale, texts):
+    infos = must('GET', f'/v1/apps/{app}/appInfos', {'limit': 10})['data']
+    editable = [i for i in infos if (i['attributes'].get('state') or i['attributes'].get('appStoreState')) not in APP_INFO_LOCKED]
+    if not editable:
+        states = ', '.join(str(i['attributes'].get('state') or i['attributes'].get('appStoreState')) for i in infos)
+        print(f'::warning::No editable app info (states: {states}); name, subtitle and privacy URL not changed')
+        return
+    info_id = editable[0]['id']
+    attributes = {'name': texts['name'], 'subtitle': texts['subtitle'], 'privacyPolicyUrl': texts['privacy_url']}
+    locs = must('GET', f'/v1/appInfos/{info_id}/appInfoLocalizations', {'limit': 50})['data']
+    match = [loc for loc in locs if loc['attributes'].get('locale') == locale]
+    if match:
+        must('PATCH', f'/v1/appInfoLocalizations/{match[0]["id"]}', body={'data': {
+            'type': 'appInfoLocalizations', 'id': match[0]['id'], 'attributes': attributes}})
+    else:
+        must('POST', '/v1/appInfoLocalizations', body={'data': {
+            'type': 'appInfoLocalizations', 'attributes': {'locale': locale, **attributes},
+            'relationships': {'appInfo': {'data': {'type': 'appInfos', 'id': info_id}}}}})
+    print(f'App info ({locale}): name "{texts["name"]}", subtitle "{texts["subtitle"]}", privacy policy URL')
+
+
+def set_review_details(version_id, texts):
+    attributes = {'demoAccountRequired': False, 'notes': texts['review_notes']}
+    contact = {'contactFirstName': 'REVIEW_CONTACT_FIRST_NAME', 'contactLastName': 'REVIEW_CONTACT_LAST_NAME',
+               'contactPhone': 'REVIEW_CONTACT_PHONE', 'contactEmail': 'REVIEW_CONTACT_EMAIL'}
+    for attribute, env in contact.items():
+        if os.environ.get(env, '').strip():
+            attributes[attribute] = os.environ[env].strip()
+    missing = [env for env in contact.values() if not os.environ.get(env, '').strip()]
+    if missing:
+        print(f'::notice::Not set (App Review contact left as it is): {", ".join(missing)}')
+    status, data = call('GET', f'/v1/appStoreVersions/{version_id}/appStoreReviewDetail')
+    if status == 200 and data.get('data'):
+        detail_id = data['data']['id']
+        must('PATCH', f'/v1/appStoreReviewDetails/{detail_id}', body={'data': {
+            'type': 'appStoreReviewDetails', 'id': detail_id, 'attributes': attributes}})
+    else:
+        must('POST', '/v1/appStoreReviewDetails', body={'data': {
+            'type': 'appStoreReviewDetails', 'attributes': attributes,
+            'relationships': {'appStoreVersion': {'data': {'type': 'appStoreVersions', 'id': version_id}}}}})
+    print('App Review details: notes, no demo account' + ('' if missing else ', contact'))
+
+
+def metadata(args, app):
+    version_id, version_string = editable_version(app, args.version)
+    texts = args.texts
+    print(f'Editable App Store version: {version_string} ({version_id})')
+
+    loc_id = version_localization(version_id, args.locale)
+    attributes = {'description': texts['description'], 'keywords': texts['keywords'],
+                  'supportUrl': texts['support_url']}
+    if texts['promotional_text']:
+        attributes['promotionalText'] = texts['promotional_text']
+    if texts['marketing_url']:
+        attributes['marketingUrl'] = texts['marketing_url']
+    must('PATCH', f'/v1/appStoreVersionLocalizations/{loc_id}', body={'data': {
+        'type': 'appStoreVersionLocalizations', 'id': loc_id, 'attributes': attributes}})
+    print(f'Version localization ({args.locale}): ' + ', '.join(attributes))
+
+    # "What's New" doesn't exist for an app's first version.
+    others = [v for v in must('GET', f'/v1/apps/{app}/appStoreVersions',
+                              {'filter[platform]': 'IOS', 'limit': 200})['data'] if v['id'] != version_id]
+    if texts['release_notes'] and others:
+        status, data = call('PATCH', f'/v1/appStoreVersionLocalizations/{loc_id}', body={'data': {
+            'type': 'appStoreVersionLocalizations', 'id': loc_id,
+            'attributes': {'whatsNew': texts['release_notes']}}})
+        if status >= 300:
+            print(f'::warning::Release notes not set ({status}): {data.get("_error", "")[:300]}')
+        else:
+            print('Release notes set')
+    elif texts['release_notes']:
+        print('First version of the app: no release notes')
+
+    set_app_info(app, args.locale, texts)
+    set_review_details(version_id, texts)
+
+
+# --- Store listing: screenshots ------------------------------------------------------------------
+
+# Composed folder -> (display type, exact size). 1206x2622 is "iPhone with Dynamic Island (medium
+# display)", APP_IPHONE_61; 1320x2868 is the large display, APP_IPHONE_67. APP_IPHONE_DUO is accepted by
+# the live API but missing from Apple's ScreenshotDisplayType reference.
+SCREENSHOT_TYPES = {
+    'iphone-69': ('APP_IPHONE_67', (1320, 2868)),
+    'iphone-63': ('APP_IPHONE_61', (1206, 2622)),
+    'iphone-duo': ('APP_IPHONE_DUO', (2007, 2853)),
+}
+
+
+def png_info(path):
+    """(width, height, colour type) from the PNG header; colour type 2 = RGB, 6 = RGBA."""
+    with open(path, 'rb') as f:
+        head = f.read(26)
+    if head[:8] != b'\x89PNG\r\n\x1a\n':
+        sys.exit(f'{path} is not a PNG')
+    width, height = struct.unpack('>II', head[16:24])
+    return width, height, head[25]
+
+
+def screenshot_plan(root):
+    plan = []
+    for folder, (display_type, size) in SCREENSHOT_TYPES.items():
+        files = sorted((pathlib.Path(root) / folder).glob('*.png'))
+        if not files:
+            print(f'::warning::No screenshots in {root}/{folder}; {display_type} left as it is')
+            continue
+        if len(files) > 10:
+            sys.exit(f'{root}/{folder}: {len(files)} screenshots (App Store maximum is 10)')
+        for path in files:
+            width, height, colour = png_info(path)
+            if (width, height) != size or colour != 2:
+                sys.exit(f'{path}: {width}x{height} colour type {colour}; expected {size[0]}x{size[1]} RGB')
+        plan.append((display_type, files))
+    if not plan:
+        sys.exit(f'No screenshots under {root}')
+    return plan
+
+
+def http_upload(operation, chunk):
+    headers = {h['name']: h['value'] for h in operation.get('requestHeaders') or []}
+    for attempt in range(1, 4):
+        req = urllib.request.Request(operation['url'], data=chunk, method=operation['method'], headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                resp.read()
+                return
+        except (urllib.error.URLError, TimeoutError) as err:
+            if attempt == 3:
+                sys.exit(f'Uploading a screenshot part failed: {err}')
+            time.sleep(5 * attempt)
+
+
+def upload_screenshot(set_id, path):
+    data = path.read_bytes()
+    created = must('POST', '/v1/appScreenshots', body={'data': {
+        'type': 'appScreenshots', 'attributes': {'fileName': path.name, 'fileSize': len(data)},
+        'relationships': {'appScreenshotSet': {'data': {'type': 'appScreenshotSets', 'id': set_id}}}}})['data']
+    for operation in created['attributes'].get('uploadOperations') or []:
+        offset, length = operation['offset'], operation['length']
+        http_upload(operation, data[offset:offset + length])
+    must('PATCH', f'/v1/appScreenshots/{created["id"]}', body={'data': {
+        'type': 'appScreenshots', 'id': created['id'],
+        'attributes': {'uploaded': True, 'sourceFileChecksum': hashlib.md5(data).hexdigest()}}})
+    return created['id']
+
+
+def wait_for_screenshots(ids, timeout_min=15):
+    pending, failed = dict(ids), []
+    deadline = time.time() + timeout_min * 60
+    while pending and time.time() < deadline:
+        for screenshot_id, name in list(pending.items()):
+            data = must('GET', f'/v1/appScreenshots/{screenshot_id}',
+                        {'fields[appScreenshots]': 'assetDeliveryState,fileName'})['data']
+            delivery = data['attributes'].get('assetDeliveryState') or {}
+            state = delivery.get('state')
+            if state == 'COMPLETE':
+                del pending[screenshot_id]
+            elif state == 'FAILED':
+                del pending[screenshot_id]
+                failed.append(f'{name}: {json.dumps(delivery.get("errors") or [])[:300]}')
+        if pending:
+            print(f'Waiting for App Store Connect to process {len(pending)} screenshot(s)')
+            time.sleep(10)
+    if failed:
+        sys.exit('Screenshot processing failed:\n- ' + '\n- '.join(failed))
+    if pending:
+        sys.exit(f'Timed out waiting for {len(pending)} screenshot(s) to process')
+    print(f'All {len(ids)} screenshots processed')
+
+
+def screenshots(args, app):
+    plan = screenshot_plan(args.dir)
+    version_id, version_string = editable_version(app, args.version)
+    print(f'Editable App Store version: {version_string} ({version_id})')
+    loc_id = version_localization(version_id, args.locale)
+
+    sets = must('GET', f'/v1/appStoreVersionLocalizations/{loc_id}/appScreenshotSets', {'limit': 50})['data']
+    print('Existing screenshot sets: ' + (', '.join(s['attributes']['screenshotDisplayType'] for s in sets) or 'none'))
+    by_type = {s['attributes']['screenshotDisplayType']: s['id'] for s in sets}
+
+    uploaded, skipped = {}, []
+    for display_type, files in plan:
+        set_id = by_type.get(display_type)
+        if not set_id:
+            status, data = call('POST', '/v1/appScreenshotSets', body={'data': {
+                'type': 'appScreenshotSets', 'attributes': {'screenshotDisplayType': display_type},
+                'relationships': {'appStoreVersionLocalization': {
+                    'data': {'type': 'appStoreVersionLocalizations', 'id': loc_id}}}}})
+            if status >= 300:
+                # 409 lists the accepted display types; print them and carry on with the others.
+                print(f'::warning::Could not create a {display_type} screenshot set ({status}): '
+                      f'{data.get("_error", "")[:1500]}')
+                skipped.append(display_type)
+                continue
+            set_id = data['data']['id']
+        old = must('GET', f'/v1/appScreenshotSets/{set_id}/appScreenshots', {'limit': 50})['data']
+        for screenshot in old:
+            must('DELETE', f'/v1/appScreenshots/{screenshot["id"]}')
+        ids = []
+        for path in files:
+            ids.append(upload_screenshot(set_id, path))
+            uploaded[ids[-1]] = f'{display_type}/{path.name}'
+        # Upload order is display order; set it explicitly anyway.
+        must('PATCH', f'/v1/appScreenshotSets/{set_id}/relationships/appScreenshots',
+             body={'data': [{'type': 'appScreenshots', 'id': i} for i in ids]})
+        print(f'{display_type}: replaced {len(old)} with {len(ids)} screenshot(s)')
+
+    if uploaded:
+        wait_for_screenshots(uploaded)
+    if skipped:
+        print(f'::warning::Skipped display types: {", ".join(skipped)}')
+    if len(skipped) == len(plan):
+        sys.exit('No screenshot set could be updated')
+
+
 def check():
     """Fail fast with a clear explanation if the App Store Connect key can't be used."""
     p8 = os.environ.get('ASC_KEY_P8', '')
@@ -192,14 +508,29 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == 'check':
         return check()
     parser = argparse.ArgumentParser()
-    parser.add_argument('command', choices=['testflight', 'release'])
-    parser.add_argument('--version', required=True)
-    parser.add_argument('--build', required=True)
+    parser.add_argument('command', choices=['testflight', 'release', 'metadata', 'screenshots'])
+    parser.add_argument('--version', default='',
+                        help='testflight/release: the build\'s version; metadata/screenshots: only used to '
+                             'create a version when none is editable')
+    parser.add_argument('--build', default='')
     parser.add_argument('--group', default='')
     parser.add_argument('--whats-new', default='')
+    parser.add_argument('--store', default='store', help='metadata: folder with <locale>/*.txt')
+    parser.add_argument('--locale', default='en-US')
+    parser.add_argument('--dry-run', action='store_true', help='metadata: validate only')
+    parser.add_argument('--dir', default='build/screenshots/composed', help='screenshots: composed PNGs')
     args = parser.parse_args()
+    if args.command in ('testflight', 'release') and not (args.version and args.build):
+        parser.error(f'{args.command} needs --version and --build')
+    if args.command == 'metadata':
+        args.texts = read_listing(args.store, args.locale)  # validate before touching anything
+        if args.dry_run:
+            print('Store listing OK')
+            return
+    if args.command == 'screenshots':
+        screenshot_plan(args.dir)  # validate sizes before touching anything
     app = app_id(os.environ.get('ASC_BUNDLE_ID', 'com.arcu.Attnd'))
-    (testflight if args.command == 'testflight' else release)(args, app)
+    {'testflight': testflight, 'release': release, 'metadata': metadata, 'screenshots': screenshots}[args.command](args, app)
 
 
 if __name__ == '__main__':

@@ -1,0 +1,165 @@
+# App Store listing: text (store/en-US/*.txt) and screenshots, set on the EDITABLE App Store version
+# (e.g. "1.1 Prepare for Submission"). Nothing goes live until that version is submitted (ios.yml on main).
+#
+#   plan        (Linux)  validate the listing text; decide whether screenshots must be regenerated
+#   screenshots (Mac)    build once for the simulator against the dev server, capture every screen on the
+#                        6.9" / 6.3" iPhones and the unfolded iPhone Duo, compose the store frames
+#   upload      (Linux)  asc.py metadata, then asc.py screenshots (processing is waited for here, not on the Mac)
+#
+# A push that only changes listing text skips the Mac job. Manual runs: Actions → Store listing → Run workflow
+# (screenshots: regenerate them; upload: send to App Store Connect — off = dry run, artifacts only).
+name: Store listing
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'store/**'
+      - 'scripts/ci/screenshots.sh'
+      - 'scripts/ci/compose_screenshots.py'
+      - 'scripts/ci/duo_hinge.m'
+      - '.github/workflows/store-listing.yml'
+  workflow_dispatch:
+    inputs:
+      screenshots:
+        description: Regenerate the screenshots
+        type: boolean
+        default: true
+      upload:
+        description: Upload the listing and screenshots to App Store Connect (editable version only)
+        type: boolean
+        default: true
+
+# One listing update at a time per branch; never cancel one halfway through replacing screenshots.
+concurrency:
+  group: store-listing-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Validate listing
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      screenshots: ${{ steps.plan.outputs.screenshots }}
+      upload: ${{ steps.plan.outputs.upload }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Validate listing text
+        run: python3 scripts/ci/asc.py metadata --dry-run
+      - name: Plan
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          INPUT_SCREENSHOTS: ${{ inputs.screenshots }}
+          INPUT_UPLOAD: ${{ inputs.upload }}
+        run: |
+          if [ "$EVENT" = workflow_dispatch ]; then
+            screenshots=$INPUT_SCREENSHOTS
+            upload=$INPUT_UPLOAD
+          else
+            upload=true
+            screenshots=true
+            # Listing text alone doesn't need new screenshots (captions.txt does).
+            if [ -n "$BEFORE" ] && ! [[ "$BEFORE" =~ ^0+$ ]] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+              changed=$(git diff --name-only "$BEFORE" "$GITHUB_SHA")
+              echo "Changed:"; echo "$changed"
+              if [ -n "$changed" ] && ! echo "$changed" | grep -qvE '^store/[^/]+/(name|subtitle|promotional_text|description|keywords|release_notes|support_url|marketing_url|privacy_url|review_notes)\.txt$'; then
+                screenshots=false
+              fi
+            fi
+          fi
+          echo "screenshots=$screenshots" >> "$GITHUB_OUTPUT"
+          echo "upload=$upload" >> "$GITHUB_OUTPUT"
+          echo "Screenshots: $screenshots, upload: $upload"
+
+  screenshots:
+    name: Capture & compose screenshots
+    needs: plan
+    if: needs.plan.outputs.screenshots == 'true'
+    runs-on: ${{ vars.MACOS_RUNNER || 'xcode-27' }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: Select Xcode ${{ vars.XCODE_VERSION || '27.2' }}
+        env:
+          XCODE_VERSION: ${{ vars.XCODE_VERSION || '27.2' }}
+        run: bash scripts/ci/select_xcode.sh
+      - name: Pillow
+        run: |
+          python3 -m venv "$RUNNER_TEMP/shots"
+          "$RUNNER_TEMP/shots/bin/pip" install --quiet Pillow
+      - name: Capture (simulators, dev server, event DEMO)
+        env:
+          # Static key: only valid on the dev server, which has the always-live DEMO event.
+          ATTND_API_KEY: ${{ secrets.ATTND_API_KEY }}
+          ATTND_SERVER: ${{ vars.SCREENSHOT_SERVER || 'attnd-dev-7ab893f37020.herokuapp.com' }}
+          DUO_REQUIRED: ${{ vars.DUO_SCREENSHOTS_REQUIRED == 'true' && '1' || '0' }}
+        run: bash scripts/ci/screenshots.sh
+      - name: Compose store frames
+        run: '"$RUNNER_TEMP/shots/bin/python" scripts/ci/compose_screenshots.py'
+      - name: Keep screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: store-screenshots
+          path: |
+            build/screenshots/composed
+            build/screenshots/raw
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Shut down simulators
+        if: always()
+        run: xcrun simctl shutdown all || true
+
+  upload:
+    name: Upload to App Store Connect
+    needs: [plan, screenshots]
+    # Runs after a successful capture, or without one when only the text changed.
+    if: >-
+      always() && needs.plan.result == 'success' && needs.plan.outputs.upload == 'true' &&
+      (needs.screenshots.result == 'success' || needs.screenshots.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'dev' }}
+    permissions:
+      contents: read
+      actions: read  # gh run download (this run's artifact)
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: |
+            scripts/ci
+            store
+      - name: App Store Connect tooling
+        run: |
+          python3 -m venv "$RUNNER_TEMP/asc"
+          "$RUNNER_TEMP/asc/bin/pip" install --quiet "pyjwt[crypto]"
+          echo "$RUNNER_TEMP/asc/bin" >> "$GITHUB_PATH"
+      - name: Check App Store Connect key
+        run: python scripts/ci/asc.py check
+      - name: Listing text
+        env:
+          REVIEW_CONTACT_FIRST_NAME: ${{ vars.REVIEW_CONTACT_FIRST_NAME }}
+          REVIEW_CONTACT_LAST_NAME: ${{ vars.REVIEW_CONTACT_LAST_NAME }}
+          REVIEW_CONTACT_PHONE: ${{ vars.REVIEW_CONTACT_PHONE }}
+          REVIEW_CONTACT_EMAIL: ${{ vars.REVIEW_CONTACT_EMAIL }}
+        run: python scripts/ci/asc.py metadata
+      - name: Download screenshots
+        if: needs.screenshots.result == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "${{ github.run_id }}" --repo "${{ github.repository }}" --name store-screenshots --dir build/screenshots
+      - name: Screenshots
+        if: needs.screenshots.result == 'success'
+        run: python scripts/ci/asc.py screenshots --dir build/screenshots/composed

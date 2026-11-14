@@ -151,7 +151,35 @@ def release(args, app):
     print(f'Submitted {args.version} ({args.build}) for App Review; it releases automatically when approved.')
 
 
+def check():
+    """Fail fast with a clear explanation if the App Store Connect key can't be used."""
+    p8 = os.environ.get('ASC_KEY_P8', '')
+    problems = []
+    if 'BEGIN PRIVATE KEY' not in p8 or 'END PRIVATE KEY' not in p8:
+        problems.append('ASC_KEY_P8 does not look like a complete .p8 file (needs the BEGIN/END PRIVATE KEY lines).')
+    if len(os.environ.get('ASC_KEY_ID', '')) != 10:
+        problems.append('ASC_KEY_ID should be the 10-character Key ID.')
+    issuer = os.environ.get('ASC_ISSUER_ID', '')
+    if len(issuer) != 36 or issuer.count('-') != 4:
+        problems.append('ASC_ISSUER_ID should be the Issuer ID UUID shown above the keys list (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).')
+    if problems:
+        sys.exit('App Store Connect key problem:\n- ' + '\n- '.join(problems))
+    status, data = call('GET', '/v1/apps', {'filter[bundleId]': os.environ.get('ASC_BUNDLE_ID', 'com.arcu.Attnd')})
+    if status == 401:
+        sys.exit('App Store Connect rejected the key (401). Check: the Issuer ID matches the key, the Key ID is right, '
+                 'the key is a TEAM key (not an Individual key), and it was not revoked.')
+    if status == 403:
+        sys.exit('The App Store Connect key works but lacks access (403). It needs the Admin role for cloud signing.')
+    if status >= 300:
+        sys.exit(f'App Store Connect check failed ({status}): {data.get("_error", "")[:300]}')
+    if not data.get('data'):
+        sys.exit('Key works, but no app with bundle id com.arcu.Attnd is visible to it.')
+    print('App Store Connect key OK; app', data['data'][0]['attributes'].get('name'))
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == 'check':
+        return check()
     parser = argparse.ArgumentParser()
     parser.add_argument('command', choices=['testflight', 'release'])
     parser.add_argument('--version', required=True)

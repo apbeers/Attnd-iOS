@@ -64,10 +64,12 @@ jobs:
         run: |
           echo "MARKETING_VERSION=$(tr -d '[:space:]' < VERSION).${{ github.run_number }}" >> "$GITHUB_ENV"
           echo "BUILD_NUMBER=${{ github.run_number }}" >> "$GITHUB_ENV"
-      - name: Archive & upload
-        run: bash scripts/ci/archive_upload.sh
       - name: App Store Connect tooling
         run: python3 -m pip install --quiet "pyjwt[crypto]"
+      - name: Check App Store Connect key
+        run: python3 scripts/ci/asc.py check
+      - name: Archive & upload
+        run: bash scripts/ci/archive_upload.sh
       - name: Make available in TestFlight
         if: github.ref == 'refs/heads/develop'
         run: python3 scripts/ci/asc.py testflight --version "$MARKETING_VERSION" --build "$BUILD_NUMBER" --group "${{ vars.TESTFLIGHT_GROUP }}"

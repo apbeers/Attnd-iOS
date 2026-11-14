@@ -108,7 +108,8 @@ struct MapView: View {
         VStack(spacing: 0) {
             if !appState.filterCategories.isEmpty {
                 CategoryChips(categories: appState.filterCategories, selection: $selectedCategory)
-                    .padding(.top, 8)
+                    // Clear the floating demo / ended badge (eventStatusBanners).
+                    .padding(.top, 8 + (EventStatusBadgeKind.current(appState) == nil ? 0 : EventStatusBadgeKind.reservedHeight))
             }
             Spacer(minLength: 0)
             HStack {

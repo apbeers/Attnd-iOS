@@ -4,8 +4,9 @@
 // AppRootView switches between the launch flow and the joined event.
 // ContentView is the tab container for a joined event: the tabs, their order and
 // the initial tab come from the server's `display` config; Options is always last.
-// It also drives bundle refreshes (foreground, every 5 minutes on event days)
-// and applies the event's accent colour.
+// It also drives bundle refreshes (foreground, every 5 seconds while active for
+// live updates, every 5 minutes on event days) and applies the event's accent
+// colour, falling back to the brand purple asset colour (AccentColor).
 
 import SwiftUI
 
@@ -130,6 +131,9 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     private static let refreshInterval: Duration = .seconds(5 * 60)
+    /// Live updates: organizers edit on the website and watch the app follow.
+    /// A conditional GET (If-None-Match → 304) every few seconds is cheap.
+    private static let liveRefreshInterval: Duration = .seconds(5)
 
     /// Re-tapping the selected Map tab re-centres the map.
     /// (assumeIsolated: the closures always run on the main actor, whether or not
@@ -162,7 +166,7 @@ struct ContentView: View {
                 }
             }
         }
-        .tint(accentColor)
+        .tint(accentColor ?? Color.accentColor)
         // Foreground: refetch (cheap — the ETag makes it a 304 when nothing changed).
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
@@ -181,6 +185,22 @@ struct ContentView: View {
                 }
             }
         }
+        // Live updates every 5 seconds while the scene is active and an event is
+        // joined (ContentView only exists then). Shared with the App Clip, which
+        // has no push. Silent: no spinners; a failed poll just retries next tick.
+        .task(id: LivePollKey(phase: scenePhase, eventId: appState.currentEvent?.id)) {
+            guard scenePhase == .active, appState.currentEvent != nil else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.liveRefreshInterval)
+                guard !Task.isCancelled, scenePhase == .active, appState.currentEvent != nil else { break }
+                await appState.refreshBundle(silent: true)
+            }
+        }
+    }
+
+    private struct LivePollKey: Equatable {
+        let phase: ScenePhase
+        let eventId: Int?
     }
 
     @ViewBuilder
@@ -204,72 +224,100 @@ struct ContentView: View {
         }
     }
 
+    /// The event's own accent; nil → the asset AccentColor (brand purple #431F86).
     private var accentColor: Color? {
         HexColor.components(appState.accentHex).map { Color(red: $0.red, green: $0.green, blue: $0.blue) }
     }
 }
 
-// MARK: - Event status banners
+// MARK: - Event status badge
 
 extension View {
-    /// Pins the Demo Event / event-ended banners below the navigation bar.
+    /// Floats a small "Demo event" / "Event ended" capsule at the top of the
+    /// content (below the navigation bar, so clear of the status bar and Dynamic
+    /// Island). Content scrolls underneath it; it never takes layout space and
+    /// passes touches through. On iPhone Duo it stays clear of the fold and
+    /// camera housings via ReservedRegionAvoiding.
     func eventStatusBanners() -> some View {
-        modifier(EventStatusBannersModifier())
+        modifier(EventStatusBadgeModifier())
     }
 }
 
-private struct EventStatusBannersModifier: ViewModifier {
+/// What the floating status badge says, if anything.
+struct EventStatusBadgeKind: Equatable {
+    let title: String
+    let systemImage: String
+    let accessibilityText: String
+
+    /// Height of the capsule plus its top padding; overlays that also sit at the
+    /// top of the content (map category chips) move down by this much.
+    static let reservedHeight: CGFloat = 36
+
+    @MainActor
+    static func current(_ appState: AppState) -> EventStatusBadgeKind? {
+        guard let event = appState.currentEvent else { return nil }
+        switch (event.isDemo, event.isArchived) {
+        case (true, true):
+            return EventStatusBadgeKind(
+                title: "Demo event · Ended",
+                systemImage: "exclamationmark.triangle.fill",
+                accessibilityText: "Demo event. This is a preview, not a live event. The event has ended."
+            )
+        case (true, false):
+            return EventStatusBadgeKind(
+                title: "Demo event",
+                systemImage: "exclamationmark.triangle.fill",
+                accessibilityText: "Demo event. This is a preview, not a live event."
+            )
+        case (false, true):
+            return EventStatusBadgeKind(
+                title: "Event ended",
+                systemImage: "flag.checkered",
+                accessibilityText: "This event has ended. You can still browse everything."
+            )
+        case (false, false):
+            return nil
+        }
+    }
+}
+
+private struct EventStatusBadgeModifier: ViewModifier {
     @Environment(AppState.self) private var appState
 
     func body(content: Content) -> some View {
-        content.safeAreaInset(edge: .top, spacing: 0) {
-            if let event = appState.currentEvent, event.isDemo || event.isArchived {
-                VStack(spacing: 0) {
-                    if event.isDemo {
-                        EventStatusBanner(
-                            title: "Demo Event",
-                            message: "This is a preview, not a live event.",
-                            systemImage: "exclamationmark.triangle.fill",
-                            tint: .orange
-                        )
+        content.overlay(alignment: .top) {
+            if let kind = EventStatusBadgeKind.current(appState) {
+                ReservedRegionAvoiding {
+                    VStack(spacing: 0) {
+                        EventStatusBadge(kind: kind)
+                            .padding(.top, 6)
+                        Spacer(minLength: 0)
                     }
-                    if event.isArchived {
-                        EventStatusBanner(
-                            title: "This event has ended",
-                            message: "You can still browse everything.",
-                            systemImage: "flag.checkered",
-                            tint: .gray
-                        )
-                    }
+                    .frame(maxWidth: .infinity)
                 }
+                .allowsHitTesting(false)
+                .transition(.opacity)
             }
         }
     }
 }
 
-private struct EventStatusBanner: View {
-    let title: String
-    let message: String
-    let systemImage: String
-    let tint: Color
+private struct EventStatusBadge: View {
+    let kind: EventStatusBadgeKind
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: systemImage)
-                .font(.headline)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.subheadline.bold())
-                Text(message).font(.caption)
-            }
-            Spacer(minLength: 0)
-        }
-        .foregroundStyle(.white)
-        .padding(.horizontal)
-        .padding(.vertical, 8)
-        .frame(maxWidth: .infinity)
-        .background(tint.gradient)
-        .accessibilityElement(children: .combine)
+        Label(kind.title, systemImage: kind.systemImage)
+            .font(.caption.weight(.semibold))
+            .labelStyle(.titleAndIcon)
+            .lineLimit(1)
+            .padding(.horizontal, 12)
+            .frame(height: 28)
+            .background(.regularMaterial, in: Capsule())
+            .overlay(Capsule().strokeBorder(.separator, lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.12), radius: 4, y: 1)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(kind.accessibilityText)
+            .accessibilityAddTraits(.isStaticText)
     }
 }
 

@@ -451,7 +451,7 @@ struct UsageEntry: Encodable, Hashable, Sendable {
     var name: String
     var detail: String?
     var count: Int
-    /// ISO 8601 start of the UTC hour the count belongs to, e.g. "2026-11-14T16:00:00Z".
+    /// ISO 8601 start of the UTC 5-minute window the count belongs to, e.g. "2026-11-14T16:05:00Z".
     var at: String
 }
 
@@ -461,7 +461,7 @@ struct UsageRequest: Encodable, Sendable {
     var events: [UsageEntry]
 }
 
-/// Pure in-memory aggregation of usage counts by (event, name, detail, UTC hour).
+/// Pure in-memory aggregation of usage counts by (event, name, detail, UTC 5-minute bucket).
 /// Owned by `UsageReporter`; kept free of networking so it can be unit tested.
 struct UsageAggregator: Sendable {
 
@@ -469,7 +469,8 @@ struct UsageAggregator: Sendable {
         var eventId: Int
         var name: String
         var detail: String?
-        var hour: Date
+        /// Start of the UTC 5-minute bucket.
+        var bucket: Date
     }
 
     /// The server accepts up to 200 entries per request.
@@ -479,10 +480,15 @@ struct UsageAggregator: Sendable {
 
     var isEmpty: Bool { counts.isEmpty }
 
-    /// The start of the UTC hour containing `date`. (Hours since the epoch are UTC hours.)
-    static func hourStart(_ date: Date) -> Date {
+    /// Length of one usage bucket: 5 minutes.
+    static let bucketSeconds: TimeInterval = 5 * 60
+
+    /// The start of the UTC 5-minute window containing `date` (:00, :05, … :55).
+    /// The epoch is aligned to UTC and 5 minutes divides an hour, so whole
+    /// multiples of 300 s since the epoch are exactly those UTC boundaries.
+    static func bucketStart(_ date: Date) -> Date {
         let seconds = date.timeIntervalSince1970
-        return Date(timeIntervalSince1970: (seconds / 3600).rounded(.down) * 3600)
+        return Date(timeIntervalSince1970: (seconds / bucketSeconds).rounded(.down) * bucketSeconds)
     }
 
     mutating func record(_ metric: UsageMetric, detail: String? = nil, eventId: Int, at date: Date = .now, count: Int = 1) {
@@ -492,19 +498,19 @@ struct UsageAggregator: Sendable {
             eventId: eventId,
             name: metric.rawValue,
             detail: (trimmed?.isEmpty ?? true) ? nil : trimmed,
-            hour: Self.hourStart(date)
+            bucket: Self.bucketStart(date)
         )
         counts[key, default: 0] += count
     }
 
     /// Removes and returns everything recorded, grouped by event id, as wire entries
-    /// (sorted by hour, name and detail so output is deterministic).
+    /// (sorted by bucket, name and detail so output is deterministic).
     mutating func drain() -> [Int: [UsageEntry]] {
         let drained = counts
         counts = [:]
         var result: [Int: [UsageEntry]] = [:]
         let sortedKeys = drained.keys.sorted { a, b in
-            if a.hour != b.hour { return a.hour < b.hour }
+            if a.bucket != b.bucket { return a.bucket < b.bucket }
             if a.name != b.name { return a.name < b.name }
             return (a.detail ?? "") < (b.detail ?? "")
         }
@@ -513,7 +519,7 @@ struct UsageAggregator: Sendable {
                 name: key.name,
                 detail: key.detail,
                 count: drained[key] ?? 0,
-                at: ISODate.string(from: key.hour)
+                at: ISODate.string(from: key.bucket)
             )
             result[key.eventId, default: []].append(entry)
         }

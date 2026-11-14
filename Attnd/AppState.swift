@@ -6,8 +6,9 @@
 // push registration and user preferences.
 //
 // Content always comes from one `GET events/<id>/bundle/` call (ETag-cached).
-// It is refetched on join, on foreground, on pull-to-refresh, every 5 minutes
-// while foregrounded on event days (ContentView drives those), and when a
+// It is refetched on join, on foreground, on pull-to-refresh, every 5 seconds
+// while the scene is active (silent live updates), every 5 minutes while
+// foregrounded on event days (ContentView drives those), and when a
 // `content_updated` or notification push arrives.
 
 import Foundation
@@ -176,7 +177,8 @@ final class AppState {
 
     var defaultTab: EventTab { display.resolvedDefaultTab(hasFlyer: currentEvent?.flyerUrl != nil) }
 
-    /// `display.accent_color`, falling back to the event's.
+    /// `display.accent_color`, falling back to the event's. nil → views use the
+    /// asset AccentColor (brand purple), never system blue.
     var accentHex: String? { display.accentColor ?? currentEvent?.accentColor }
 
     var logoUrl: URL? { display.logoUrl ?? currentEvent?.logoUrl }
@@ -265,22 +267,24 @@ final class AppState {
 
     /// Fetches the bundle for the current event. Concurrent calls for the same
     /// event share one request; a 304 just marks the content as fresh.
-    func refreshBundle() async {
+    /// `silent` (the 5-second live-update poll) doesn't toggle `isLoading`, so
+    /// no spinners flash; errors are recorded the same way as any refresh.
+    func refreshBundle(silent: Bool = false) async {
         guard let eventId = currentEvent?.id else { return }
         if let inflight = inflightRefresh, inflight.eventId == eventId {
             await inflight.task.value
             return
         }
         let token = UUID()
-        let task = Task { await self.fetchBundle(eventId: eventId) }
+        let task = Task { await self.fetchBundle(eventId: eventId, silent: silent) }
         inflightRefresh = (eventId, token, task)
         await task.value
         if inflightRefresh?.token == token { inflightRefresh = nil }
     }
 
-    private func fetchBundle(eventId: Int) async {
-        isLoading = true
-        defer { isLoading = false }
+    private func fetchBundle(eventId: Int, silent: Bool) async {
+        if !silent { isLoading = true }
+        defer { if !silent { isLoading = false } }
         do {
             let result = try await APIClient.shared.bundle(eventId: eventId, etag: etag, deviceId: deviceId)
             // The user may have left or switched events while we waited.
@@ -289,7 +293,8 @@ final class AppState {
                 apply(bundle)
                 etag = newEtag
             }
-            loadError = nil
+            // Avoid needless observation churn from the 5-second poll.
+            if loadError != nil { loadError = nil }
             lastRefreshed = .now
         } catch {
             guard currentEvent?.id == eventId else { return }

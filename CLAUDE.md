@@ -45,7 +45,7 @@ attnd-web is the coordinating repo. The API contract ([`API_V2.md`](https://gith
 | `AttestationManager.swift` | Apple App Attest key generation, attestation, and JWT token caching |
 | `KeychainHelper.swift` | Keychain read/write wrapper |
 | `LocationPermissionManager.swift` | One-shot async location request |
-| `ContentView.swift` | `AppRootView` (launch vs. event) and the server-driven `TabView`; refresh triggers; demo / ended banners; accent tint |
+| `ContentView.swift` | `AppRootView` (launch vs. event) and the server-driven `TabView`; refresh triggers (incl. 5 s live poll); floating demo / ended badge; accent tint |
 | `LaunchScreen.swift` | Nearby events, system search for a code/exact name, QR scanner |
 | `MapArrangement.swift` | Map tab: map + secondary pane via `ArrangementView` on regular width |
 | `MapView.swift` | Map with clustering, fit-all, category chips, fold-aware overlays |
@@ -75,8 +75,9 @@ Join event
 │
 ContentView (tabs and default tab from bundle.display; Options always last)
 ├── Map / Locations / Schedule / Flyer / Updates
-├── Bundle refetched on: foreground, pull-to-refresh, every 5 min on event days,
-│   content_updated / notification pushes (304 when unchanged)
+├── Bundle refetched on: foreground, pull-to-refresh, every 5 s while the scene is
+│   active (silent live updates; also how the App Clip stays live), every 5 min on
+│   event days, content_updated / notification pushes (304 when unchanged)
 └── POST events/<id>/usage/ (anonymous counts): every ~60 s with pending data, on background
 │
 Leave event
@@ -87,7 +88,7 @@ Leave event
 ## Usage reporting (API-005)
 
 - Anonymous counts only: `POST events/<id>/usage/` with `{"platform": "ios", "events": [{name, detail?, count, at}]}`. **Never** a device ID, any identifier, or search text.
-- Call sites use `appState.track(.metric, detail:)` / `track(.metric, id:)`; it is a no-op outside an event. `UsageReporter` (main actor, in `AppState.swift`) aggregates in a pure `UsageAggregator` (`Models.swift`) keyed by (event, name, detail, UTC hour; `at` = start of the hour) and flushes at most every 60 s, when the scene goes to the background (`AppRootView`) and before leaving or switching events. A failed batch is retried once on the next flush, then dropped; errors are never shown. Max 200 entries per request.
+- Call sites use `appState.track(.metric, detail:)` / `track(.metric, id:)`; it is a no-op outside an event. `UsageReporter` (main actor, in `AppState.swift`) aggregates in a pure `UsageAggregator` (`Models.swift`) keyed by (event, name, detail, UTC 5-minute bucket; `at` = start of the bucket, e.g. `2026-11-14T16:05:00Z`) and flushes at most every 60 s, when the scene goes to the background (`AppRootView`) and before leaving or switching events. A failed batch is retried once on the next flush, then dropped; errors are never shown. Max 200 entries per request.
 - Instrumented: `app_open` (silent rejoin at launch; scene becomes active in `ContentView`), `tab_view` (`selectedTab` didSet; the opening tab when the first bundle is applied), `location_view` / `schedule_item_view` (`.task(id:)` on `LocationDetailView` / `ScheduleItemDetailView`, so every route counts), `notification_open` (`handlePush(opened: true)`), `search` (`SearchableIf`: on submit, or once a non-empty query settles for 1.5 s), `refresh` (`AppState.pullToRefresh()` from every `.refreshable` in an event).
 
 ## Support info (API-004)
@@ -102,8 +103,9 @@ Leave event
 - Coordinates may be `null`; `0,0` is treated as unknown. Never drop a pin without a valid coordinate.
 - Schedule items may have no location — shown under "General".
 - All times are displayed in the **event's** `timezone` (`EventTimeFormat`), never the device's.
-- `is_demo` → "Demo Event" banner. `status == "archived"` → "This event has ended" banner.
-- `display.accent_color` (or the event's) tints the app.
+- `is_demo` / `status == "archived"` → a small floating capsule badge ("Demo event" / "Event ended") at the top of each tab's content (`eventStatusBanners()` in `ContentView.swift`): an overlay, so content scrolls under it; touches pass through; kept clear of reserved regions. Map chips move down by `EventStatusBadgeKind.reservedHeight`.
+- `display.accent_color` (or the event's) tints the app. Otherwise the tint is the asset `AccentColor` (brand purple `#431F86`, `#9D7BEA` in dark mode; same in the App Clip's asset catalog), never system blue.
+- Live updates: `ContentView` calls `refreshBundle(silent: true)` every 5 s while the scene is active (no `isLoading` spinners; a failed poll retries next tick). Lives in shared code so the App Clip gets it too.
 
 ## Display Config (`bundle.display`)
 
@@ -177,7 +179,7 @@ In Xcode: **Product → Test** (`⌘U`), or `./run_tests.command`. Unit tests (`
 | Trigger | What happens |
 |---------|--------------|
 | Push to `develop`/`main`, or a PR | Xcode `XCODE_VERSION` (default 27.2) on the `xcode-27` runner (macOS 27, Apple silicon; override with `MACOS_RUNNER`), unit tests on the newest iPhone simulator (`scripts/ci/test.sh`). Live API tests run only if the `ATTND_API_KEY` secret is set. |
-| Push to `develop` | Archive with the `dev` environment's `ATTND_SERVER` (the Heroku dev app), upload, add to the TestFlight group in `TESTFLIGHT_GROUP`. |
+| Push to `develop` | Archive with the `dev` environment's `ATTND_SERVER` (the Heroku dev app), upload, wait until TestFlight processing is `VALID` (`asc.py testflight`); internal testers get it via automatic distribution. |
 | Push to `main` | Archive against `attnd.app`, upload, submit for App Review (`scripts/ci/asc.py release`); releases after approval. |
 
 - Version = contents of `VERSION` + `.` + run number (e.g. `2.0.57`); build number = run number. Bump `VERSION` for a new major/minor line.

@@ -77,9 +77,11 @@ jobs:
         run: python scripts/ci/asc.py check
       - name: Archive & upload
         run: bash scripts/ci/archive_upload.sh
-      - name: Make available in TestFlight
+      # Internal testers get every build automatically; this just waits until the
+      # build has finished processing (VALID) so the job confirms it is usable.
+      - name: Wait for TestFlight processing
         if: github.ref == 'refs/heads/develop'
-        run: python scripts/ci/asc.py testflight --version "$MARKETING_VERSION" --build "$BUILD_NUMBER" --group "${{ vars.TESTFLIGHT_GROUP }}"
+        run: python scripts/ci/asc.py testflight --version "$MARKETING_VERSION" --build "$BUILD_NUMBER"
       - name: Submit for App Review
         if: github.ref == 'refs/heads/main'
         env:

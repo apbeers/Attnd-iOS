@@ -155,22 +155,27 @@ final class BusinessLogicTests: XCTestCase {
 
     // MARK: - Usage counts (API-005)
 
-    func testUsageHourStart_TruncatesToUTCHour() throws {
+    func testUsageBucketStart_TruncatesToUTCFiveMinutes() throws {
         let date = try XCTUnwrap(ISODate.parse("2026-11-14T16:59:59-06:00")) // 22:59:59Z
-        XCTAssertEqual(ISODate.string(from: UsageAggregator.hourStart(date)), "2026-11-14T22:00:00Z")
-        let exact = try XCTUnwrap(ISODate.parse("2026-11-14T16:00:00Z"))
-        XCTAssertEqual(UsageAggregator.hourStart(exact), exact)
+        XCTAssertEqual(ISODate.string(from: UsageAggregator.bucketStart(date)), "2026-11-14T22:55:00Z")
+        let mid = try XCTUnwrap(ISODate.parse("2026-11-14T16:07:30Z"))
+        XCTAssertEqual(ISODate.string(from: UsageAggregator.bucketStart(mid)), "2026-11-14T16:05:00Z")
+        let exact = try XCTUnwrap(ISODate.parse("2026-11-14T16:05:00Z"))
+        XCTAssertEqual(UsageAggregator.bucketStart(exact), exact)
+        // Non-whole-hour offsets still bucket on UTC boundaries.
+        let kolkata = try XCTUnwrap(ISODate.parse("2026-11-14T21:42:10+05:30")) // 16:12:10Z
+        XCTAssertEqual(ISODate.string(from: UsageAggregator.bucketStart(kolkata)), "2026-11-14T16:10:00Z")
     }
 
-    func testUsageAggregator_CountsRepeatsByNameDetailAndHour() throws {
+    func testUsageAggregator_CountsRepeatsByNameDetailAndBucket() throws {
         let t1 = try XCTUnwrap(ISODate.parse("2026-11-14T16:05:00Z"))
-        let t2 = try XCTUnwrap(ISODate.parse("2026-11-14T16:55:00Z"))
-        let nextHour = try XCTUnwrap(ISODate.parse("2026-11-14T17:01:00Z"))
+        let t2 = try XCTUnwrap(ISODate.parse("2026-11-14T16:09:59Z"))
+        let nextBucket = try XCTUnwrap(ISODate.parse("2026-11-14T16:10:00Z"))
         var aggregator = UsageAggregator()
         aggregator.record(.tabView, detail: "map", eventId: 1, at: t1)
         aggregator.record(.tabView, detail: "map", eventId: 1, at: t2)
         aggregator.record(.tabView, detail: "schedule", eventId: 1, at: t2)
-        aggregator.record(.tabView, detail: "map", eventId: 1, at: nextHour)
+        aggregator.record(.tabView, detail: "map", eventId: 1, at: nextBucket)
         aggregator.record(.appOpen, eventId: 1, at: t1)
         aggregator.record(.appOpen, detail: "  ", eventId: 1, at: t2) // blank detail = none
         aggregator.record(.locationView, detail: "42", eventId: 2, at: t1)
@@ -178,13 +183,13 @@ final class BusinessLogicTests: XCTestCase {
         let drained = aggregator.drain()
         XCTAssertTrue(aggregator.isEmpty)
         XCTAssertEqual(drained[1], [
-            UsageEntry(name: "app_open", detail: nil, count: 2, at: "2026-11-14T16:00:00Z"),
-            UsageEntry(name: "tab_view", detail: "map", count: 2, at: "2026-11-14T16:00:00Z"),
-            UsageEntry(name: "tab_view", detail: "schedule", count: 1, at: "2026-11-14T16:00:00Z"),
-            UsageEntry(name: "tab_view", detail: "map", count: 1, at: "2026-11-14T17:00:00Z"),
+            UsageEntry(name: "app_open", detail: nil, count: 2, at: "2026-11-14T16:05:00Z"),
+            UsageEntry(name: "tab_view", detail: "map", count: 2, at: "2026-11-14T16:05:00Z"),
+            UsageEntry(name: "tab_view", detail: "schedule", count: 1, at: "2026-11-14T16:05:00Z"),
+            UsageEntry(name: "tab_view", detail: "map", count: 1, at: "2026-11-14T16:10:00Z"),
         ])
         XCTAssertEqual(drained[2], [
-            UsageEntry(name: "location_view", detail: "42", count: 1, at: "2026-11-14T16:00:00Z"),
+            UsageEntry(name: "location_view", detail: "42", count: 1, at: "2026-11-14T16:05:00Z"),
         ])
         XCTAssertTrue(aggregator.drain().isEmpty)
     }

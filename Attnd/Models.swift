@@ -432,6 +432,102 @@ struct DeviceRequest: Encodable, Sendable {
     }
 }
 
+// MARK: - Usage counts (API-005)
+
+/// Anonymous usage metrics for `POST events/<id>/usage/`. Raw values are the wire names.
+enum UsageMetric: String, Hashable, Sendable, CaseIterable {
+    case appOpen = "app_open"
+    case tabView = "tab_view"
+    case locationView = "location_view"
+    case scheduleItemView = "schedule_item_view"
+    case notificationOpen = "notification_open"
+    case search
+    case refresh
+}
+
+/// One aggregated count. `detail` is omitted from the JSON when nil.
+/// Never carries a device ID, search text or anything else identifying.
+struct UsageEntry: Encodable, Hashable, Sendable {
+    var name: String
+    var detail: String?
+    var count: Int
+    /// ISO 8601 start of the UTC hour the count belongs to, e.g. "2026-11-14T16:00:00Z".
+    var at: String
+}
+
+/// Body of `POST events/<id>/usage/`.
+struct UsageRequest: Encodable, Sendable {
+    var platform = "ios"
+    var events: [UsageEntry]
+}
+
+/// Pure in-memory aggregation of usage counts by (event, name, detail, UTC hour).
+/// Owned by `UsageReporter`; kept free of networking so it can be unit tested.
+struct UsageAggregator: Sendable {
+
+    struct Key: Hashable, Sendable {
+        var eventId: Int
+        var name: String
+        var detail: String?
+        var hour: Date
+    }
+
+    /// The server accepts up to 200 entries per request.
+    static let maxEntriesPerRequest = 200
+
+    private(set) var counts: [Key: Int] = [:]
+
+    var isEmpty: Bool { counts.isEmpty }
+
+    /// The start of the UTC hour containing `date`. (Hours since the epoch are UTC hours.)
+    static func hourStart(_ date: Date) -> Date {
+        let seconds = date.timeIntervalSince1970
+        return Date(timeIntervalSince1970: (seconds / 3600).rounded(.down) * 3600)
+    }
+
+    mutating func record(_ metric: UsageMetric, detail: String? = nil, eventId: Int, at date: Date = .now, count: Int = 1) {
+        guard count > 0 else { return }
+        let trimmed = detail?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = Key(
+            eventId: eventId,
+            name: metric.rawValue,
+            detail: (trimmed?.isEmpty ?? true) ? nil : trimmed,
+            hour: Self.hourStart(date)
+        )
+        counts[key, default: 0] += count
+    }
+
+    /// Removes and returns everything recorded, grouped by event id, as wire entries
+    /// (sorted by hour, name and detail so output is deterministic).
+    mutating func drain() -> [Int: [UsageEntry]] {
+        let drained = counts
+        counts = [:]
+        var result: [Int: [UsageEntry]] = [:]
+        let sortedKeys = drained.keys.sorted { a, b in
+            if a.hour != b.hour { return a.hour < b.hour }
+            if a.name != b.name { return a.name < b.name }
+            return (a.detail ?? "") < (b.detail ?? "")
+        }
+        for key in sortedKeys {
+            let entry = UsageEntry(
+                name: key.name,
+                detail: key.detail,
+                count: drained[key] ?? 0,
+                at: ISODate.string(from: key.hour)
+            )
+            result[key.eventId, default: []].append(entry)
+        }
+        return result
+    }
+
+    /// Splits entries into request-sized chunks.
+    static func chunks(_ entries: [UsageEntry]) -> [[UsageEntry]] {
+        stride(from: 0, to: entries.count, by: maxEntriesPerRequest).map {
+            Array(entries[$0..<min($0 + maxEntriesPerRequest, entries.count)])
+        }
+    }
+}
+
 /// Response of join / leave / devices. Every field is optional.
 /// GET /api/app-status/ (API-003): whether this build should update.
 struct AppStatus: Hashable, Sendable {

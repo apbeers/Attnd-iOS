@@ -2,6 +2,7 @@
 // Attnd
 
 import SwiftUI
+import UIKit
 
 struct SettingsView: View {
 
@@ -11,11 +12,22 @@ struct SettingsView: View {
     @State private var isUpdatingNotifications = false
     /// Mirrors appState.notificationsEnabled; changes go through setNotifications.
     @State private var wantsNotifications = false
+    /// "Copy support info" shows "Copied" briefly.
+    @State private var didCopySupportInfo = false
 
     var body: some View {
         @Bindable var state = appState
+        let info = supportInfo
 
         Form {
+            // MARK: - Internal test build (API-004)
+            if !info.isProductionServer {
+                Section {
+                    InternalBuildWarning(host: info.serverHost)
+                }
+                .listRowBackground(Color.orange.opacity(0.18))
+            }
+
             // MARK: - Event
             if let event = appState.currentEvent {
                 Section {
@@ -38,6 +50,50 @@ struct SettingsView: View {
                 if notificationPermissionDenied {
                     Text("Notification permission was denied. Enable it in Settings → Attnd.")
                 }
+            }
+
+            // MARK: - About & support (API-004)
+            Section {
+                LabeledContent("Support code") {
+                    Text(info.supportCode)
+                        .font(.body.monospaced())
+                        .textSelection(.enabled)
+                }
+                LabeledContent("App version", value: "\(info.appVersion) (\(info.buildNumber))")
+                if info.isAppClip {
+                    LabeledContent("Edition", value: "App Clip")
+                }
+                LabeledContent("Server", value: info.serverHost)
+                LabeledContent("API version", value: String(info.apiVersion))
+                LabeledContent("iOS", value: info.osVersion)
+                LabeledContent("Device", value: info.deviceModel)
+                if let eventId = info.eventId {
+                    LabeledContent("Event", value: info.eventName ?? "")
+                    LabeledContent("Event code", value: info.eventCode ?? "")
+                    LabeledContent("Event ID", value: String(eventId))
+                    if let contentVersion = info.contentVersion {
+                        LabeledContent("Content version", value: String(contentVersion))
+                    }
+                }
+                LabeledContent("Last refresh") {
+                    if let refreshed = info.lastRefreshed {
+                        Text(refreshed, format: .dateTime.month(.abbreviated).day().hour().minute().second())
+                    } else {
+                        Text("Never")
+                    }
+                }
+                Button {
+                    copySupportInfo(info)
+                } label: {
+                    Label(
+                        didCopySupportInfo ? "Copied" : "Copy Support Info",
+                        systemImage: didCopySupportInfo ? "checkmark" : "doc.on.doc"
+                    )
+                }
+            } header: {
+                Text("About & Support")
+            } footer: {
+                Text("If you contact support, share the support code or the copied info. It identifies this device's app install, not you.")
             }
 
             // MARK: - Leave Event
@@ -69,12 +125,69 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Support info
+
+    private var supportInfo: SupportInfo {
+        let bundle = Bundle.main
+        let event = appState.currentEvent
+        return SupportInfo(
+            appVersion: bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
+            buildNumber: bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
+            serverHost: APIClient.serverHost,
+            apiVersion: APIClient.apiVersion,
+            osVersion: UIDevice.current.systemVersion,
+            deviceModel: Self.deviceModel,
+            isAppClip: bundle.bundleIdentifier?.hasSuffix(".clip") ?? false,
+            deviceId: appState.deviceId,
+            eventName: event?.name,
+            eventCode: event?.eventCode,
+            eventId: event?.id,
+            contentVersion: event?.contentVersion,
+            lastRefreshed: appState.lastRefreshed
+        )
+    }
+
+    private static let deviceModel = SupportInfo.deviceModelIdentifier()
+
+    private func copySupportInfo(_ info: SupportInfo) {
+        UIPasteboard.general.string = info.plainText
+        didCopySupportInfo = true
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            didCopySupportInfo = false
+        }
+    }
+
     private func setNotifications(_ enabled: Bool) async {
         isUpdatingNotifications = true
         let granted = await appState.setNotificationsEnabled(enabled)
         notificationPermissionDenied = enabled && !granted
         wantsNotifications = appState.notificationsEnabled
         isUpdatingNotifications = false
+    }
+}
+
+// MARK: - Internal test build warning
+
+/// Shown at the top of Options when the build talks to a server other than attnd.app.
+private struct InternalBuildWarning: View {
+    let host: String
+
+    var body: some View {
+        Label {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Internal test build")
+                    .font(.headline)
+                Text("This build uses the dev server (\(host)). Events and data here are separate from the live app.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        } icon: {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
     }
 }
 

@@ -140,6 +140,15 @@ final class APIClient: Sendable {
         return try await post("devices/", body: body)
     }
 
+    // MARK: - Usage (API-005)
+
+    /// POST events/<id>/usage/ — anonymous, aggregated counts. Never includes a device ID.
+    /// The response (`{"status":"ok","accepted":n}`) is ignored.
+    func sendUsage(eventId: Int, entries: [UsageEntry]) async throws {
+        guard !entries.isEmpty else { return }
+        _ = try await post("events/\(eventId)/usage/", body: UsageRequest(events: entries))
+    }
+
     // MARK: - App status
 
     /// GET /api/app-status/ (API-003). Unversioned and unauthenticated, so even a build whose

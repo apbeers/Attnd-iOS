@@ -37,11 +37,11 @@ attnd-web is the coordinating repo. The API contract ([`API_V2.md`](https://gith
 |------|---------|
 | `AttndApp.swift` | App entry point; installs `AppDelegate`, wires Universal Links |
 | `AppDelegate.swift` | Owns `AppState`; APNs token registration, silent pushes, notification taps |
-| `AppState.swift` | `@MainActor @Observable` state: event, bundle content, display config, selected tab, device ID, push token, preferences; bundle refresh with ETag |
+| `AppState.swift` | `@MainActor @Observable` state: event, bundle content, display config, selected tab, device ID, push token, preferences; bundle refresh with ETag; `track(_:detail:)` and `UsageReporter` (API-005) |
 | `APIClient.swift` | Stateless, `Sendable` v2 client; async/await; 401 → re-attest → retry once |
-| `Models.swift` | v2 models (`Event`, `Location`, `ScheduleItem`, `AppNotification`, `DisplayConfig`, `EventBundle`, request bodies, `PushPayload`) with lenient decoding |
+| `Models.swift` | v2 models (`Event`, `Location`, `ScheduleItem`, `AppNotification`, `DisplayConfig`, `EventBundle`, request bodies, `PushPayload`) with lenient decoding; usage types (`UsageMetric`, `UsageEntry`, `UsageRequest`, pure `UsageAggregator`) |
 | `DisplayLogic.swift` | Pure, unit-tested logic: schedule grouping (timeline/by day/by location/now-next), location grouping, search, map clustering & framing, fold-avoiding insets |
-| `Helpers.swift` | ISO 8601 parsing, event-time-zone formatting, hex colours, deep-link/QR parsing |
+| `Helpers.swift` | ISO 8601 parsing, event-time-zone formatting, hex colours, deep-link/QR parsing, `SupportInfo` (support code, copyable support text, device model) |
 | `AttestationManager.swift` | Apple App Attest key generation, attestation, and JWT token caching |
 | `KeychainHelper.swift` | Keychain read/write wrapper |
 | `LocationPermissionManager.swift` | One-shot async location request |
@@ -55,7 +55,7 @@ attnd-web is the coordinating repo. The API contract ([`API_V2.md`](https://gith
 | `NotificationsView.swift` | Organizer updates from the bundle |
 | `FlyerView.swift` | Event flyer (image/PDF) from `flyer_url` |
 | `QRScannerView.swift` | `DataScannerViewController` sheet; pauses/restarts across scene and size changes |
-| `SettingsView.swift` | Options tab: event header (logo), location dot, notifications, leave event |
+| `SettingsView.swift` | Options tab: internal-test-build warning, event header (logo), location dot, notifications, About & support, leave event |
 
 ## App Flow
 
@@ -75,12 +75,25 @@ Join event
 │
 ContentView (tabs and default tab from bundle.display; Options always last)
 ├── Map / Locations / Schedule / Flyer / Updates
-└── Bundle refetched on: foreground, pull-to-refresh, every 5 min on event days,
-    content_updated / notification pushes (304 when unchanged)
+├── Bundle refetched on: foreground, pull-to-refresh, every 5 min on event days,
+│   content_updated / notification pushes (304 when unchanged)
+└── POST events/<id>/usage/ (anonymous counts): every ~60 s with pending data, on background
 │
 Leave event
+├── Pending usage counts flushed first
 └── POST events/<id>/leave/ {device_id}
 ```
+
+## Usage reporting (API-005)
+
+- Anonymous counts only: `POST events/<id>/usage/` with `{"platform": "ios", "events": [{name, detail?, count, at}]}`. **Never** a device ID, any identifier, or search text.
+- Call sites use `appState.track(.metric, detail:)` / `track(.metric, id:)`; it is a no-op outside an event. `UsageReporter` (main actor, in `AppState.swift`) aggregates in a pure `UsageAggregator` (`Models.swift`) keyed by (event, name, detail, UTC hour; `at` = start of the hour) and flushes at most every 60 s, when the scene goes to the background (`AppRootView`) and before leaving or switching events. A failed batch is retried once on the next flush, then dropped; errors are never shown. Max 200 entries per request.
+- Instrumented: `app_open` (silent rejoin at launch; scene becomes active in `ContentView`), `tab_view` (`selectedTab` didSet; the opening tab when the first bundle is applied), `location_view` / `schedule_item_view` (`.task(id:)` on `LocationDetailView` / `ScheduleItemDetailView`, so every route counts), `notification_open` (`handlePush(opened: true)`), `search` (`SearchableIf`: on submit, or once a non-empty query settles for 1.5 s), `refresh` (`AppState.pullToRefresh()` from every `.refreshable` in an event).
+
+## Support info (API-004)
+
+- Options shows an orange **Internal test build** warning when `APIClient.serverHost != "attnd.app"`.
+- **About & support** (`SupportInfo` in `Helpers.swift`): support code (first 8 characters of the device ID, no dashes, upper case; selectable), app version and build, App Clip, server, API version, iOS version, device model (`utsname` machine, e.g. `iPhone17,2`), current event (name, code, id, content version) and last refresh. **Copy Support Info** puts all of that plus the full device ID on the pasteboard.
 
 ## API v2 Notes
 

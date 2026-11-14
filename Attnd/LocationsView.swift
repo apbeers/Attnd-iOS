@@ -75,7 +75,7 @@ struct LocationsView: View {
         .modifier(LocationsListStyle(isCards: display.locationsStyle == .cards))
         .navigationTitle("Locations")
         .modifier(SearchableIf(enabled: display.enableSearch, text: $searchText, prompt: "Search locations"))
-        .refreshable { await appState.refreshBundle() }
+        .refreshable { await appState.pullToRefresh() }
         .overlay {
             if locations.isEmpty {
                 if !searchText.isEmpty {
@@ -125,18 +125,48 @@ private struct LocationsListStyle: ViewModifier {
 // MARK: - Search
 
 /// `.searchable` only when the display config enables search.
+/// Counts a `search` (API-005) when one is submitted or, since filtering is live, once
+/// the query has settled for 1.5 s. Only the fact of a search is counted, never the text.
 struct SearchableIf: ViewModifier {
     let enabled: Bool
     @Binding var text: String
     let prompt: String
 
+    @Environment(AppState.self) private var appState
+    /// The query last counted (kept on device only), so a submit and the settle timer count it once.
+    @State private var countedQuery = ""
+
+    private static let settleDelay: Duration = .milliseconds(1500)
+
     @ViewBuilder
     func body(content: Content) -> some View {
         if enabled {
-            content.searchable(text: $text, prompt: Text(prompt))
+            content
+                .searchable(text: $text, prompt: Text(prompt))
+                .onSubmit(of: .search) { countSearch() }
+                .task(id: text) {
+                    guard !normalizedQuery.isEmpty else {
+                        countedQuery = ""
+                        return
+                    }
+                    try? await Task.sleep(for: Self.settleDelay)
+                    guard !Task.isCancelled else { return }
+                    countSearch()
+                }
         } else {
             content
         }
+    }
+
+    private var normalizedQuery: String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func countSearch() {
+        let query = normalizedQuery
+        guard !query.isEmpty, query != countedQuery else { return }
+        countedQuery = query
+        appState.track(.search)
     }
 }
 
@@ -279,6 +309,8 @@ struct LocationDetailView: View {
         }
         .navigationTitle(location.name)
         .navigationBarTitleDisplayMode(.inline)
+        // Counted for every route here: the list, a map pin, a schedule item (API-005).
+        .task(id: location.id) { appState.track(.locationView, id: location.id) }
     }
 
     @ViewBuilder

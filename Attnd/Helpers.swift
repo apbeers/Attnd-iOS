@@ -143,3 +143,70 @@ enum DeepLink {
         return trimmed
     }
 }
+
+// MARK: - Support info (API-004)
+
+/// Build, device and event details shown in Options → About & support and copied
+/// as plain text for support requests. Pure: the caller gathers the values.
+struct SupportInfo: Hashable, Sendable {
+    var appVersion: String
+    var buildNumber: String
+    var serverHost: String
+    var apiVersion: Int
+    var osVersion: String
+    var deviceModel: String
+    var isAppClip: Bool
+    var deviceId: String
+    var eventName: String? = nil
+    var eventCode: String? = nil
+    var eventId: Int? = nil
+    var contentVersion: Int? = nil
+    var lastRefreshed: Date? = nil
+
+    static let productionHost = "attnd.app"
+
+    var isProductionServer: Bool { serverHost == Self.productionHost }
+
+    var supportCode: String { Self.supportCode(deviceId: deviceId) }
+
+    /// First 8 characters of the device ID without dashes, upper case
+    /// ("3f2a9c1e-…" → "3F2A9C1E"). The admin console looks devices up by it.
+    static func supportCode(deviceId: String) -> String {
+        String(deviceId.replacingOccurrences(of: "-", with: "").prefix(8)).uppercased()
+    }
+
+    /// Plain-text block for the pasteboard: everything above plus the full device ID.
+    var plainText: String {
+        var lines = [
+            "Attnd support info",
+            "Support code: \(supportCode)",
+            "Device ID: \(deviceId)",
+            "App version: \(appVersion) (\(buildNumber))\(isAppClip ? " App Clip" : "")",
+            "Server: \(serverHost)\(isProductionServer ? "" : " (internal test build)")",
+            "API version: \(apiVersion)",
+            "Platform: iOS \(osVersion)",
+            "Device model: \(deviceModel)",
+        ]
+        if let eventId {
+            lines.append("Event: \(eventName ?? "") (code \(eventCode ?? ""), id \(eventId))")
+            if let contentVersion { lines.append("Content version: \(contentVersion)") }
+        } else {
+            lines.append("Event: none")
+        }
+        lines.append("Last refresh: \(lastRefreshed.map(ISODate.string(from:)) ?? "never")")
+        return lines.joined(separator: "\n")
+    }
+
+    /// The hardware model identifier, e.g. "iPhone17,2" (the simulated model on a simulator).
+    static func deviceModelIdentifier() -> String {
+        if let simulated = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"], !simulated.isEmpty {
+            return simulated
+        }
+        var systemInfo = utsname()
+        uname(&systemInfo)
+        let machine = withUnsafeBytes(of: systemInfo.machine) { raw in
+            String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
+        }
+        return machine.isEmpty ? "unknown" : machine
+    }
+}

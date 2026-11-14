@@ -130,7 +130,7 @@ private struct MapLocationsPane: View {
         .listStyle(.plain)
         .navigationTitle("Locations")
         .navigationBarTitleDisplayMode(.inline)
-        .refreshable { await appState.refreshBundle() }
+        .refreshable { await appState.pullToRefresh() }
         .overlay {
             if appState.locations.isEmpty {
                 ContentUnavailableView("No Locations", systemImage: "mappin.slash")

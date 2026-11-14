@@ -51,6 +51,10 @@ struct AppRootView: View {
             if phase == .active, !isLaunching {
                 Task { await appState.checkForUpdate() }
             }
+            // Usage counts (API-005) go out before the app may be suspended.
+            if phase == .background {
+                appState.flushUsage()
+            }
         }
     }
 }
@@ -162,6 +166,7 @@ struct ContentView: View {
         // Foreground: refetch (cheap — the ETag makes it a 304 when nothing changed).
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
+                appState.track(.appOpen)
                 Task { await appState.refreshBundle() }
             }
         }

@@ -19,6 +19,14 @@ import UserNotifications
 enum MainTab: Hashable, Sendable {
     case event(EventTab)
     case options
+
+    /// `tab_view` detail (API-005): map, locations, schedule, flyer, notifications or options.
+    var usageDetail: String {
+        switch self {
+        case .event(let tab): return tab.rawValue
+        case .options:        return "options"
+        }
+    }
 }
 
 @MainActor
@@ -42,7 +50,14 @@ final class AppState {
 
     // MARK: - Navigation
 
-    var selectedTab: MainTab = .event(.map)
+    var selectedTab: MainTab = .event(.map) {
+        didSet {
+            // The first tab is counted in `apply` once the bundle has chosen it.
+            if hasAppliedDefaultTab, oldValue != selectedTab {
+                track(.tabView, detail: selectedTab.usageDetail)
+            }
+        }
+    }
 
     /// Incremented when the Map tab is re-tapped; MapView re-centres on change.
     var mapCenterToken = 0
@@ -101,6 +116,8 @@ final class AppState {
     /// A notification tap that arrived before its event finished loading (cold launch).
     @ObservationIgnored private var pendingNotificationsEventId: Int?
     @ObservationIgnored private var inflightRefresh: (eventId: Int, token: UUID, task: Task<Void, Never>)?
+    /// Anonymous usage counts (API-005).
+    private let usage: UsageReporter
 
     private enum Keys {
         static let deviceId = "com.arcu.attnd.deviceId"
@@ -114,6 +131,7 @@ final class AppState {
     // MARK: - Init
 
     init() {
+        usage = UsageReporter()
         let defaults = UserDefaults.standard
         if let stored = defaults.string(forKey: Keys.deviceId) {
             deviceId = stored
@@ -194,6 +212,7 @@ final class AppState {
         do {
             let event = try await APIClient.shared.lookupEvent(query: code)
             await joinEvent(event)
+            track(.appOpen)
         } catch APIError.notFound {
             savedEventCode = nil
         } catch {
@@ -205,6 +224,8 @@ final class AppState {
 
     func joinEvent(_ event: Event) async {
         if currentEvent?.id != event.id {
+            // Send the old event's counts before switching.
+            usage.flush()
             resetContent()
         }
         savedEventCode = event.eventCode
@@ -216,6 +237,7 @@ final class AppState {
     }
 
     func leaveEvent() async {
+        usage.flush()
         savedEventCode = nil
         if let event = currentEvent {
             Task { _ = try? await APIClient.shared.leaveEvent(eventId: event.id, deviceId: self.deviceId) }
@@ -276,6 +298,7 @@ final class AppState {
     }
 
     private func apply(_ bundle: EventBundle) {
+        let isFirstApply = !hasAppliedDefaultTab
         currentEvent = bundle.event
         display = bundle.display
         categories = bundle.categories
@@ -294,6 +317,16 @@ final class AppState {
             selectedTab = .event(defaultTab)
         }
         pendingNotificationsEventId = nil
+        if isFirstApply, hasAppliedDefaultTab {
+            // The tab the event opens on (later changes are counted in selectedTab's didSet).
+            track(.tabView, detail: selectedTab.usageDetail)
+        }
+    }
+
+    /// Pull to refresh: counted, then a normal bundle refresh.
+    func pullToRefresh() async {
+        track(.refresh)
+        await refreshBundle()
     }
 
     // MARK: - Deep links
@@ -366,6 +399,10 @@ final class AppState {
     /// notification, switches to the Notifications tab.
     func handlePush(_ payload: PushPayload, opened: Bool) async {
         guard let eventId = payload.eventId else { return }
+        if opened, currentEvent == nil || currentEvent?.id == eventId {
+            // Counted against the push's event, so a tap that cold-launches the app counts too.
+            usage.record(.notificationOpen, detail: payload.notificationId.map { String($0) }, eventId: eventId)
+        }
         guard let current = currentEvent else {
             // Cold launch: the event is still being rejoined. Apply once it loads.
             if opened { pendingNotificationsEventId = eventId }
@@ -376,6 +413,25 @@ final class AppState {
             selectedTab = .event(.notifications)
         }
         await refreshBundle()
+    }
+
+    // MARK: - Usage (API-005)
+
+    /// Counts one anonymous usage event for the joined event. No-op when not in an event.
+    /// Never pass identifying data or search text as `detail`.
+    func track(_ metric: UsageMetric, detail: String? = nil) {
+        guard let eventId = currentEvent?.id else { return }
+        usage.record(metric, detail: detail, eventId: eventId)
+    }
+
+    /// `track(.locationView, id: location.id)`
+    func track(_ metric: UsageMetric, id: Int) {
+        track(metric, detail: String(id))
+    }
+
+    /// Sends pending counts now (the app is going to the background).
+    func flushUsage() {
+        usage.flush()
     }
 
     /// Asks for alert permission if it hasn't been decided yet.
@@ -389,6 +445,82 @@ final class AppState {
             return (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
         default:
             return false
+        }
+    }
+}
+
+// MARK: - Usage reporter (API-005)
+
+/// Aggregates anonymous usage counts in memory (`UsageAggregator`) and sends them with
+/// `POST events/<id>/usage/` at most every ~60 s while there is pending data, when the
+/// app goes to the background and before leaving or switching events. A batch that fails
+/// is retried once on the next flush, then dropped. Never blocks, never surfaces errors.
+@MainActor
+final class UsageReporter {
+
+    typealias Sender = @Sendable (_ eventId: Int, _ entries: [UsageEntry]) async throws -> Void
+
+    private struct Batch {
+        var eventId: Int
+        var entries: [UsageEntry]
+    }
+
+    static let flushInterval: Duration = .seconds(60)
+
+    private var aggregator = UsageAggregator()
+    /// Batches whose first send failed; sent once more on the next flush.
+    private var retryBatches: [Batch] = []
+    private var timer: Task<Void, Never>?
+    private let sender: Sender
+
+    init(sender: @escaping Sender = { eventId, entries in
+        try await APIClient.shared.sendUsage(eventId: eventId, entries: entries)
+    }) {
+        self.sender = sender
+    }
+
+    func record(_ metric: UsageMetric, detail: String? = nil, eventId: Int) {
+        aggregator.record(metric, detail: detail, eventId: eventId, at: .now)
+        scheduleFlush()
+    }
+
+    /// Sends everything pending in the background. Safe to call often.
+    func flush() {
+        timer?.cancel()
+        timer = nil
+        let retries = retryBatches
+        retryBatches = []
+        let fresh = aggregator.drain()
+        guard !retries.isEmpty || !fresh.isEmpty else { return }
+        let sender = self.sender
+        Task { [weak self] in
+            for batch in retries {
+                // Second attempt: on failure the batch is dropped.
+                try? await sender(batch.eventId, batch.entries)
+            }
+            var failed: [Batch] = []
+            for (eventId, entries) in fresh {
+                for chunk in UsageAggregator.chunks(entries) {
+                    do {
+                        try await sender(eventId, chunk)
+                    } catch {
+                        failed.append(Batch(eventId: eventId, entries: chunk))
+                    }
+                }
+            }
+            guard let self, !failed.isEmpty else { return }
+            self.retryBatches.append(contentsOf: failed)
+            self.scheduleFlush()
+        }
+    }
+
+    private func scheduleFlush() {
+        guard timer == nil else { return }
+        timer = Task { [weak self] in
+            try? await Task.sleep(for: UsageReporter.flushInterval)
+            guard !Task.isCancelled, let self else { return }
+            self.timer = nil
+            self.flush()
         }
     }
 }

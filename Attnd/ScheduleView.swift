@@ -86,7 +86,7 @@ struct ScheduleView: View {
         }
         .navigationTitle(title)
         .modifier(SearchableIf(enabled: appState.display.enableSearch, text: $searchText, prompt: "Search schedule"))
-        .refreshable { await appState.refreshBundle() }
+        .refreshable { await appState.pullToRefresh() }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 filterMenu
@@ -272,6 +272,7 @@ struct ScheduleItemDetailView: View {
         }
         .navigationTitle(item.name)
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: item.id) { appState.track(.scheduleItemView, id: item.id) }
     }
 
     private func content(now: Date) -> some View {

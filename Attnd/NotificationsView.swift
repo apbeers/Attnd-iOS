@@ -16,7 +16,7 @@ struct NotificationsView: View {
             }
         }
         .navigationTitle("Updates")
-        .refreshable { await appState.refreshBundle() }
+        .refreshable { await appState.pullToRefresh() }
         .eventStatusBanners()
         .overlay {
             if appState.notifications.isEmpty {

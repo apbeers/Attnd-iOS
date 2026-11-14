@@ -8,16 +8,6 @@
 name: Store screenshots
 
 on:
-  # TEMPORARY while the pipeline is being made to work: pushes to develop that touch it capture and
-  # upload (editable version only). Remove this push trigger once the screenshots come out right.
-  push:
-    branches: [develop]
-    paths:
-      - 'scripts/ci/screenshots.sh'
-      - 'scripts/ci/compose_screenshots.py'
-      - 'scripts/ci/duo_hinge.m'
-      - 'store/en-US/captions.txt'
-      - '.github/workflows/store-screenshots.yml'
   workflow_dispatch:
     inputs:
       upload:

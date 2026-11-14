@@ -2,7 +2,9 @@
 #   pull request      → build + unit tests on the newest iPhone simulator
 #   push to develop   → one Mac job: unit tests, then archive + upload; a Linux job waits for TestFlight
 #                       processing (internal testers get every build; the build talks to the dev server)
-#   push to main      → the same, then the Linux job submits to App Review (released when approved)
+#   push to main      → the same, then the Linux job sets the store listing text (store/en-US) on the version
+#                       and submits it to App Review (released when approved). Screenshots stay as last
+#                       uploaded by the manual store-screenshots.yml.
 # Mac minutes cost ~10x Linux minutes, so anything that only waits on Apple runs on Linux.
 # Docs-only commits don't run; a newer push to develop cancels the older run (main never cancels).
 #
@@ -13,11 +15,12 @@ name: iOS
 on:
   push:
     branches: [main, develop]
-    # Store listing changes have their own workflow (store-listing.yml).
-    paths-ignore: ['**/*.md', 'store/**', 'scripts/ci/screenshots.sh', 'scripts/ci/compose_screenshots.py',
-                   'scripts/ci/duo_hinge.m', '.github/workflows/store-listing.yml']
+    # Screenshots have their own manual workflow (store-screenshots.yml). Listing text changes do run this
+    # pipeline: a release to main publishes them.
+    paths-ignore: ['**/*.md', 'scripts/ci/screenshots.sh', 'scripts/ci/compose_screenshots.py',
+                   'scripts/ci/duo_hinge.m', 'store/en-US/captions.txt', '.github/workflows/store-*.yml']
   pull_request:
-    paths-ignore: ['**/*.md', 'store/**']
+    paths-ignore: ['**/*.md', 'store/**', '.github/workflows/store-*.yml']
   workflow_dispatch:
 
 concurrency:
@@ -115,6 +118,7 @@ jobs:
         with:
           sparse-checkout: |
             scripts/ci
+            store
             VERSION
       - name: Version
         run: |
@@ -129,8 +133,17 @@ jobs:
       - name: Wait for TestFlight processing
         if: github.ref == 'refs/heads/develop'
         run: python scripts/ci/asc.py testflight --version "$MARKETING_VERSION" --build "$BUILD_NUMBER"
+      - name: Store listing text
+        if: github.ref == 'refs/heads/main'
+        env:
+          REVIEW_CONTACT_FIRST_NAME: ${{ vars.REVIEW_CONTACT_FIRST_NAME }}
+          REVIEW_CONTACT_LAST_NAME: ${{ vars.REVIEW_CONTACT_LAST_NAME }}
+          REVIEW_CONTACT_PHONE: ${{ vars.REVIEW_CONTACT_PHONE }}
+          REVIEW_CONTACT_EMAIL: ${{ vars.REVIEW_CONTACT_EMAIL }}
+        run: python scripts/ci/asc.py metadata --version "$MARKETING_VERSION"
       - name: Submit for App Review
         if: github.ref == 'refs/heads/main'
         env:
-          WHATS_NEW: ${{ vars.WHATS_NEW || 'Improvements and fixes.' }}
+          # Empty: What's New comes from store/en-US/release_notes.txt (set by the step above).
+          WHATS_NEW: ${{ vars.WHATS_NEW }}
         run: python scripts/ci/asc.py release --version "$MARKETING_VERSION" --build "$BUILD_NUMBER" --whats-new "$WHATS_NEW"

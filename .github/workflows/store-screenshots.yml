@@ -1,0 +1,106 @@
+# App Store SCREENSHOTS: 6.9" and 6.3" iPhones plus iPhone Duo folded (cover display) and unfolded (inner
+# display), captured on simulators against the dev server (DEMO event), composed into store frames and
+# uploaded to the EDITABLE App Store version. Slow (Mac, ~20-30 min), so it never runs with normal builds.
+# Manual only: Actions → "Store screenshots" → Run workflow (or ask Claude to "update the screenshots").
+# Nothing goes live until the version is submitted (merging to main; ios.yml keeps these screenshots).
+#   capture (Mac)    build once, capture every screen, compose; artifact "store-screenshots"
+#   upload  (Linux)  asc.py screenshots (processing is waited for here, not on the Mac)
+name: Store screenshots
+
+on:
+  # TEMPORARY while the pipeline is being made to work: pushes to develop that touch it capture and
+  # upload (editable version only). Remove this push trigger once the screenshots come out right.
+  push:
+    branches: [develop]
+    paths:
+      - 'scripts/ci/screenshots.sh'
+      - 'scripts/ci/compose_screenshots.py'
+      - 'scripts/ci/duo_hinge.m'
+      - 'store/en-US/captions.txt'
+      - '.github/workflows/store-screenshots.yml'
+  workflow_dispatch:
+    inputs:
+      upload:
+        description: Upload to App Store Connect (editable version; off = preview artifact only)
+        type: boolean
+        default: true
+
+# One screenshot update at a time; never cancel one halfway through replacing screenshots.
+concurrency:
+  group: asc-screenshots
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  screenshots:
+    name: Capture & compose screenshots
+    runs-on: ${{ vars.MACOS_RUNNER || 'xcode-27' }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: Select Xcode ${{ vars.XCODE_VERSION || '27.2' }}
+        env:
+          XCODE_VERSION: ${{ vars.XCODE_VERSION || '27.2' }}
+        run: bash scripts/ci/select_xcode.sh
+      - name: Pillow
+        run: |
+          python3 -m venv "$RUNNER_TEMP/shots"
+          "$RUNNER_TEMP/shots/bin/pip" install --quiet Pillow
+      - name: Capture (simulators, dev server, event DEMO)
+        env:
+          # Static key: only valid on the dev server, which has the always-live DEMO event.
+          ATTND_API_KEY: ${{ secrets.ATTND_API_KEY }}
+          ATTND_SERVER: ${{ vars.SCREENSHOT_SERVER || 'attnd-dev-7ab893f37020.herokuapp.com' }}
+          DUO_REQUIRED: ${{ vars.DUO_SCREENSHOTS_REQUIRED == 'true' && '1' || '0' }}
+        run: bash scripts/ci/screenshots.sh
+      - name: Compose store frames
+        run: '"$RUNNER_TEMP/shots/bin/python" scripts/ci/compose_screenshots.py'
+      - name: Keep screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: store-screenshots
+          path: |
+            build/screenshots/composed
+            build/screenshots/raw
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Shut down simulators
+        if: always()
+        run: xcrun simctl shutdown all || true
+
+  upload:
+    name: Upload screenshots to App Store Connect
+    needs: screenshots
+    if: github.event_name == 'push' || inputs.upload
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'dev' }}
+    permissions:
+      contents: read
+      actions: read  # gh run download (this run's artifact)
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: |
+            scripts/ci
+            store
+      - name: App Store Connect tooling
+        run: |
+          python3 -m venv "$RUNNER_TEMP/asc"
+          "$RUNNER_TEMP/asc/bin/pip" install --quiet "pyjwt[crypto]"
+          echo "$RUNNER_TEMP/asc/bin" >> "$GITHUB_PATH"
+      - name: Check App Store Connect key
+        run: python scripts/ci/asc.py check
+      - name: Download screenshots
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "${{ github.run_id }}" --repo "${{ github.repository }}" --name store-screenshots --dir build/screenshots
+      - name: Screenshots
+        run: python scripts/ci/asc.py screenshots --dir build/screenshots/composed

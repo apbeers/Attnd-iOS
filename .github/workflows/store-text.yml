@@ -1,0 +1,57 @@
+# App Store listing TEXT (store/en-US/*.txt: name, subtitle, promotional text, description, keywords,
+# What's New, URLs, App Review notes/contact) on the EDITABLE App Store version (e.g. "1.1 Prepare for
+# Submission"). Manual only: Actions → "Store listing text" → Run workflow (or ask Claude to "update the
+# store listing"). Quick (Linux, no build). Nothing goes live until the version is submitted: merging to
+# main does that (ios.yml sets this same text, then submits for App Review).
+#   upload off → validate only
+name: Store listing text
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload:
+        description: Upload to App Store Connect (editable version; live only after the next release)
+        type: boolean
+        default: true
+
+concurrency:
+  group: asc-listing
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  text:
+    name: ${{ inputs.upload && 'Validate & upload listing text' || 'Validate listing text' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'dev' }}
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+      REVIEW_CONTACT_FIRST_NAME: ${{ vars.REVIEW_CONTACT_FIRST_NAME }}
+      REVIEW_CONTACT_LAST_NAME: ${{ vars.REVIEW_CONTACT_LAST_NAME }}
+      REVIEW_CONTACT_PHONE: ${{ vars.REVIEW_CONTACT_PHONE }}
+      REVIEW_CONTACT_EMAIL: ${{ vars.REVIEW_CONTACT_EMAIL }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: |
+            scripts/ci
+            store
+            VERSION
+      - name: Validate listing text
+        run: python3 scripts/ci/asc.py metadata --dry-run
+      - name: App Store Connect tooling
+        if: inputs.upload
+        run: |
+          python3 -m venv "$RUNNER_TEMP/asc"
+          "$RUNNER_TEMP/asc/bin/pip" install --quiet "pyjwt[crypto]"
+          echo "$RUNNER_TEMP/asc/bin" >> "$GITHUB_PATH"
+      - name: Upload listing text
+        if: inputs.upload
+        run: |
+          python scripts/ci/asc.py check
+          python scripts/ci/asc.py metadata --version "$(tr -d '[:space:]' < VERSION)"

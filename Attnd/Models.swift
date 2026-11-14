@@ -433,6 +433,35 @@ struct DeviceRequest: Encodable, Sendable {
 }
 
 /// Response of join / leave / devices. Every field is optional.
+/// GET /api/app-status/ (API-003): whether this build should update.
+struct AppStatus: Hashable, Sendable {
+    enum Update: String, Sendable { case upToDate = "none", available, required }
+    var update: Update = .upToDate
+    var minVersion: String? = nil
+    var latestVersion: String? = nil
+    var updateURL: URL? = nil
+    var message: String? = nil
+}
+
+extension AppStatus: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case update, message
+        case minVersion = "min_version"
+        case latestVersion = "latest_version"
+        case updateURL = "update_url"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        // Unknown values (a future state) are treated as up to date rather than failing.
+        update = c.nonEmptyString(.update).flatMap(Update.init(rawValue:)) ?? .upToDate
+        minVersion = c.nonEmptyString(.minVersion)
+        latestVersion = c.nonEmptyString(.latestVersion)
+        updateURL = c.url(.updateURL)
+        message = c.nonEmptyString(.message)
+    }
+}
+
 struct StatusResponse: Hashable, Sendable {
     var status: String? = nil
     var contentVersion: Int? = nil

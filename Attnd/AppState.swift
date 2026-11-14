@@ -80,6 +80,22 @@ final class AppState {
 
     // MARK: - Private bookkeeping
 
+    // MARK: App updates (API-003)
+
+    /// From GET /api/app-status/. `.required` replaces the whole UI with the update screen.
+    private(set) var appStatus = AppStatus()
+
+    /// The `latest_version` whose "update available" banner the user closed.
+    private var dismissedUpdateVersion: String? {
+        didSet { UserDefaults.standard.set(dismissedUpdateVersion, forKey: Keys.dismissedUpdateVersion) }
+    }
+
+    var mustUpdate: Bool { appStatus.update == .required }
+
+    var showUpdateBanner: Bool {
+        appStatus.update == .available && appStatus.latestVersion != dismissedUpdateVersion
+    }
+
     @ObservationIgnored private var etag: String?
     @ObservationIgnored private var hasAppliedDefaultTab = false
     /// A notification tap that arrived before its event finished loading (cold launch).
@@ -92,6 +108,7 @@ final class AppState {
         static let showUserLocation = "pref.showUserLocation"
         static let notificationsEnabled = "pref.notificationsEnabled"
         static let pushToken = "pref.pushToken"
+        static let dismissedUpdateVersion = "pref.dismissedUpdateVersion"
     }
 
     // MARK: - Init
@@ -108,6 +125,29 @@ final class AppState {
         showUserLocation = defaults.object(forKey: Keys.showUserLocation) as? Bool ?? true
         notificationsEnabled = defaults.object(forKey: Keys.notificationsEnabled) as? Bool ?? false
         pushToken = defaults.string(forKey: Keys.pushToken)
+        dismissedUpdateVersion = defaults.string(forKey: Keys.dismissedUpdateVersion)
+        // Any API call answered with 410/426 means this build's API version is retired.
+        NotificationCenter.default.addObserver(forName: .attndUpdateRequired, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in await self?.handleUpdateRequired() }
+        }
+    }
+
+    // MARK: - App updates
+
+    /// Asks the server whether this build should update. Failures leave the last answer in place.
+    func checkForUpdate() async {
+        guard let status = try? await APIClient.shared.appStatus() else { return }
+        appStatus = status
+    }
+
+    func dismissUpdateBanner() {
+        dismissedUpdateVersion = appStatus.latestVersion
+    }
+
+    private func handleUpdateRequired() async {
+        var status = (try? await APIClient.shared.appStatus()) ?? appStatus
+        status.update = .required
+        appStatus = status
     }
 
     // MARK: - Derived
@@ -149,6 +189,7 @@ final class AppState {
     /// On lookup failure the saved code is cleared and the user lands on the launch screen.
     func launch() async {
         Task { await syncDevice() }
+        Task { await checkForUpdate() }
         guard let code = savedEventCode else { return }
         do {
             let event = try await APIClient.shared.lookupEvent(query: code)

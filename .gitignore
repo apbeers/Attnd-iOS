@@ -9,3 +9,4 @@ xcuserdata/
 
 # Local secrets (static API key for simulator / CI builds)
 Config/Secrets.xcconfig
+__pycache__/

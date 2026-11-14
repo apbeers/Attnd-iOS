@@ -23,7 +23,7 @@ permissions:
 jobs:
   test:
     name: Build & test
-    runs-on: ${{ vars.MACOS_RUNNER || 'macos-26' }}
+    runs-on: ${{ vars.MACOS_RUNNER || 'xcode-27' }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -48,7 +48,7 @@ jobs:
     name: ${{ github.ref == 'refs/heads/main' && 'App Store' || 'TestFlight' }}
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
     needs: test
-    runs-on: ${{ vars.MACOS_RUNNER || 'macos-26' }}
+    runs-on: ${{ vars.MACOS_RUNNER || 'xcode-27' }}
     timeout-minutes: 120
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'dev' }}
     env:

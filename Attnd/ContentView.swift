@@ -14,11 +14,15 @@ import SwiftUI
 /// Shared by the app and the App Clip. Silently rejoins the saved event on launch.
 struct AppRootView: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.scenePhase) private var scenePhase
     @State private var isLaunching = true
 
     var body: some View {
         Group {
-            if isLaunching {
+            if appState.mustUpdate {
+                UpdateRequiredView()
+                    .transition(.opacity)
+            } else if isLaunching {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if appState.currentEvent != nil {
@@ -29,12 +33,88 @@ struct AppRootView: View {
                     .transition(.opacity)
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if appState.showUpdateBanner && !appState.mustUpdate {
+                UpdateAvailableBanner()
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
         .animation(.easeInOut, value: isLaunching)
         .animation(.easeInOut, value: appState.currentEvent?.id)
+        .animation(.easeInOut, value: appState.mustUpdate)
+        .animation(.easeInOut, value: appState.showUpdateBanner)
         .task {
             await appState.launch()
             isLaunching = false
         }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active, !isLaunching {
+                Task { await appState.checkForUpdate() }
+            }
+        }
+    }
+}
+
+// MARK: - Updates (API-003)
+
+/// Fallback when the server doesn't send an `update_url`.
+private let appStoreURL = URL(string: "https://apps.apple.com/app/id1470627406")!
+
+/// Shown instead of everything else when the server says this build must update.
+struct UpdateRequiredView: View {
+    @Environment(AppState.self) private var appState
+
+    private var currentVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+    }
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("Update Attnd", systemImage: "arrow.down.app")
+        } description: {
+            Text(appState.appStatus.message
+                 ?? "This version of Attnd is no longer supported. Update to the latest version to keep following your events.")
+            if !currentVersion.isEmpty {
+                Text("You have version \(currentVersion).")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        } actions: {
+            Link(destination: appState.appStatus.updateURL ?? appStoreURL) {
+                Label("Update", systemImage: "arrow.up.forward.app")
+                    .frame(minWidth: 160)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+        }
+    }
+}
+
+/// A dismissible banner when a newer version exists but this one still works.
+struct UpdateAvailableBanner: View {
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "arrow.down.app")
+                .foregroundStyle(.tint)
+            Text(appState.appStatus.message ?? "A new version of Attnd is available.")
+                .font(.subheadline)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Link("Update", destination: appState.appStatus.updateURL ?? appStoreURL)
+                .font(.subheadline.weight(.semibold))
+            Button {
+                appState.dismissUpdateBanner()
+            } label: {
+                Label("Dismiss", systemImage: "xmark")
+                    .labelStyle(.iconOnly)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.bar)
     }
 }
 

@@ -91,9 +91,20 @@ def testflight(args, app):
     if not args.group:
         print('No TestFlight group given; internal groups with automatic distribution get it automatically.')
         return
-    groups = must('GET', '/v1/betaGroups', {'filter[app]': app, 'filter[name]': args.group})['data']
-    if not groups:
-        sys.exit(f'No TestFlight group named "{args.group}"')
+    groups = must('GET', '/v1/betaGroups', {'filter[app]': app, 'limit': 200,
+                                            'fields[betaGroups]': 'name,isInternalGroup,hasAccessToAllBuilds'})['data']
+    wanted = args.group.strip().casefold()
+    match = [g for g in groups if g['attributes'].get('name', '').strip().casefold() == wanted]
+    if not match:
+        names = ', '.join(f'"{g["attributes"].get("name")}"' for g in groups) or 'none'
+        print(f'::warning::No TestFlight group named "{args.group}" (groups: {names}). '
+              'Internal groups with automatic distribution still get the build.')
+        return
+    group = match[0]
+    if group['attributes'].get('isInternalGroup') and group['attributes'].get('hasAccessToAllBuilds'):
+        print(f'Build {args.build} is available: "{args.group}" is an internal group that gets every build automatically')
+        return
+    groups = match
     status, data = call('POST', f'/v1/betaGroups/{groups[0]["id"]}/relationships/builds',
                         body={'data': [{'type': 'builds', 'id': build}]})
     if status >= 300 and 'already' not in data.get('_error', '').lower():

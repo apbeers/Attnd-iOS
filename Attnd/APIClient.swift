@@ -26,18 +26,26 @@ enum APIError: LocalizedError, Sendable {
     case serverError(Int)
     case decodingError(String)
     case networkError(String)
+    /// 410 / 426: this build's API version is retired. The app shows the update screen.
+    case updateRequired
 
     var errorDescription: String? {
         switch self {
         case .invalidURL:           return "Invalid URL."
-        case .unauthorized:         return "Authorization failed."
+        case .unauthorized:         return "Attnd couldn't verify this device with the server. Try again in a moment."
         case .notFound:             return "Not found."
         case .badRequest(let m):    return "Bad request: \(m)"
         case .serverError(let c):   return "Server error (\(c))."
         case .decodingError(let m): return "Unexpected response from the server: \(m)"
         case .networkError(let m):  return "Network error: \(m)"
+        case .updateRequired:       return "This version of Attnd is no longer supported. Please update."
         }
     }
+}
+
+extension Notification.Name {
+    /// Posted when the server says this build's API version is retired (410 / 426).
+    static let attndUpdateRequired = Notification.Name("com.arcu.attnd.updateRequired")
 }
 
 // MARK: - APIClient
@@ -54,6 +62,8 @@ final class APIClient: Sendable {
         return host.isEmpty || host.hasPrefix("$(") ? "attnd.app" : host
     }()
 
+    /// The API version this build speaks. Bump it together with `baseURL`.
+    static let apiVersion = 2
     static let baseURL = "https://\(serverHost)/api/v2/"
 
     /// Result of a conditional bundle fetch.
@@ -128,6 +138,32 @@ final class APIClient: Sendable {
     func registerDevice(deviceId: String, pushToken: String?, subscribed: Bool?) async throws -> StatusResponse {
         let body = DeviceRequest(deviceId: deviceId, pushToken: pushToken, appVersion: appVersion, subscribed: subscribed)
         return try await post("devices/", body: body)
+    }
+
+    // MARK: - App status
+
+    /// GET /api/app-status/ (API-003). Unversioned and unauthenticated, so even a build whose
+    /// API version was retired, or whose attestation fails, can learn that it must update.
+    func appStatus() async throws -> AppStatus {
+        var components = URLComponents(string: "https://\(Self.serverHost)/api/app-status/")
+        components?.queryItems = [
+            URLQueryItem(name: "platform", value: "ios"),
+            URLQueryItem(name: "version", value: appVersion ?? ""),
+            URLQueryItem(name: "api", value: String(Self.apiVersion)),
+        ]
+        guard let url = components?.url else { throw APIError.invalidURL }
+        var req = URLRequest(url: url)
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: req)
+        } catch {
+            throw APIError.networkError(error.localizedDescription)
+        }
+        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200...299).contains(code) else { throw APIError.serverError(code) }
+        return try decode(data)
     }
 
     // MARK: - Query encoding
@@ -218,6 +254,10 @@ final class APIClient: Sendable {
 
         case 404:
             throw APIError.notFound
+
+        case 410, 426:
+            NotificationCenter.default.post(name: .attndUpdateRequired, object: nil)
+            throw APIError.updateRequired
 
         default:
             throw APIError.serverError(http.statusCode)

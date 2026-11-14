@@ -306,4 +306,22 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertEqual(json["app_version"] as? String, "2.0")
         XCTAssertEqual(json["subscribed"] as? Bool, true)
     }
+
+    // MARK: - App status (API-003)
+
+    func testAppStatus_DecodesRequired() throws {
+        let json = #"{"update": "required", "min_version": "2.0.90", "latest_version": null, "update_url": "https://apps.apple.com/app/id1470627406", "message": null}"#
+        let status = try JSONDecoder().decode(AppStatus.self, from: Data(json.utf8))
+        XCTAssertEqual(status.update, .required)
+        XCTAssertEqual(status.minVersion, "2.0.90")
+        XCTAssertNil(status.latestVersion)
+        XCTAssertEqual(status.updateURL?.absoluteString, "https://apps.apple.com/app/id1470627406")
+    }
+
+    func testAppStatus_UnknownOrMissingValuesMeanNoPrompt() throws {
+        let unknown = try JSONDecoder().decode(AppStatus.self, from: Data(#"{"update": "someday", "extra": 1}"#.utf8))
+        XCTAssertEqual(unknown.update, .upToDate)
+        let empty = try JSONDecoder().decode(AppStatus.self, from: Data("{}".utf8))
+        XCTAssertEqual(empty.update, .upToDate)
+    }
 }

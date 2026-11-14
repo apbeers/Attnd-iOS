@@ -18,6 +18,8 @@ struct LaunchScreen: View {
     @State private var nearbyResults: [NearbyEventResult] = []
     @State private var isLoadingNearby = false
     @State private var nearbyError: String?
+    /// True when the nearby error is about location permission (shown with a location icon).
+    @State private var nearbyErrorIsLocation = false
     @State private var searchQuery = ""
     @State private var isJoining = false
     @State private var joinError: String?
@@ -55,7 +57,7 @@ struct LaunchScreen: View {
                 } else if !isLoadingNearby {
                     Section {
                         if let nearbyError {
-                            Label(nearbyError, systemImage: "location.slash")
+                            Label(nearbyError, systemImage: nearbyErrorIsLocation ? "location.slash" : "exclamationmark.triangle")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         } else {
@@ -116,6 +118,7 @@ struct LaunchScreen: View {
     private func loadNearby() async {
         guard let coordinate = await locationManager.requestLocation() else {
             nearbyError = "Location access is needed to find nearby events."
+            nearbyErrorIsLocation = true
             return
         }
         isLoadingNearby = true
@@ -127,6 +130,7 @@ struct LaunchScreen: View {
             )
         } catch {
             nearbyError = error.localizedDescription
+            nearbyErrorIsLocation = false
         }
         isLoadingNearby = false
     }

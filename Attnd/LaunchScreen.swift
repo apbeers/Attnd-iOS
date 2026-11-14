@@ -1,11 +1,12 @@
 // LaunchScreen.swift
 // Attnd
 //
-// The first screen the user sees. Offers two paths:
-//   1. Nearby events list (requires location permission)
-//   2. Manual event code / name entry
+// The first screen the user sees. Three ways in:
+//   1. Nearby events (requires location permission)
+//   2. Searching by event code or exact name (system search field)
+//   3. Scanning the event's QR code
 //
-// After tapping an event, the user is transitioned into ContentView via AppState.
+// Joining hands off to AppState, which swaps this screen for ContentView.
 
 import SwiftUI
 import CoreLocation
@@ -16,104 +17,87 @@ struct LaunchScreen: View {
 
     @State private var nearbyResults: [NearbyEventResult] = []
     @State private var isLoadingNearby = false
-    @State private var nearbyError: String? = nil
+    @State private var nearbyError: String?
     @State private var searchQuery = ""
-    @State private var isSearching = false
-    @State private var searchError: String? = nil
     @State private var isJoining = false
-    @State private var joinError: String? = nil
+    @State private var joinError: String?
     @State private var showScanner = false
 
     @StateObject private var locationManager = LocationPermissionManager()
 
+    private var trimmedQuery: String {
+        searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-
-                // MARK: - Search Bar
-                HStack {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                    TextField("Event name or code", text: $searchQuery)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .submitLabel(.search)
-                        .onSubmit { Task { await searchEvent() } }
-                    if !searchQuery.isEmpty {
-                        Button { searchQuery = "" } label: {
-                            Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                        }
+            List {
+                if let joinError {
+                    Section {
+                        Label(joinError, systemImage: "exclamationmark.triangle")
+                            .font(.footnote)
+                            .foregroundStyle(.red)
                     }
                 }
-                .padding(10)
-                .background(Color(.systemGray6), in: RoundedRectangle(cornerRadius: 10))
-                .padding()
 
-                if let err = searchError {
-                    Label(err, systemImage: "exclamationmark.triangle")
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                        .padding(.horizontal)
-                }
-
-                if let err = joinError {
-                    Label(err, systemImage: "exclamationmark.triangle")
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                        .padding(.horizontal)
-                }
-
-                Divider()
-
-                // MARK: - Nearby Events / Search Results
-                if isSearching || isJoining || isLoadingNearby {
-                    Spacer()
-                    ProgressView(isSearching ? "Searching…" : isJoining ? "Joining…" : "Finding nearby events…")
-                    Spacer()
-                } else {
-                    List {
-                        if !nearbyResults.isEmpty {
-                            Section("Nearby Events") {
-                                ForEach(nearbyResults) { result in
-                                    EventRow(
-                                        event: result.event,
-                                        subtitle: String(format: "%.1f mi away", result.distanceMiles)
-                                    )
+                if !nearbyResults.isEmpty {
+                    Section("Nearby Events") {
+                        ForEach(nearbyResults) { result in
+                            Button {
+                                Task { await join(result.event) }
+                            } label: {
+                                EventRow(result: result)
                                     .contentShape(Rectangle())
-                                    .onTapGesture { Task { await join(result.event) } }
-                                }
                             }
-                        } else if !isLoadingNearby {
-                            Section {
-                                if let err = nearbyError {
-                                    Label(err, systemImage: "location.slash")
-                                        .font(.subheadline)
-                                        .foregroundStyle(.secondary)
-                                } else {
-                                    ContentUnavailableView(
-                                        "No Nearby Events",
-                                        systemImage: "map",
-                                        description: Text("Enter an event code above to join manually.")
-                                    )
-                                }
-                            }
+                            .buttonStyle(.plain)
                         }
                     }
-                    .listStyle(.insetGrouped)
+                } else if !isLoadingNearby {
+                    Section {
+                        if let nearbyError {
+                            Label(nearbyError, systemImage: "location.slash")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ContentUnavailableView(
+                                "No Nearby Events",
+                                systemImage: "map",
+                                description: Text("Search for an event code or scan the event's QR code.")
+                            )
+                        }
+                    }
+                }
+            }
+            .listStyle(.insetGrouped)
+            .disabled(isJoining)
+            .overlay {
+                if isJoining {
+                    ProgressView("Joining…")
+                        .padding()
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                } else if isLoadingNearby {
+                    ProgressView("Finding nearby events…")
                 }
             }
             .navigationTitle("Attnd")
+            .searchable(text: $searchQuery, prompt: "Event code or name")
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .onSubmit(of: .search) {
+                Task { await joinByCode(trimmedQuery) }
+            }
+            .refreshable { await loadNearby() }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button { showScanner = true } label: {
-                        Image(systemName: "qrcode.viewfinder")
-                            .font(.title3)
+                        Label("Scan QR Code", systemImage: "qrcode.viewfinder")
                     }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { Task { await searchEvent() } } label: {
-                        Text("Join")
+                ToolbarItem(placement: .pinnedTrailing) {
+                    Button { Task { await joinByCode(trimmedQuery) } } label: {
+                        Label("Join", systemImage: "arrow.right.circle")
                     }
-                    .disabled(searchQuery.trimmingCharacters(in: .whitespaces).isEmpty || isSearching)
+                    .disabled(trimmedQuery.isEmpty || isJoining)
                 }
             }
             .sheet(isPresented: $showScanner) {
@@ -123,74 +107,50 @@ struct LaunchScreen: View {
             }
         }
         .task {
-            await requestLocationAndLoadNearby()
+            await loadNearby()
         }
     }
 
-    // MARK: - Helpers
+    // MARK: - Actions
 
-    private func requestLocationAndLoadNearby() async {
-        let coord = await locationManager.requestLocation()
-        guard let coord else {
+    private func loadNearby() async {
+        guard let coordinate = await locationManager.requestLocation() else {
             nearbyError = "Location access is needed to find nearby events."
             return
         }
-        appState.showUserLocation = true
         isLoadingNearby = true
         nearbyError = nil
         do {
-            let list = try await APIClient.shared.nearbyEvents(latitude: coord.latitude, longitude: coord.longitude)
-            nearbyResults = list.results
+            nearbyResults = try await APIClient.shared.nearbyEvents(
+                latitude: coordinate.latitude,
+                longitude: coordinate.longitude
+            )
         } catch {
             nearbyError = error.localizedDescription
         }
         isLoadingNearby = false
     }
 
-    private func searchEvent() async {
-        let q = searchQuery.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { return }
-        isSearching = true
-        searchError = nil
-        do {
-            // Try exact lookup first; fall back to fuzzy search
-            let event: Event
-            do {
-                event = try await APIClient.shared.lookupEvent(query: q)
-            } catch APIError.notFound {
-                event = try await APIClient.shared.searchEvent(query: q)
-            }
-            await join(event)
-        } catch {
-            searchError = "Event not found. Check the name or code and try again."
-        }
-        isSearching = false
-    }
-
-    /// Handles a raw QR string — extracts event code from a join URL or
-    /// treats the string itself as a code, then looks up and joins the event.
-    private func handleScannedCode(_ raw: String) async {
-        var code = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // Extract code from URL patterns like https://attnd.app/join/CODE/ or /join/CODE
-        if let url = URL(string: code) {
-            let parts = url.pathComponents.filter { $0 != "/" }
-            if let joinIdx = parts.firstIndex(of: "join"), parts.indices.contains(joinIdx + 1) {
-                code = parts[joinIdx + 1]
-            }
-        }
-
-        guard !code.isEmpty else { return }
-        searchQuery = code
+    /// Exact event code or name via `events/lookup/`.
+    private func joinByCode(_ code: String) async {
+        guard !code.isEmpty, !isJoining else { return }
         isJoining = true
         joinError = nil
-        do {
-            let event = try await APIClient.shared.lookupEvent(query: code)
-            await join(event)
-        } catch {
-            joinError = "QR code not recognised. Try entering the event code manually."
+        let joined = await appState.join(code: code)
+        if !joined {
+            joinError = "Event not found. Check the code or full event name and try again."
         }
         isJoining = false
+    }
+
+    /// A join URL (https://attnd.app/join/CODE/) or a bare event code.
+    private func handleScannedCode(_ raw: String) async {
+        guard let code = DeepLink.eventCode(fromScanned: raw) else {
+            joinError = "QR code not recognised. Try entering the event code instead."
+            return
+        }
+        searchQuery = code
+        await joinByCode(code)
     }
 
     private func join(_ event: Event) async {
@@ -204,16 +164,21 @@ struct LaunchScreen: View {
 // MARK: - Event Row
 
 private struct EventRow: View {
-    let event: Event
-    let subtitle: String
+    let result: NearbyEventResult
+
+    private var event: Event { result.event }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(event.name).font(.headline)
             HStack {
-                Text(subtitle)
+                if let miles = result.distanceMiles {
+                    Text(String(format: "%.1f mi away", miles))
+                }
                 Spacer()
-                Text(formattedDate(event.startTime))
+                if let start = event.startTime {
+                    Text(EventTimeFormat.dateTime(start, in: event.timeZone))
+                }
             }
             .font(.subheadline)
             .foregroundStyle(.secondary)
@@ -222,20 +187,12 @@ private struct EventRow: View {
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
+            if event.isDemo {
+                Text("Demo Event")
+                    .font(.caption.bold())
+                    .foregroundStyle(.orange)
+            }
         }
         .padding(.vertical, 4)
     }
-
-    private func formattedDate(_ iso: String) -> String {
-        let parser = ISO8601DateFormatter()
-        parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = parser.date(from: iso) {
-            let fmt = DateFormatter()
-            fmt.dateStyle = .short
-            fmt.timeStyle = .short
-            return fmt.string(from: date)
-        }
-        return iso
-    }
 }
-

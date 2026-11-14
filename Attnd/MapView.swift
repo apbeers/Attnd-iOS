@@ -1,102 +1,94 @@
 // MapView.swift
 // Attnd
+//
+// The event map. Honours the display config: `map_fit_all` (initial framing),
+// `map_clustering` (grid clustering by zoom level, see MapClustering) and
+// `group_by_category` (category chips). Locations without coordinates get no pin.
+//
+// Floating overlays (category chips, map buttons, the selected-location card) are
+// laid out with ReservedRegionAvoiding so they stay clear of the fold and camera
+// housings on foldables.
 
 import SwiftUI
 import MapKit
 import UIKit
 
 struct MapView: View {
-    let locations: [Location]
-    let centerCoordinate: CLLocationCoordinate2D?
+    @Binding var cameraPosition: MapCameraPosition
+    /// Whether the initial framing has been applied (owned by MapTab so it survives layout changes).
+    @Binding var hasPositioned: Bool
 
     @Environment(AppState.self) private var appState
-    @State private var cameraPosition: MapCameraPosition
     @StateObject private var locationManager = LocationPermissionManager()
     @State private var showLocationDeniedAlert = false
 
-    // Pin selection
-    @State private var selectedLocationId: Int? = nil
-    @State private var navigateToLocation: Location? = nil
+    @State private var selectedLocationId: Int?
+    @State private var navigateToLocation: Location?
+    @State private var selectedCategory: String?
+    /// Visible span, for clustering. Updated when the camera stops moving.
+    @State private var visibleSpan = MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
 
-    private var selectedLocation: Location? {
-        guard let id = selectedLocationId else { return nil }
-        return locations.first { $0.id == id }
+    private var visibleLocations: [Location] {
+        LocationGrouping.filter(appState.locations, category: selectedCategory)
     }
 
-    init(
-        locations: [Location] = [],
-        centerCoordinate: CLLocationCoordinate2D? = nil
-    ) {
-        self.locations = locations
-        self.centerCoordinate = centerCoordinate
-
-        let pos: MapCameraPosition
-        if let center = centerCoordinate {
-            pos = .region(MKCoordinateRegion(
-                center: center,
-                span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
-            ))
-        } else if let first = locations.first {
-            pos = .region(MKCoordinateRegion(
-                center: CLLocationCoordinate2D(latitude: first.latitude, longitude: first.longitude),
-                span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
-            ))
-        } else {
-            pos = .region(MKCoordinateRegion(
-                center: CLLocationCoordinate2D(latitude: 32.754695, longitude: -97.331605),
-                span: MKCoordinateSpan(latitudeDelta: 0.5, longitudeDelta: 0.5)
-            ))
+    private var clusters: [MapCluster] {
+        if appState.display.mapClustering {
+            return MapClustering.clusters(
+                for: visibleLocations,
+                latitudeDelta: visibleSpan.latitudeDelta,
+                longitudeDelta: visibleSpan.longitudeDelta
+            )
         }
-        _cameraPosition = State(initialValue: pos)
+        return MapClustering.unclustered(visibleLocations)
     }
+
+    private var selectedLocation: Location? { appState.location(id: selectedLocationId) }
 
     var body: some View {
+        let allClusters = self.clusters
         Map(position: $cameraPosition, selection: $selectedLocationId) {
-            ForEach(locations) { location in
-                Marker(
-                    location.name,
-                    coordinate: CLLocationCoordinate2D(
-                        latitude: location.latitude,
-                        longitude: location.longitude
-                    )
-                )
-                .tag(location.id)
+            ForEach(allClusters.filter(\.isSingle)) { cluster in
+                Marker(cluster.locations[0].name, coordinate: cluster.coordinate.clCoordinate)
+                    .tag(cluster.locations[0].id)
+            }
+            ForEach(allClusters.filter { !$0.isSingle }) { cluster in
+                Annotation("\(cluster.locations.count) places", coordinate: cluster.coordinate.clCoordinate) {
+                    ClusterBadge(count: cluster.locations.count) {
+                        zoom(into: cluster)
+                    }
+                }
             }
             if appState.showUserLocation {
                 UserAnnotation()
             }
         }
         .mapStyle(.standard)
-        .navigationTitle("Map")
+        .onMapCameraChange(frequency: .onEnd) { context in
+            visibleSpan = context.region.span
+        }
+        .navigationTitle(appState.currentEvent?.name ?? "Map")
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(item: $navigateToLocation) { location in
             LocationDetailView(location: location)
         }
-        .onChange(of: appState.mapCenterToken) {
-            centerOnEvent()
+        .onAppear(perform: positionInitiallyIfNeeded)
+        .onChange(of: appState.locations) { positionInitiallyIfNeeded() }
+        .onChange(of: appState.mapCenterToken) { recenter() }
+        .onChange(of: appState.mapFocusLocationId) { _, id in
+            guard let id else { return }
+            focus(on: id)
+            appState.mapFocusLocationId = nil
         }
-        // Single bottom overlay: FABs on trailing, info card below when a pin is selected
-        .overlay(alignment: .bottom) {
-            VStack(spacing: 0) {
-                HStack(alignment: .bottom) {
-                    Spacer()
-                    MapFABStack(
-                        onCenter: { centerOnEvent() },
-                        onLocation: { Task { await zoomToUserLocation() } }
-                    )
-                    .padding()
-                }
-
-                if let loc = selectedLocation {
-                    LocationInfoCard(location: loc) {
-                        navigateToLocation = loc
-                    }
-                    .padding(.horizontal)
-                    .padding(.bottom, 8)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
+        .onChange(of: selectedCategory) {
+            if let id = selectedLocationId, !visibleLocations.contains(where: { $0.id == id }) {
+                selectedLocationId = nil
             }
-            .animation(.spring(duration: 0.3), value: selectedLocationId)
+        }
+        .overlay {
+            ReservedRegionAvoiding {
+                overlayContent
+            }
         }
         .alert("Location Access Denied", isPresented: $showLocationDeniedAlert) {
             Button("Open Settings") {
@@ -110,43 +102,134 @@ struct MapView: View {
         }
     }
 
-    private func centerOnEvent() {
-        let target: CLLocationCoordinate2D
-        if let center = centerCoordinate {
-            target = center
-        } else if let first = locations.first {
-            target = CLLocationCoordinate2D(latitude: first.latitude, longitude: first.longitude)
-        } else {
-            return
+    // MARK: - Overlays
+
+    private var overlayContent: some View {
+        VStack(spacing: 0) {
+            if !appState.filterCategories.isEmpty {
+                CategoryChips(categories: appState.filterCategories, selection: $selectedCategory)
+                    .padding(.top, 8)
+            }
+            Spacer(minLength: 0)
+            HStack {
+                Spacer()
+                MapButtonStack(
+                    onCenter: recenter,
+                    onLocation: { Task { await zoomToUserLocation() } }
+                )
+                .padding()
+            }
+            if let location = selectedLocation {
+                LocationInfoCard(location: location) {
+                    navigateToLocation = location
+                }
+                .frame(maxWidth: 480)
+                .padding(.horizontal)
+                .padding(.bottom, 8)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
-        withAnimation {
-            cameraPosition = .region(MKCoordinateRegion(
-                center: target,
-                span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
-            ))
+        .animation(.spring(duration: 0.3), value: selectedLocationId)
+    }
+
+    // MARK: - Camera
+
+    private var initialRegion: MapRegionSpec? {
+        MapRegionMath.initialRegion(
+            fitAll: appState.display.mapFitAll,
+            event: appState.currentEvent?.coordinate,
+            locations: visibleLocations.compactMap(\.coordinate)
+        )
+    }
+
+    /// Frames the map once; re-frames when the pins first arrive with the bundle.
+    private func positionInitiallyIfNeeded() {
+        guard !hasPositioned, let region = initialRegion else { return }
+        cameraPosition = .region(region.mkRegion)
+        hasPositioned = !appState.locations.isEmpty
+    }
+
+    private func recenter() {
+        guard let region = initialRegion else { return }
+        withAnimation { cameraPosition = .region(region.mkRegion) }
+    }
+
+    private func focus(on locationId: Int) {
+        guard let location = appState.location(id: locationId), let coordinate = location.coordinate else { return }
+        if selectedCategory != nil, location.category != selectedCategory {
+            selectedCategory = nil
         }
+        selectedLocationId = locationId
+        withAnimation { cameraPosition = .region(MapRegionMath.streetLevel(coordinate).mkRegion) }
+    }
+
+    private func zoom(into cluster: MapCluster) {
+        let region = MapRegionMath.zoomIn(
+            on: cluster,
+            currentLatitudeDelta: visibleSpan.latitudeDelta,
+            currentLongitudeDelta: visibleSpan.longitudeDelta
+        )
+        withAnimation { cameraPosition = .region(region.mkRegion) }
     }
 
     private func zoomToUserLocation() async {
-        let coord = await locationManager.requestLocation()
-        if let coord {
-            appState.showUserLocation = true
-            withAnimation {
-                cameraPosition = .region(MKCoordinateRegion(
-                    center: coord,
-                    span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
-                ))
-            }
-        } else {
+        guard let coordinate = await locationManager.requestLocation() else {
             showLocationDeniedAlert = true
+            return
+        }
+        appState.showUserLocation = true
+        withAnimation {
+            cameraPosition = .region(MKCoordinateRegion(
+                center: coordinate,
+                span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
+            ))
         }
     }
 }
 
-// MARK: - Map FAB Stack
+// MARK: - MapKit bridging
 
-/// Two floating action buttons — scope (re-center) and location.
-private struct MapFABStack: View {
+extension Coordinate {
+    var clCoordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    }
+}
+
+extension MapRegionSpec {
+    var mkRegion: MKCoordinateRegion {
+        MKCoordinateRegion(
+            center: center.clCoordinate,
+            span: MKCoordinateSpan(latitudeDelta: latitudeDelta, longitudeDelta: longitudeDelta)
+        )
+    }
+}
+
+// MARK: - Cluster badge
+
+private struct ClusterBadge: View {
+    let count: Int
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text("\(count)")
+                .font(.subheadline.bold())
+                .monospacedDigit()
+                .foregroundStyle(.white)
+                .frame(minWidth: 36, minHeight: 36)
+                .padding(.horizontal, 4)
+                .background(Circle().fill(.tint))
+                .overlay(Circle().stroke(.white, lineWidth: 2))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(count) places. Zoom in")
+    }
+}
+
+// MARK: - Map buttons
+
+/// Floating buttons: re-centre on the event and show my location.
+private struct MapButtonStack: View {
     let onCenter: () -> Void
     let onLocation: () -> Void
 
@@ -159,6 +242,7 @@ private struct MapFABStack: View {
                         .contentShape(Circle())
                 }
                 .glassEffect(in: Circle())
+                .accessibilityLabel("Show the whole event")
 
                 Button(action: onLocation) {
                     Image(systemName: "location.fill")
@@ -166,6 +250,7 @@ private struct MapFABStack: View {
                         .contentShape(Circle())
                 }
                 .glassEffect(in: Circle())
+                .accessibilityLabel("Show my location")
             }
         }
     }
@@ -184,10 +269,12 @@ private struct LocationInfoCard: View {
                     Text(location.name)
                         .font(.headline)
                         .foregroundStyle(.primary)
-                    Text(location.snippet)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                    if !location.snippet.isEmpty {
+                        Text(location.snippet)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
                 }
                 Spacer()
                 Image(systemName: "chevron.right")
@@ -204,6 +291,8 @@ private struct LocationInfoCard: View {
 }
 
 #Preview {
-    MapView()
-        .environment(AppState())
+    NavigationStack {
+        MapView(cameraPosition: .constant(.automatic), hasPositioned: .constant(false))
+    }
+    .environment(AppState())
 }

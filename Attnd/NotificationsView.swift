@@ -1,115 +1,65 @@
 // NotificationsView.swift
 // Attnd
+//
+// Organizer notifications for the joined event, newest first, from the bundle.
+// Times are shown in the event's time zone.
 
 import SwiftUI
 
 struct NotificationsView: View {
-    let notifications: [AppNotification]
-    let onRefresh: () async -> Void
-
-    @State private var lastRefreshed: Date = .now
-    private let staleThreshold: TimeInterval = 5 * 60  // 5 minutes
-
-    private var isStale: Bool {
-        Date.now.timeIntervalSince(lastRefreshed) > staleThreshold
-    }
-
-    init(
-        notifications: [AppNotification] = [],
-        onRefresh: @escaping () async -> Void = {}
-    ) {
-        self.notifications = notifications
-        self.onRefresh = onRefresh
-    }
+    @Environment(AppState.self) private var appState
 
     var body: some View {
         List {
-            // Stale banner — shown when data is more than 5 minutes old
-            if isStale {
-                HStack(spacing: 8) {
-                    Image(systemName: "arrow.clockwise.circle")
-                        .foregroundStyle(.secondary)
-                    Text("Last refreshed over 5 minutes ago — pull down to refresh")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
-                .padding(.vertical, 4)
-            }
-
-            ForEach(notifications) { notification in
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(notification.title)
-                        .font(.headline)
-                    Text(notification.body)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    Text(formattedDate(notification.sendTime))
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-                .padding(.vertical, 4)
+            ForEach(appState.notifications) { notification in
+                NotificationRow(notification: notification, timeZone: appState.timeZone)
             }
         }
-        .refreshable {
-            await onRefresh()
-            lastRefreshed = .now
-        }
-        .navigationTitle("Notifications")
+        .navigationTitle("Updates")
+        .refreshable { await appState.refreshBundle() }
+        .eventStatusBanners()
         .overlay {
-            if notifications.isEmpty {
-                ContentUnavailableView(
-                    "No Notifications",
-                    systemImage: "bell.slash",
-                    description: Text("Notifications will appear here once sent.")
-                )
+            if appState.notifications.isEmpty {
+                if appState.isLoading {
+                    ProgressView()
+                } else {
+                    ContentUnavailableView(
+                        "No Updates Yet",
+                        systemImage: "bell.slash",
+                        description: Text("Announcements from the organizer will appear here.")
+                    )
+                }
             }
         }
     }
+}
 
-    /// Returns "Today, 3:45 PM" if the notification is from today, otherwise "Monday, 3:45 PM".
-    private func formattedDate(_ iso: String) -> String {
-        let parser = ISO8601DateFormatter()
-        parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+private struct NotificationRow: View {
+    let notification: AppNotification
+    let timeZone: TimeZone
 
-        // Also try without fractional seconds for flexibility
-        let parserNoFrac = ISO8601DateFormatter()
-        parserNoFrac.formatOptions = [.withInternetDateTime]
-
-        guard let date = parser.date(from: iso) ?? parserNoFrac.date(from: iso) else {
-            return iso
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(notification.title)
+                .font(.headline)
+            if !notification.body.isEmpty {
+                Text(notification.body)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            if let sent = notification.sendTime {
+                Text(EventTimeFormat.shortDayTime(sent, in: timeZone))
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
         }
-
-        let fmt = DateFormatter()
-        fmt.locale = .current
-        fmt.timeZone = .current
-        fmt.dateFormat = "h:mm a"
-
-        let timeString = fmt.string(from: date)
-        let dayLabel = Calendar.current.isDateInToday(date) ? "Today" : {
-            let dayFmt = DateFormatter()
-            dayFmt.locale = .current
-            dayFmt.timeZone = .current
-            dayFmt.dateFormat = "EEEE"
-            return dayFmt.string(from: date)
-        }()
-
-        return "\(dayLabel), \(timeString)"
+        .padding(.vertical, 4)
     }
 }
 
 #Preview {
     NavigationStack {
-        NotificationsView(
-            notifications: [
-                AppNotification(id: 1, title: "Gate B is now open",
-                                body: "Head to Gate B for faster entry.",
-                                sendTime: "2026-06-15T17:45:00+00:00", sent: true),
-                AppNotification(id: 2, title: "Main stage starting soon",
-                                body: "The headliner takes the stage in 15 minutes.",
-                                sendTime: "2026-06-15T21:00:00+00:00", sent: true),
-            ]
-        )
+        NotificationsView()
     }
+    .environment(AppState())
 }

@@ -44,6 +44,15 @@
 		49MD000227600A0000000040 /* ModelDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49MD000127600A0000000040 /* ModelDecodingTests.swift */; };
 		49QR000127600A0000000010 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49QR000027600A0000000010 /* QRScannerView.swift */; };
 		49SC000127600A0000000020 /* ScheduleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49SC000027600A0000000020 /* ScheduleView.swift */; };
+		49F200000000000000000001 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49F100000000000000000001 /* Models.swift */; };
+		49F300000000000000000001 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49F100000000000000000001 /* Models.swift */; };
+		49F200000000000000000002 /* DisplayLogic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49F100000000000000000002 /* DisplayLogic.swift */; };
+		49F300000000000000000002 /* DisplayLogic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49F100000000000000000002 /* DisplayLogic.swift */; };
+		49F200000000000000000003 /* FoldableLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49F100000000000000000003 /* FoldableLayout.swift */; };
+		49F300000000000000000003 /* FoldableLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49F100000000000000000003 /* FoldableLayout.swift */; };
+		49F200000000000000000004 /* MapArrangement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49F100000000000000000004 /* MapArrangement.swift */; };
+		49F300000000000000000004 /* MapArrangement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49F100000000000000000004 /* MapArrangement.swift */; };
+		49F200000000000000000005 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49F100000000000000000005 /* AppDelegate.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -106,13 +115,17 @@
 		49SC000027600A0000000020 /* ScheduleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleView.swift; sourceTree = "<group>"; };
 		49F0C00000000000000000A1 /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
 		49F0C00000000000000000A2 /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
+		49F100000000000000000001 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		49F100000000000000000002 /* DisplayLogic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayLogic.swift; sourceTree = "<group>"; };
+		49F100000000000000000003 /* FoldableLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoldableLayout.swift; sourceTree = "<group>"; };
+		49F100000000000000000004 /* MapArrangement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapArrangement.swift; sourceTree = "<group>"; };
+		49F100000000000000000005 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
 		49DD95332FA559F8002F90DE /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				ContentView.swift.bak,
 				Info.plist,
 			);
 			target = 49DD95252FA559F6002F90DE /* AttndAppClip */;
@@ -193,6 +206,11 @@
 			children = (
 				49DD95212FA557CE002F90DE /* Attnd.entitlements */,
 				49DF918827571C4500399457 /* Helpers.swift */,
+				49F100000000000000000001 /* Models.swift */,
+				49F100000000000000000002 /* DisplayLogic.swift */,
+				49F100000000000000000003 /* FoldableLayout.swift */,
+				49F100000000000000000004 /* MapArrangement.swift */,
+				49F100000000000000000005 /* AppDelegate.swift */,
 				49AA000127600A0000000001 /* APIClient.swift */,
 				49AA000327600A0000000002 /* AppState.swift */,
 				49AA000427600A0000000003 /* LaunchScreen.swift */,
@@ -375,6 +393,10 @@
 				49CL000D27600A0000AA000D /* QRScannerView.swift in Sources */,
 				49CL000E27600A0000AA000E /* ScheduleView.swift in Sources */,
 				49CL000F27600A0000AA000F /* ContentView.swift in Sources */,
+				49F300000000000000000001 /* Models.swift in Sources */,
+				49F300000000000000000002 /* DisplayLogic.swift in Sources */,
+				49F300000000000000000003 /* FoldableLayout.swift in Sources */,
+				49F300000000000000000004 /* MapArrangement.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -398,6 +420,11 @@
 				4900991C2755DE8600E5951F /* NotificationsView.swift in Sources */,
 				49AT000227600A0000000050 /* AttestationManager.swift in Sources */,
 				49KC000227600A0000000051 /* KeychainHelper.swift in Sources */,
+				49F200000000000000000001 /* Models.swift in Sources */,
+				49F200000000000000000002 /* DisplayLogic.swift in Sources */,
+				49F200000000000000000003 /* FoldableLayout.swift in Sources */,
+				49F200000000000000000004 /* MapArrangement.swift in Sources */,
+				49F200000000000000000005 /* AppDelegate.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

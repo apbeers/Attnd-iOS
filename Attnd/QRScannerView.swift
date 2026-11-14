@@ -1,26 +1,36 @@
 // QRScannerView.swift
 // Attnd
 //
-// Full-screen QR scanner sheet using DataScannerViewController (VisionKit, iOS 16+).
+// QR scanner sheet using DataScannerViewController (VisionKit).
 // Calls onCode(_ raw: String) the first time a QR code is recognised, then dismisses.
+//
+// Folding, unfolding and rotating resize the camera preview; the scanner is
+// stopped and restarted around size changes, and paused while the scene is not
+// active, so the camera never freezes mid-transition.
 
 import SwiftUI
-import Vision
 import VisionKit
 
 // MARK: - QRScannerSheet
 
 struct QRScannerSheet: View {
     var onCode: (String) -> Void
+
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         NavigationStack {
             Group {
                 if DataScannerViewController.isSupported && DataScannerViewController.isAvailable {
-                    _DataScannerRepresentable { raw in
-                        dismiss()
-                        onCode(raw)
+                    GeometryReader { proxy in
+                        DataScannerRepresentable(
+                            isActive: scenePhase == .active,
+                            containerSize: proxy.size
+                        ) { raw in
+                            dismiss()
+                            onCode(raw)
+                        }
                     }
                     .ignoresSafeArea(edges: .bottom)
                     .overlay(alignment: .bottom) {
@@ -43,8 +53,10 @@ struct QRScannerSheet: View {
             .navigationTitle("Scan QR Code")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") { dismiss() }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button { dismiss() } label: {
+                        Label("Cancel", systemImage: "xmark")
+                    }
                 }
             }
         }
@@ -53,7 +65,11 @@ struct QRScannerSheet: View {
 
 // MARK: - UIViewControllerRepresentable wrapper
 
-private struct _DataScannerRepresentable: UIViewControllerRepresentable {
+private struct DataScannerRepresentable: UIViewControllerRepresentable {
+    /// False while the scene is inactive or backgrounded.
+    var isActive: Bool
+    /// The preview's size; a change (fold, unfold, rotation) restarts scanning.
+    var containerSize: CGSize
     var onCode: (String) -> Void
 
     func makeUIViewController(context: Context) -> DataScannerViewController {
@@ -65,29 +81,90 @@ private struct _DataScannerRepresentable: UIViewControllerRepresentable {
             isHighlightingEnabled: true
         )
         vc.delegate = context.coordinator
-        try? vc.startScanning()
         return vc
     }
 
-    func updateUIViewController(_ uiViewController: DataScannerViewController, context: Context) {}
+    func updateUIViewController(_ scanner: DataScannerViewController, context: Context) {
+        let coordinator = context.coordinator
+        coordinator.onCode = onCode
+        coordinator.update(scanner, isActive: isActive, containerSize: containerSize)
+    }
+
+    static func dismantleUIViewController(_ scanner: DataScannerViewController, coordinator: Coordinator) {
+        coordinator.cancelPendingRestart()
+        scanner.stopScanning()
+    }
 
     func makeCoordinator() -> Coordinator { Coordinator(onCode: onCode) }
 
-    final class Coordinator: NSObject, DataScannerViewControllerDelegate {
+    @MainActor
+    final class Coordinator: NSObject {
         var onCode: (String) -> Void
-        var didFire = false
+        private var didFire = false
+        private var lastSize: CGSize?
+        private var restartTask: Task<Void, Never>?
 
         init(onCode: @escaping (String) -> Void) { self.onCode = onCode }
 
-        func dataScanner(_ dataScanner: DataScannerViewController, didAdd addedItems: [RecognizedItem], allItems: [RecognizedItem]) {
+        func update(_ scanner: DataScannerViewController, isActive: Bool, containerSize: CGSize) {
             guard !didFire else { return }
-            for item in addedItems {
-                if case .barcode(let barcode) = item, let raw = barcode.payloadStringValue {
-                    didFire = true
-                    dataScanner.stopScanning()
-                    onCode(raw)
-                    return
+            guard isActive else {
+                cancelPendingRestart()
+                scanner.stopScanning()
+                return
+            }
+            if let lastSize, lastSize != containerSize {
+                // Size changed: stop now, restart once the transition has settled.
+                scanner.stopScanning()
+                self.lastSize = containerSize
+                scheduleRestart(scanner)
+                return
+            }
+            lastSize = containerSize
+            if restartTask == nil, !scanner.isScanning {
+                try? scanner.startScanning()
+            }
+        }
+
+        func cancelPendingRestart() {
+            restartTask?.cancel()
+            restartTask = nil
+        }
+
+        private func scheduleRestart(_ scanner: DataScannerViewController) {
+            cancelPendingRestart()
+            restartTask = Task { [weak self, weak scanner] in
+                try? await Task.sleep(for: .milliseconds(350))
+                guard !Task.isCancelled, let self, let scanner, !self.didFire else { return }
+                self.restartTask = nil
+                if !scanner.isScanning {
+                    try? scanner.startScanning()
                 }
+            }
+        }
+
+        fileprivate func recognized(_ raw: String, in scanner: DataScannerViewController) {
+            guard !didFire else { return }
+            didFire = true
+            cancelPendingRestart()
+            scanner.stopScanning()
+            onCode(raw)
+        }
+    }
+}
+
+// The delegate protocol is main-actor bound in VisionKit; @preconcurrency keeps
+// this compiling (with a runtime check) should an SDK declare it nonisolated.
+extension DataScannerRepresentable.Coordinator: @preconcurrency DataScannerViewControllerDelegate {
+    func dataScanner(
+        _ dataScanner: DataScannerViewController,
+        didAdd addedItems: [RecognizedItem],
+        allItems: [RecognizedItem]
+    ) {
+        for item in addedItems {
+            if case .barcode(let barcode) = item, let raw = barcode.payloadStringValue {
+                recognized(raw, in: dataScanner)
+                return
             }
         }
     }

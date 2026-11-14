@@ -21,7 +21,9 @@ final class LocationPermissionManager: NSObject, ObservableObject, CLLocationMan
     /// Requests location permission if needed, then resolves with the current coordinate.
     /// Returns nil if the user denies access or an error occurs.
     func requestLocation() async -> CLLocationCoordinate2D? {
-        await withCheckedContinuation { cont in
+        // A second request while one is pending would orphan the first continuation.
+        finish(with: nil)
+        return await withCheckedContinuation { cont in
             continuation = cont
             let status = manager.authorizationStatus
             if status == .notDetermined {
@@ -35,29 +37,36 @@ final class LocationPermissionManager: NSObject, ObservableObject, CLLocationMan
         }
     }
 
+    // Delegate callbacks are nonisolated. Only Sendable values (the status enum,
+    // the coordinate) cross into the main actor; the manager itself is reached
+    // through `self.manager` there instead of capturing the callback's parameter.
+
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        let status = manager.authorizationStatus
         Task { @MainActor in
-            if manager.authorizationStatus == .authorizedWhenInUse ||
-               manager.authorizationStatus == .authorizedAlways {
-                manager.requestLocation()
-            } else if manager.authorizationStatus != .notDetermined {
-                continuation?.resume(returning: nil)
-                continuation = nil
+            if status == .authorizedWhenInUse || status == .authorizedAlways {
+                self.manager.requestLocation()
+            } else if status != .notDetermined {
+                self.finish(with: nil)
             }
         }
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        let coordinate = locations.first?.coordinate
         Task { @MainActor in
-            continuation?.resume(returning: locations.first?.coordinate)
-            continuation = nil
+            self.finish(with: coordinate)
         }
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         Task { @MainActor in
-            continuation?.resume(returning: nil)
-            continuation = nil
+            self.finish(with: nil)
         }
+    }
+
+    private func finish(with coordinate: CLLocationCoordinate2D?) {
+        continuation?.resume(returning: coordinate)
+        continuation = nil
     }
 }

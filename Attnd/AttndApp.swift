@@ -6,7 +6,8 @@ import SwiftUI
 @main
 struct AttndApp: App {
 
-    @State private var appState = AppState()
+    /// Owns AppState and receives APNs callbacks.
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
         // Start attestation in the background immediately so the JWT is ready
@@ -16,41 +17,13 @@ struct AttndApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
-                .environment(appState)
-                // Universal Links: intercept https://attnd.app/join/<code>/ when app is installed
+            AppRootView()
+                .environment(appDelegate.appState)
+                // Universal Links: https://attnd.app/join/<code>/ when the app is installed
                 .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { userActivity in
                     guard let url = userActivity.webpageURL else { return }
-                    Task { await appState.handleDeepLink(url) }
+                    Task { await appDelegate.appState.handleDeepLink(url) }
                 }
-        }
-    }
-}
-
-/// Switches between the launch/join flow and the main event view.
-/// On first appear, attempts to auto-rejoin a previously saved event code.
-private struct RootView: View {
-    @Environment(AppState.self) private var appState
-    @State private var isAutoJoining = true
-
-    var body: some View {
-        Group {
-            if isAutoJoining {
-                ProgressView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if appState.currentEvent != nil {
-                ContentView()
-                    .transition(.opacity)
-            } else {
-                LaunchScreen()
-                    .transition(.opacity)
-            }
-        }
-        .animation(.easeInOut, value: isAutoJoining)
-        .animation(.easeInOut, value: appState.currentEvent?.id)
-        .task {
-            await appState.autoJoin()
-            isAutoJoining = false
         }
     }
 }

@@ -1,150 +1,228 @@
 // ScheduleView.swift
 // Attnd
 //
-// Full event schedule sorted by start_time.
-// Filter menu: hide past items (default on) + filter by location.
-// Tapping a row navigates to that location's detail page.
-// Countdown labels update live via TimelineView (no manual refresh needed).
+// Schedule tab. A NavigationSplitView (list → item detail) on regular width,
+// collapsing to a push stack on compact width. The same list also powers the
+// "schedule" and "now/next" panes beside the map on wide layouts.
+//
+// Display config: `schedule_style` (timeline / by_day / by_location / now_next,
+// grouped by ScheduleGrouping) and `enable_search`. All times are shown in the
+// event's time zone. Countdown labels update live via TimelineView.
 
 import SwiftUI
 
+// MARK: - Tab
+
+struct ScheduleTab: View {
+    @Environment(AppState.self) private var appState
+    @State private var selection: ScheduleItem?
+
+    var body: some View {
+        NavigationSplitView {
+            ScheduleView(selection: $selection)
+                .eventStatusBanners()
+        } detail: {
+            NavigationStack {
+                Group {
+                    if let selection {
+                        // Show the latest copy after a bundle refresh.
+                        ScheduleItemDetailView(item: appState.schedule.first { $0.id == selection.id } ?? selection)
+                    } else {
+                        ContentUnavailableView("Select an Item", systemImage: "calendar")
+                    }
+                }
+                .navigationDestination(for: Location.self) { location in
+                    LocationDetailView(location: location)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - List
+
 struct ScheduleView: View {
-    let items: [ScheduledItem]
-    let locations: [Location]
-    let onRefresh: () async -> Void
+    /// nil uses the display config's `schedule_style`.
+    var style: ScheduleStyle? = nil
+    var title: String = "Schedule"
+    /// Bound in a split view's sidebar. nil when used inside a plain NavigationStack,
+    /// where rows push their own destinations.
+    var selection: Binding<ScheduleItem?>? = nil
 
-    @State private var selectedLocationId: Int? = nil
-    @State private var hideEnded: Bool = true
+    @Environment(AppState.self) private var appState
+    @State private var searchText = ""
+    @State private var selectedLocationId: Int?
+    @State private var showEnded = false
 
-    private static let endedGrace: TimeInterval = 3600
+    private var resolvedStyle: ScheduleStyle { style ?? appState.display.scheduleStyle }
 
-    private func filteredItems(now: Date) -> [ScheduledItem] {
-        var result = items
-        if hideEnded {
-            let cutoff = now.addingTimeInterval(-Self.endedGrace)
-            result = result.filter { parsedDate($0.startTime) >= cutoff }
-        }
-        if let id = selectedLocationId {
-            result = result.filter { $0.locationId == id }
-        }
-        return result
+    /// Ended items are hidden by default, except for archived events (where everything has ended).
+    private var hidesEnded: Bool {
+        resolvedStyle != .nowNext && !showEnded && appState.currentEvent?.isArchived != true
     }
 
-    private var filterLabel: String {
-        guard let id = selectedLocationId,
-              let loc = locations.first(where: { $0.id == id }) else { return "All Locations" }
-        return loc.name
+    private func visibleItems(now: Date) -> [ScheduleItem] {
+        appState.schedule.filter { item in
+            if hidesEnded, ScheduleTiming.hasEnded(item, at: now) { return false }
+            if let id = selectedLocationId, item.locationId != id { return false }
+            return SearchMatching.matches(item, query: searchText)
+        }
     }
 
     var body: some View {
-        // TimelineView fires every 30 s — all countdown labels update automatically.
         TimelineView(.periodic(from: .now, by: 30)) { context in
             let now = context.date
-            let visible = filteredItems(now: now)
-
-            List {
-                ForEach(visible) { item in
-                    let matchedLocation = locations.first(where: { $0.id == item.locationId })
-                    Group {
-                        if let loc = matchedLocation {
-                            NavigationLink(value: loc) {
-                                ScheduleRowView(item: item, showLocation: selectedLocationId == nil, now: now)
-                            }
-                        } else {
-                            ScheduleRowView(item: item, showLocation: selectedLocationId == nil, now: now)
-                        }
-                    }
+            let sections = ScheduleGrouping.sections(
+                for: visibleItems(now: now),
+                style: resolvedStyle,
+                now: now,
+                timeZone: appState.timeZone,
+                locations: appState.locations
+            )
+            list(sections: sections, now: now)
+                .overlay {
+                    if sections.isEmpty { emptyState }
                 }
-            }
-            .refreshable { await onRefresh() }
-            .navigationTitle("Schedule")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button {
-                            hideEnded.toggle()
-                        } label: {
-                            Label(
-                                hideEnded ? "Show All Items" : "Hide Ended Items",
-                                systemImage: hideEnded ? "eye" : "eye.slash"
-                            )
-                        }
-
-                        Divider()
-
-                        Button { selectedLocationId = nil } label: {
-                            Label("All Locations", systemImage: selectedLocationId == nil ? "checkmark" : "")
-                        }
-
-                        if !locations.isEmpty {
-                            Divider()
-                            ForEach(locations) { location in
-                                Button { selectedLocationId = location.id } label: {
-                                    Label(
-                                        location.name,
-                                        systemImage: selectedLocationId == location.id ? "checkmark" : ""
-                                    )
-                                }
-                            }
-                        }
-                    } label: {
-                        Label(filterLabel, systemImage: "line.3.horizontal.decrease.circle")
-                            .labelStyle(.iconOnly)
-                            .symbolVariant(selectedLocationId != nil || !hideEnded ? .fill : .none)
-                    }
-                }
-            }
-            .overlay {
-                if visible.isEmpty {
-                    ContentUnavailableView(
-                        hideEnded ? "All Done!" : "No Schedule",
-                        systemImage: hideEnded ? "checkmark.circle" : "calendar",
-                        description: Text(emptyMessage)
-                    )
-                }
+        }
+        .navigationTitle(title)
+        .modifier(SearchableIf(enabled: appState.display.enableSearch, text: $searchText, prompt: "Search schedule"))
+        .refreshable { await appState.refreshBundle() }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                filterMenu
             }
         }
     }
 
-    private var emptyMessage: String {
-        if hideEnded && selectedLocationId != nil {
-            return "No upcoming items at this location. Tap the filter to show all."
-        } else if hideEnded {
-            return "No upcoming items. Tap the filter to see past items."
-        } else if selectedLocationId != nil {
-            return "No items scheduled at this location."
+    // MARK: List
+
+    @ViewBuilder
+    private func list(sections: [ScheduleSection], now: Date) -> some View {
+        if let selection {
+            List(selection: selection) {
+                listContent(sections: sections, now: now)
+            }
         } else {
-            return "Schedule items will appear here once loaded."
+            List {
+                listContent(sections: sections, now: now)
+            }
+            .navigationDestination(for: ScheduleItem.self) { item in
+                ScheduleItemDetailView(item: item)
+            }
+            .navigationDestination(for: Location.self) { location in
+                LocationDetailView(location: location)
+            }
         }
     }
 
-    private func parsedDate(_ iso: String) -> Date {
-        let p1 = ISO8601DateFormatter()
-        p1.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let p2 = ISO8601DateFormatter()
-        p2.formatOptions = [.withInternetDateTime]
-        return p1.date(from: iso) ?? p2.date(from: iso) ?? .distantPast
+    @ViewBuilder
+    private func listContent(sections: [ScheduleSection], now: Date) -> some View {
+        ForEach(sections) { section in
+            Section {
+                ForEach(section.items) { item in
+                    NavigationLink(value: item) {
+                        ScheduleRowView(
+                            item: item,
+                            showLocation: selectedLocationId == nil && resolvedStyle != .byLocation,
+                            now: now,
+                            timeZone: appState.timeZone
+                        )
+                    }
+                }
+            } header: {
+                if !section.title.isEmpty {
+                    Text(section.title)
+                }
+            }
+        }
+        if !sections.isEmpty, let note = EventTimeFormat.zoneNote(for: appState.timeZone, at: now) {
+            Section {
+            } footer: {
+                Text(note)
+            }
+        }
+    }
+
+    // MARK: Filter
+
+    private var filterMenu: some View {
+        Menu {
+            if resolvedStyle != .nowNext {
+                Toggle(isOn: $showEnded) {
+                    Label("Show Ended Items", systemImage: "clock.arrow.circlepath")
+                }
+            }
+
+            Picker(selection: $selectedLocationId) {
+                Text("All Locations").tag(Int?.none)
+                ForEach(appState.locations) { location in
+                    Text(location.name).tag(Int?.some(location.id))
+                }
+            } label: {
+                Label("Location", systemImage: "mappin.and.ellipse")
+            }
+            .pickerStyle(.inline)
+        } label: {
+            // Icon and title: bars show the icon, vertical bars and accessibility use the title.
+            Label("Filter", systemImage: "line.3.horizontal.decrease.circle")
+                .symbolVariant(selectedLocationId != nil || showEnded ? .fill : .none)
+        }
+    }
+
+    private var emptyState: some View {
+        Group {
+            if !searchText.isEmpty {
+                ContentUnavailableView.search(text: searchText)
+            } else if appState.isLoading {
+                ProgressView()
+            } else if hidesEnded, !appState.schedule.isEmpty {
+                ContentUnavailableView(
+                    "All Done!",
+                    systemImage: "checkmark.circle",
+                    description: Text("No upcoming items. Use the filter to show ended ones.")
+                )
+            } else if selectedLocationId != nil {
+                ContentUnavailableView(
+                    "Nothing Here",
+                    systemImage: "calendar",
+                    description: Text("No items are scheduled at this location.")
+                )
+            } else if resolvedStyle == .nowNext, !appState.schedule.isEmpty {
+                ContentUnavailableView(
+                    "Nothing Coming Up",
+                    systemImage: "checkmark.circle",
+                    description: Text("Everything on the schedule has ended.")
+                )
+            } else {
+                ContentUnavailableView(
+                    "No Schedule",
+                    systemImage: "calendar",
+                    description: Text("Schedule items will appear here once they're published.")
+                )
+            }
+        }
     }
 }
 
 // MARK: - Row
 
 private struct ScheduleRowView: View {
-    let item: ScheduledItem
+    let item: ScheduleItem
     let showLocation: Bool
     let now: Date
+    let timeZone: TimeZone
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline) {
-                Text(formattedTime(item.startTime))
+                Text(EventTimeFormat.range(start: item.startTime, end: item.endTime, in: timeZone, now: now))
                     .font(.caption)
                     .fontWeight(.semibold)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
                 Spacer()
                 if showLocation {
-                    Text(item.locationName)
+                    Text(item.locationName ?? ScheduleGrouping.generalTitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -153,8 +231,12 @@ private struct ScheduleRowView: View {
             HStack(alignment: .firstTextBaseline) {
                 Text(item.name)
                     .font(.headline)
-                if let countdown = item.startsInText(relativeTo: now) {
-                    Spacer()
+                Spacer()
+                if ScheduleTiming.isHappening(item, at: now) {
+                    Text("Now")
+                        .font(.caption.bold())
+                        .foregroundStyle(.tint)
+                } else if let countdown = item.startsInText(relativeTo: now) {
                     Text(countdown)
                         .font(.caption)
                         .fontWeight(.bold)
@@ -167,44 +249,83 @@ private struct ScheduleRowView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
+            if !item.tags.isEmpty {
+                Text(item.tags.joined(separator: " · "))
+                    .font(.caption)
+                    .foregroundStyle(.tint)
+            }
         }
         .padding(.vertical, 4)
     }
+}
 
-    private func formattedTime(_ iso: String) -> String {
-        let p1 = ISO8601DateFormatter()
-        p1.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let p2 = ISO8601DateFormatter()
-        p2.formatOptions = [.withInternetDateTime]
-        guard let date = p1.date(from: iso) ?? p2.date(from: iso) else { return iso }
-        let fmt = DateFormatter()
-        fmt.locale = .current
-        fmt.timeZone = .current
-        fmt.dateFormat = Calendar.current.isDateInToday(date) ? "h:mm a" : "EEE h:mm a"
-        return fmt.string(from: date)
+// MARK: - Item detail
+
+struct ScheduleItemDetailView: View {
+    let item: ScheduleItem
+
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            content(now: context.date)
+        }
+        .navigationTitle(item.name)
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func content(now: Date) -> some View {
+        List {
+            Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(item.name).font(.title2.bold())
+                    Text(EventTimeFormat.range(start: item.startTime, end: item.endTime, in: appState.timeZone, now: now))
+                        .font(.headline)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                    if ScheduleTiming.isHappening(item, at: now) {
+                        Label("Happening now", systemImage: "dot.radiowaves.left.and.right")
+                            .font(.subheadline.bold())
+                            .foregroundStyle(.tint)
+                    } else if let countdown = item.startsInText(relativeTo: now) {
+                        Text(countdown)
+                            .font(.subheadline.bold())
+                            .foregroundStyle(.tint)
+                    }
+                    if !item.tags.isEmpty {
+                        Text(item.tags.joined(separator: " · "))
+                            .font(.subheadline)
+                            .foregroundStyle(.tint)
+                    }
+                }
+                .padding(.vertical, 4)
+            } footer: {
+                if let note = EventTimeFormat.zoneNote(for: appState.timeZone, at: now) {
+                    Text(note)
+                }
+            }
+
+            if !item.description.isEmpty {
+                Section("About") {
+                    Text(item.description)
+                }
+            }
+
+            Section("Location") {
+                if let location = appState.location(id: item.locationId) {
+                    NavigationLink(value: location) {
+                        Label(location.name, systemImage: "mappin.and.ellipse")
+                    }
+                } else {
+                    Label(item.locationName ?? ScheduleGrouping.generalTitle, systemImage: "mappin.slash")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
     }
 }
 
-// MARK: - Preview
-
 #Preview {
-    NavigationStack {
-        ScheduleView(
-            items: [
-                ScheduledItem(id: 1, name: "Opening Act", description: "Kick off the fair with live music.",
-                              startTime: "2026-07-04T18:00:00+00:00", locationId: 1, locationName: "Main Stage"),
-                ScheduledItem(id: 2, name: "Food Contest", description: "Who can eat the most?",
-                              startTime: "2026-07-04T19:00:00+00:00", locationId: 2, locationName: "Food Court"),
-                ScheduledItem(id: 3, name: "Headliner", description: "Main performance of the evening.",
-                              startTime: "2026-07-04T20:30:00+00:00", locationId: 1, locationName: "Main Stage"),
-            ],
-            locations: [
-                Location(id: 1, name: "Main Stage", snippet: "", description: "",
-                         website: nil, imageUrl: nil, latitude: 0, longitude: 0, address: "", scheduledItems: []),
-                Location(id: 2, name: "Food Court", snippet: "", description: "",
-                         website: nil, imageUrl: nil, latitude: 0, longitude: 0, address: "", scheduledItems: []),
-            ],
-            onRefresh: {}
-        )
-    }
+    ScheduleTab()
+        .environment(AppState())
 }

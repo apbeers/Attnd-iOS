@@ -1,7 +1,10 @@
 // Release.xcconfig
-// Release / CI build settings.
-// ATTND_API_KEY must be injected by CI before building.
-// In GitHub Actions: pass -xcconfig Config/Release.xcconfig
-// and set ATTND_API_KEY as a repository secret.
+// Base build settings for the Release configuration of the Attnd and AttndAppClip targets.
+//
+// Production builds authenticate with App Attest, so ATTND_API_KEY is empty by default.
+// CI can still inject a key (e.g. for test runs) through Config/Secrets.xcconfig
+// or on the command line: xcodebuild ... ATTND_API_KEY=$ATTND_API_KEY
 
-ATTND_API_KEY = $(ATTND_API_KEY)
+ATTND_API_KEY =
+
+#include? "Secrets.xcconfig"

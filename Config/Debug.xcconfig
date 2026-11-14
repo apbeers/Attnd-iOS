@@ -1,10 +1,11 @@
 // Debug.xcconfig
-// Local development overrides. Do NOT commit this file with a real API key.
-// Copy this file to Config/Debug.xcconfig (already gitignored) and fill in your key.
+// Base build settings for the Debug configuration of the Attnd and AttndAppClip targets.
 //
-// To set the key, either:
-//   1. Add ATTND_API_KEY = your_key_here in this file
-//   2. Set it as an environment variable before opening Xcode: export ATTND_API_KEY=...
-//   3. In CI: add ATTND_API_KEY to your secrets and inject via xcodebuild -xcconfig
+// ATTND_API_KEY is the static API key used by simulators, CI and dev builds where
+// App Attest is unavailable. It is empty by default and must NEVER be committed.
+// Put your key in Config/Secrets.xcconfig (gitignored), see Secrets.xcconfig.example,
+// or pass it on the command line: xcodebuild ... ATTND_API_KEY=your_key
 
-ATTND_API_KEY = REPLACE_ME
+ATTND_API_KEY =
+
+#include? "Secrets.xcconfig"

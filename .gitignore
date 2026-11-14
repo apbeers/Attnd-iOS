@@ -6,3 +6,6 @@ xcuserdata/
 
 # Temp files
 *.bak
+
+# Local secrets (static API key for simulator / CI builds)
+Config/Secrets.xcconfig

@@ -104,6 +104,8 @@
 		49MD000127600A0000000040 /* ModelDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDecodingTests.swift; sourceTree = "<group>"; };
 		49QR000027600A0000000010 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
 		49SC000027600A0000000020 /* ScheduleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleView.swift; sourceTree = "<group>"; };
+		49F0C00000000000000000A1 /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
+		49F0C00000000000000000A2 /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -161,9 +163,19 @@
 			children = (
 				49E7C768262159B00073A60B /* Attnd */,
 				49CC000A27800000A000000A /* AttndTests */,
+				49F0C00000000000000000A3 /* Config */,
 				49DD95272FA559F6002F90DE /* AttndAppClip */,
 				49E7C767262159B00073A60B /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		49F0C00000000000000000A3 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				49F0C00000000000000000A1 /* Debug.xcconfig */,
+				49F0C00000000000000000A2 /* Release.xcconfig */,
+			);
+			path = Config;
 			sourceTree = "<group>";
 		};
 		49E7C767262159B00073A60B /* Products */ = {
@@ -451,6 +463,7 @@
 		};
 		49DD95352FA559F8002F90DE /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 49F0C00000000000000000A1 /* Debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -493,6 +506,7 @@
 		};
 		49DD95362FA559F8002F90DE /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 49F0C00000000000000000A2 /* Release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -660,10 +674,10 @@
 		};
 		49E7C776262159B10073A60B /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 49F0C00000000000000000A1 /* Debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				ATTND_API_KEY = "$(ATTND_API_KEY)";
 				CODE_SIGN_ENTITLEMENTS = Attnd/Attnd.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 44;
@@ -692,10 +706,10 @@
 		};
 		49E7C777262159B10073A60B /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 49F0C00000000000000000A2 /* Release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				ATTND_API_KEY = "$(ATTND_API_KEY)";
 				CODE_SIGN_ENTITLEMENTS = Attnd/Attnd.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 44;

@@ -4,7 +4,10 @@
 # Output saved to scripts/last_test_run.txt
 cd "$(dirname "$0")/.."
 LOG="scripts/last_test_run.txt"
-API_KEY="$(grep -A1 ATTND_API_KEY Attnd/Info.plist | tail -1 | tr -d '\t <>/string')"
+# The static dev key comes from Config/Secrets.xcconfig (gitignored, picked up by the
+# build automatically). Exporting ATTND_API_KEY overrides it for this run.
+KEY_ARGS=()
+[ -n "$ATTND_API_KEY" ] && KEY_ARGS=(ATTND_API_KEY="$ATTND_API_KEY")
 
 echo "Running iOS tests at $(date)" | tee "$LOG"
 echo "======================================" | tee -a "$LOG"
@@ -14,7 +17,7 @@ xcodebuild test \
   -project Attnd.xcodeproj \
   -scheme Attnd \
   -destination 'platform=iOS Simulator,name=iPhone 16' \
-  ATTND_API_KEY="$API_KEY" \
+  "${KEY_ARGS[@]}" \
   -resultBundlePath scripts/TestResults.xcresult \
   2>&1 | tee -a "$LOG"
 

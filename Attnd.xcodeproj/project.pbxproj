@@ -53,6 +53,7 @@
 		49F200000000000000000004 /* MapArrangement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49F100000000000000000004 /* MapArrangement.swift */; };
 		49F300000000000000000004 /* MapArrangement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49F100000000000000000004 /* MapArrangement.swift */; };
 		49F200000000000000000005 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49F100000000000000000005 /* AppDelegate.swift */; };
+		49F2000000000000000000A1 /* DisplayLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49F1000000000000000000A1 /* DisplayLogicTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -120,6 +121,7 @@
 		49F100000000000000000003 /* FoldableLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoldableLayout.swift; sourceTree = "<group>"; };
 		49F100000000000000000004 /* MapArrangement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapArrangement.swift; sourceTree = "<group>"; };
 		49F100000000000000000005 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		49F1000000000000000000A1 /* DisplayLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayLogicTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -166,6 +168,7 @@
 			children = (
 				49BL000027600A0000000060 /* BusinessLogicTests.swift */,
 				49CC000B27800000A000000B /* APIClientIntegrationTests.swift */,
+				49F1000000000000000000A1 /* DisplayLogicTests.swift */,
 				49MD000127600A0000000040 /* ModelDecodingTests.swift */,
 			);
 			path = AttndTests;
@@ -370,6 +373,7 @@
 			files = (
 				49BL000127600A0000000061 /* BusinessLogicTests.swift in Sources */,
 				49CC000C27800000A000000C /* APIClientIntegrationTests.swift in Sources */,
+				49F2000000000000000000A1 /* DisplayLogicTests.swift in Sources */,
 				49MD000227600A0000000040 /* ModelDecodingTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -123,7 +123,7 @@ This object holds the organizer's layout choices, already resolved by the server
 | `show_location_images` | bool | Show location images in lists and cards. |
 | `enable_search` | bool | Show a search field on the Locations and Schedule tabs. |
 | `group_by_category` | bool | Show category filter chips on Locations and the Map. |
-| `secondary_pane` | `locations` \| `schedule` \| `now_next` \| `none` | On wide layouts (an unfolded iPhone Duo, a tablet, a foldable), what sits beside the map. |
+| `secondary_pane` | `locations` \| `schedule` \| `now_next` \| `none` | On an unfolded foldable (iPhone Duo inner display, Android foldable inner display), what sits beside the map. |
 | `accent_color` | `#RRGGBB` \| null | The app's tint colour for this event. `null` means the default brand colour. |
 | `logo_url` | URL \| null | Shown in the event header. |
 | `preset`, `resolved_preset`, `reason`, `stats`, `schema_version` | — | Informational only. Clients may ignore them. |

@@ -1,226 +1,153 @@
 // BusinessLogicTests.swift
 // AttndTests
 //
-// Unit tests for business logic that doesn't require a network connection:
-//   - ScheduledItem.startsInText(relativeTo:)
-//   - AppState.eventCode(from:)
-//   - URL encoding for queries containing special characters like &
+// Network-free tests for small helpers:
+//   - ScheduleItem.startsInText(relativeTo:)
+//   - DeepLink parsing (Universal Links and scanned QR codes)
+//   - query-value encoding for names containing & = +
+//   - PushPayload parsing
+//   - hex colours, ISO 8601 parsing, event-day detection
 
 import XCTest
 @testable import Attnd
 
 final class BusinessLogicTests: XCTestCase {
 
-    // MARK: - Helpers
-
-    /// Fixed anchor date used across all startsInText tests.
-    /// Using a fixed point eliminates timing sensitivity — both the item's
-    /// startTime and the `relativeTo` argument are derived from the same anchor.
+    /// Fixed anchor so both the item's start and `now` derive from the same point.
     private let anchor = Date(timeIntervalSinceReferenceDate: 0) // 2001-01-01 00:00:00 UTC
 
-    private let fmt: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime]
-        return f
-    }()
-
-    /// Build a ScheduledItem whose startTime is `seconds` after `anchor`.
-    private func item(secondsFromAnchor seconds: TimeInterval) -> ScheduledItem {
-        ScheduledItem(
-            id: 1,
-            name: "Test",
-            description: "",
-            startTime: fmt.string(from: anchor.addingTimeInterval(seconds)),
-            locationId: 1,
-            locationName: "Stage"
-        )
+    private func item(secondsFromAnchor seconds: TimeInterval) -> ScheduleItem {
+        ScheduleItem(id: 1, name: "Test", startTime: anchor.addingTimeInterval(seconds))
     }
 
-    private func item(startTime iso: String) -> ScheduledItem {
-        ScheduledItem(id: 1, name: "Test", description: "", startTime: iso, locationId: 1, locationName: "Stage")
-    }
-
-    // MARK: - startsInText: future items
+    // MARK: - startsInText
 
     func testStartsInText_HoursAndMinutes() {
-        let result = item(secondsFromAnchor: (2 * 3600) + (30 * 60)).startsInText(relativeTo: anchor)
-        XCTAssertEqual(result, "Starts in 2h 30m")
+        XCTAssertEqual(item(secondsFromAnchor: 2 * 3600 + 30 * 60).startsInText(relativeTo: anchor), "Starts in 2h 30m")
     }
 
-    func testStartsInText_ExactlyOneHour() {
-        let result = item(secondsFromAnchor: 3600).startsInText(relativeTo: anchor)
-        XCTAssertEqual(result, "Starts in 1h")
-    }
-
-    func testStartsInText_ExactlyTwoHours() {
-        let result = item(secondsFromAnchor: 7200).startsInText(relativeTo: anchor)
-        XCTAssertEqual(result, "Starts in 2h")
+    func testStartsInText_ExactHours() {
+        XCTAssertEqual(item(secondsFromAnchor: 3600).startsInText(relativeTo: anchor), "Starts in 1h")
+        XCTAssertEqual(item(secondsFromAnchor: 7200).startsInText(relativeTo: anchor), "Starts in 2h")
     }
 
     func testStartsInText_MinutesOnly() {
-        let result = item(secondsFromAnchor: 45 * 60).startsInText(relativeTo: anchor)
-        XCTAssertEqual(result, "Starts in 45m")
+        XCTAssertEqual(item(secondsFromAnchor: 45 * 60).startsInText(relativeTo: anchor), "Starts in 45m")
+        XCTAssertEqual(item(secondsFromAnchor: 90).startsInText(relativeTo: anchor), "Starts in 1m")
     }
 
-    func testStartsInText_OneMinute() {
-        let result = item(secondsFromAnchor: 90).startsInText(relativeTo: anchor) // 1m 30s → 1m
-        XCTAssertEqual(result, "Starts in 1m")
+    func testStartsInText_UnderAMinute_IsStartingNow() {
+        XCTAssertEqual(item(secondsFromAnchor: 30).startsInText(relativeTo: anchor), "Starting now")
     }
 
-    func testStartsInText_LessThanOneMinute_ReturnsStartingNow() {
-        let result = item(secondsFromAnchor: 30).startsInText(relativeTo: anchor)
-        XCTAssertEqual(result, "Starting now")
+    func testStartsInText_StartedOrPast_IsNil() {
+        XCTAssertNil(item(secondsFromAnchor: 0).startsInText(relativeTo: anchor))
+        XCTAssertNil(item(secondsFromAnchor: -60).startsInText(relativeTo: anchor))
+        XCTAssertNil(item(secondsFromAnchor: -86400).startsInText(relativeTo: anchor))
     }
 
-    func testStartsInText_ExactlyZeroSeconds_ReturnsNil() {
-        // anchor == startTime → seconds == 0 → guard seconds > 0 fails → nil
-        let result = item(secondsFromAnchor: 0).startsInText(relativeTo: anchor)
-        XCTAssertNil(result)
+    func testStartsInText_NoStartTime_IsNil() {
+        XCTAssertNil(ScheduleItem(id: 1, name: "TBA").startsInText(relativeTo: anchor))
     }
 
-    // MARK: - startsInText: past items
+    // MARK: - ISO 8601
 
-    func testStartsInText_OneMinutePast_ReturnsNil() {
-        let result = item(secondsFromAnchor: -60).startsInText(relativeTo: anchor)
-        XCTAssertNil(result)
+    func testISODate_Variants() {
+        let base = ISODate.parse("2026-07-04T12:00:00Z")
+        XCTAssertNotNil(base)
+        XCTAssertEqual(ISODate.parse("2026-07-04T12:00:00+00:00"), base)
+        XCTAssertEqual(ISODate.parse("2026-07-04T07:00:00-05:00"), base)
+        XCTAssertEqual(ISODate.parse("2026-07-04T12:00:00.000Z"), base)
+        XCTAssertEqual(ISODate.parse("2026-07-04T12:00:00.000000+00:00"), base)
+        XCTAssertNil(ISODate.parse("not-a-date"))
+        XCTAssertNil(ISODate.parse(""))
     }
 
-    func testStartsInText_OneDayPast_ReturnsNil() {
-        let result = item(secondsFromAnchor: -86400).startsInText(relativeTo: anchor)
-        XCTAssertNil(result)
+    // MARK: - Deep links
+
+    func testDeepLink_JoinURLs() {
+        XCTAssertEqual(DeepLink.eventCode(from: URL(string: "https://attnd.app/join/FWFM2026")!), "FWFM2026")
+        XCTAssertEqual(DeepLink.eventCode(from: URL(string: "https://attnd.app/join/FWFM2026/")!), "FWFM2026")
+        XCTAssertEqual(DeepLink.eventCode(from: URL(string: "https://attnd.app/join/abc123")!), "abc123")
+        XCTAssertEqual(DeepLink.eventCode(from: URL(string: "https://example.com/join/MYCODE")!), "MYCODE")
     }
 
-    // MARK: - startsInText: invalid ISO strings
-
-    func testStartsInText_InvalidISO_ReturnsNil() {
-        let bad = item(startTime: "not-a-date")
-        XCTAssertNil(bad.startsInText(relativeTo: .now))
+    func testDeepLink_NonJoinURLs_AreNil() {
+        XCTAssertNil(DeepLink.eventCode(from: URL(string: "https://attnd.app/events/FWFM2026")!))
+        XCTAssertNil(DeepLink.eventCode(from: URL(string: "https://attnd.app/")!))
+        XCTAssertNil(DeepLink.eventCode(from: URL(string: "https://attnd.app/join/")!))
+        XCTAssertNil(DeepLink.eventCode(from: URL(string: "https://attnd.app/join")!))
     }
 
-    func testStartsInText_EmptyString_ReturnsNil() {
-        let bad = item(startTime: "")
-        XCTAssertNil(bad.startsInText(relativeTo: .now))
+    func testDeepLink_ScannedValues() {
+        XCTAssertEqual(DeepLink.eventCode(fromScanned: "https://attnd.app/join/FWFM2026/"), "FWFM2026")
+        XCTAssertEqual(DeepLink.eventCode(fromScanned: "  FWFM2026 \n"), "FWFM2026")
+        XCTAssertNil(DeepLink.eventCode(fromScanned: "https://example.com/menu"))
+        XCTAssertNil(DeepLink.eventCode(fromScanned: "   "))
     }
 
-    // MARK: - startsInText: ISO 8601 format variants
+    // MARK: - Query encoding
 
-    func testStartsInText_FractionalSeconds() {
-        // The formatter should handle fractional seconds (p1 path)
-        let fmtFrac = ISO8601DateFormatter()
-        fmtFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let iso = fmtFrac.string(from: anchor.addingTimeInterval(3600))
-        let result = item(startTime: iso).startsInText(relativeTo: anchor)
-        XCTAssertEqual(result, "Starts in 1h")
+    func testQueryEncoding_SpecialCharacters() {
+        // Regression: "Austin Tech & Innovation Summit" was truncated at the unencoded &.
+        let encoded = APIClient.encodeQueryValue("Austin Tech & Innovation Summit")
+        XCTAssertTrue(encoded.contains("%26"))
+        XCTAssertFalse(encoded.contains("&"))
+        XCTAssertTrue(APIClient.encodeQueryValue("A+B").contains("%2B"))
+        XCTAssertTrue(APIClient.encodeQueryValue("a=b").contains("%3D"))
+        XCTAssertEqual(APIClient.encodeQueryValue("FWFM2026"), "FWFM2026")
     }
 
-    func testStartsInText_TimezoneOffset() {
-        // ISO string with explicit offset — 2099-12-31T12:00:00+05:30 is far in the future
-        // relative to any sane anchor, so result must be non-nil and start with "Starts in"
-        let result = item(startTime: "2099-12-31T12:00:00+05:30").startsInText(relativeTo: anchor)
-        XCTAssertNotNil(result)
-        XCTAssertTrue(result!.hasPrefix("Starts in"))
+    // MARK: - Push payloads
+
+    func testPushPayload_Notification() {
+        let p = PushPayload(userInfo: ["aps": ["alert": ["title": "Hi"]], "type": "notification",
+                                       "event_id": 12, "notification_id": 99])
+        XCTAssertEqual(p.kind, .notification)
+        XCTAssertEqual(p.eventId, 12)
+        XCTAssertEqual(p.notificationId, 99)
     }
 
-    // MARK: - startsInText: custom `now` reference
-
-    func testStartsInText_CustomNow_Future() {
-        let anchor = ISO8601DateFormatter()
-        anchor.formatOptions = [.withInternetDateTime]
-        let fixedNow = anchor.date(from: "2026-07-04T12:00:00Z")!
-        let twoHoursLater = anchor.date(from: "2026-07-04T14:00:00Z")!
-
-        let fmt = ISO8601DateFormatter()
-        fmt.formatOptions = [.withInternetDateTime]
-        let it = item(startTime: fmt.string(from: twoHoursLater))
-        XCTAssertEqual(it.startsInText(relativeTo: fixedNow), "Starts in 2h")
+    func testPushPayload_ContentUpdated_StringNumbers() {
+        let p = PushPayload(userInfo: ["type": "content_updated", "event_id": "12", "content_version": "16"])
+        XCTAssertEqual(p.kind, .contentUpdated)
+        XCTAssertEqual(p.eventId, 12)
+        XCTAssertEqual(p.contentVersion, 16)
     }
 
-    func testStartsInText_CustomNow_Past() {
-        let anchor = ISO8601DateFormatter()
-        anchor.formatOptions = [.withInternetDateTime]
-        let fixedNow = anchor.date(from: "2026-07-04T12:00:00Z")!
-        let oneHourEarlier = anchor.date(from: "2026-07-04T11:00:00Z")!
-
-        let fmt = ISO8601DateFormatter()
-        fmt.formatOptions = [.withInternetDateTime]
-        let it = item(startTime: fmt.string(from: oneHourEarlier))
-        XCTAssertNil(it.startsInText(relativeTo: fixedNow))
+    func testPushPayload_Unknown() {
+        let p = PushPayload(userInfo: ["type": "promo"])
+        XCTAssertEqual(p.kind, .other("promo"))
+        XCTAssertNil(p.eventId)
+        XCTAssertNil(PushPayload(userInfo: [:]).kind)
     }
 
-    // MARK: - AppState.eventCode(from:)
+    // MARK: - Hex colours
 
-    private let state = AppState()
-
-    func testEventCode_ValidJoinURL() {
-        let url = URL(string: "https://attnd.app/join/FWFM2026")!
-        XCTAssertEqual(state.eventCode(from: url), "FWFM2026")
+    func testHexColor() {
+        let c = HexColor.components("#FF8000")
+        XCTAssertEqual(c?.red ?? -1, 1, accuracy: 0.001)
+        XCTAssertEqual(c?.green ?? -1, 128.0 / 255, accuracy: 0.001)
+        XCTAssertEqual(c?.blue ?? -1, 0, accuracy: 0.001)
+        XCTAssertNotNil(HexColor.components("00ff00"))
+        XCTAssertNil(HexColor.components(nil))
+        XCTAssertNil(HexColor.components("#FFF"))
+        XCTAssertNil(HexColor.components("#GGGGGG"))
     }
 
-    func testEventCode_ValidJoinURL_TrailingSlash() {
-        let url = URL(string: "https://attnd.app/join/FWFM2026/")!
-        XCTAssertEqual(state.eventCode(from: url), "FWFM2026")
-    }
+    // MARK: - Event days
 
-    func testEventCode_LowercaseCode() {
-        let url = URL(string: "https://attnd.app/join/abc123")!
-        XCTAssertEqual(state.eventCode(from: url), "abc123")
-    }
-
-    func testEventCode_WrongPath_ReturnsNil() {
-        let url = URL(string: "https://attnd.app/events/FWFM2026")!
-        XCTAssertNil(state.eventCode(from: url))
-    }
-
-    func testEventCode_RootPath_ReturnsNil() {
-        let url = URL(string: "https://attnd.app/")!
-        XCTAssertNil(state.eventCode(from: url))
-    }
-
-    func testEventCode_JoinWithNoCode_ReturnsNil() {
-        let url = URL(string: "https://attnd.app/join/")!
-        // pathComponents: ["/", "join", ""] — parts[2] is empty → nil
-        XCTAssertNil(state.eventCode(from: url))
-    }
-
-    func testEventCode_JoinOnly_ReturnsNil() {
-        let url = URL(string: "https://attnd.app/join")!
-        // pathComponents: ["/", "join"] — count < 3 → nil
-        XCTAssertNil(state.eventCode(from: url))
-    }
-
-    func testEventCode_DifferentHost_StillParses() {
-        // The parser only looks at path, not host — deep links from any host work
-        let url = URL(string: "https://example.com/join/MYCODE")!
-        XCTAssertEqual(state.eventCode(from: url), "MYCODE")
-    }
-
-    // MARK: - URL encoding for & in query strings
-
-    func testURLEncoding_AmpersandInName() {
-        // Verify that & in event names gets percent-encoded so it doesn't break query params.
-        // This is a regression test for the bug where "Austin Tech & Innovation Summit" was
-        // silently truncated to "Austin Tech " by the API because & was left unencoded.
-        let name = "Austin Tech & Innovation Summit"
-        var set = CharacterSet.urlQueryAllowed
-        set.remove(charactersIn: "&=+")
-        let encoded = name.addingPercentEncoding(withAllowedCharacters: set)!
-        XCTAssertTrue(encoded.contains("%26"), "& should be percent-encoded to %26")
-        XCTAssertFalse(encoded.contains("&"), "Raw & should not appear in the encoded string")
-    }
-
-    func testURLEncoding_PlusSign() {
-        let name = "A+B Event"
-        var set = CharacterSet.urlQueryAllowed
-        set.remove(charactersIn: "&=+")
-        let encoded = name.addingPercentEncoding(withAllowedCharacters: set)!
-        XCTAssertTrue(encoded.contains("%2B"), "+ should be encoded to %2B")
-    }
-
-    func testURLEncoding_NormalEventCode_Unchanged() {
-        let code = "FWFM2026"
-        var set = CharacterSet.urlQueryAllowed
-        set.remove(charactersIn: "&=+")
-        let encoded = code.addingPercentEncoding(withAllowedCharacters: set)!
-        XCTAssertEqual(encoded, code, "Plain alphanumeric code should not be encoded")
+    func testIsEventDay_UsesEventTimeZone() throws {
+        let chicago = try XCTUnwrap(TimeZone(identifier: "America/Chicago"))
+        let start = try XCTUnwrap(ISODate.parse("2026-11-14T18:00:00-06:00"))
+        let end = try XCTUnwrap(ISODate.parse("2026-11-15T22:00:00-06:00"))
+        // 23:30 on the 15th in Chicago is already the 16th in UTC — still an event day.
+        let lateSunday = try XCTUnwrap(ISODate.parse("2026-11-15T23:30:00-06:00"))
+        XCTAssertTrue(ScheduleTiming.isEventDay(now: lateSunday, start: start, end: end, timeZone: chicago))
+        let monday = try XCTUnwrap(ISODate.parse("2026-11-16T09:00:00-06:00"))
+        XCTAssertFalse(ScheduleTiming.isEventDay(now: monday, start: start, end: end, timeZone: chicago))
+        let dayBefore = try XCTUnwrap(ISODate.parse("2026-11-13T12:00:00-06:00"))
+        XCTAssertFalse(ScheduleTiming.isEventDay(now: dayBefore, start: start, end: nil, timeZone: chicago))
+        XCTAssertTrue(ScheduleTiming.isEventDay(now: dayBefore, start: nil, end: nil, timeZone: chicago))
     }
 }

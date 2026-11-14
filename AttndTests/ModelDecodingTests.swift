@@ -1,360 +1,309 @@
 // ModelDecodingTests.swift
 // AttndTests
 //
-// Unit tests for JSON → Swift model decoding.
-// No network required — all input is inline JSON strings.
-// Tests every model type in Helpers.swift, including the new ScheduledItem
-// and the scheduled_items array embedded in Location.
+// JSON → model decoding for the v2 API. No network: all input is inline JSON.
+// Covers the forward-compatibility rules in API_V2.md: unknown keys ignored,
+// missing keys defaulted (especially in `display`), nullable coordinates and
+// schedule locations, end times, tags, categories.
 
 import XCTest
 @testable import Attnd
 
 final class ModelDecodingTests: XCTestCase {
 
-    // MARK: - Helper
-
-    private func decode<T: Decodable>(_ type: T.Type, from json: String) throws -> T {
-        let data = Data(json.utf8)
-        return try JSONDecoder().decode(type, from: data)
+    private func decode<T: Decodable>(_ type: T.Type, _ json: String) throws -> T {
+        try JSONDecoder().decode(type, from: Data(json.utf8))
     }
+
+    private let fullEvent = """
+    {"id":1,"name":"Fort Worth Food & Music Festival","event_code":"FWFM2026",
+     "description":"Annual festival.","address":"Sundance Square",
+     "latitude":32.75,"longitude":-97.33,
+     "start_time":"2026-11-14T18:00:00+00:00","end_time":"2026-11-15T04:00:00+00:00",
+     "timezone":"America/Chicago","status":"published","paid":false,"is_demo":true,
+     "flyer_url":"https://attnd.app/media/flyer.pdf","accent_color":"#FF5A1F",
+     "logo_url":null,"content_version":15,"join_url":"https://attnd.app/join/FWFM2026/",
+     "some_future_key":{"nested":[1,2,3]}}
+    """
 
     // MARK: - Event
 
-    func testEvent_Decodes_AllFields() throws {
-        let json = """
-        {
-          "id": 1,
-          "name": "Fort Worth Food & Music Festival",
-          "event_code": "FWFM2026",
-          "description": "Annual food and music festival.",
-          "latitude": 32.7555,
-          "longitude": -97.3308,
-          "start_time": "2026-04-26T18:00:00Z",
-          "created_at": "2026-01-15T09:00:00Z",
-          "paid": false,
-          "flyer_url": null,
-          "address": "Sundance Square, Fort Worth, TX"
-        }
-        """
-        let event = try decode(Event.self, from: json)
+    func testEvent_DecodesAllFields() throws {
+        let event = try decode(Event.self, fullEvent)
         XCTAssertEqual(event.id, 1)
-        XCTAssertEqual(event.name, "Fort Worth Food & Music Festival")
         XCTAssertEqual(event.eventCode, "FWFM2026")
-        XCTAssertEqual(event.description, "Annual food and music festival.")
-        XCTAssertEqual(event.latitude,  32.7555,  accuracy: 0.0001)
-        XCTAssertEqual(event.longitude, -97.3308, accuracy: 0.0001)
-        XCTAssertEqual(event.startTime, "2026-04-26T18:00:00Z")
-        XCTAssertEqual(event.createdAt, "2026-01-15T09:00:00Z")
+        XCTAssertEqual(event.latitude ?? 0, 32.75, accuracy: 0.0001)
+        XCTAssertEqual(event.timeZone.identifier, "America/Chicago")
+        XCTAssertEqual(event.status, .published)
+        XCTAssertTrue(event.isDemo)
         XCTAssertFalse(event.paid)
-        XCTAssertNil(event.flyerUrl)
-        XCTAssertEqual(event.address, "Sundance Square, Fort Worth, TX")
+        XCTAssertEqual(event.flyerUrl?.absoluteString, "https://attnd.app/media/flyer.pdf")
+        XCTAssertEqual(event.accentColor, "#FF5A1F")
+        XCTAssertNil(event.logoUrl)
+        XCTAssertEqual(event.contentVersion, 15)
+        XCTAssertEqual(event.startTime, ISODate.parse("2026-11-14T18:00:00Z"))
+        XCTAssertNotNil(event.endTime)
+        XCTAssertNotNil(event.coordinate)
     }
 
-    func testEvent_Paid_True() throws {
-        let json = """
-        {"id":2,"name":"Paid Event","event_code":"PAY001","description":"desc",
-         "latitude":0,"longitude":0,"start_time":"2026-01-01T00:00:00Z",
-         "created_at":"2025-12-01T00:00:00Z","paid":true,"flyer_url":null,"address":""}
-        """
-        XCTAssertTrue(try decode(Event.self, from: json).paid)
+    func testEvent_MinimalPayload_UsesDefaults() throws {
+        let event = try decode(Event.self, #"{"id":7}"#)
+        XCTAssertEqual(event.name, "")
+        XCTAssertEqual(event.eventCode, "")
+        XCTAssertNil(event.latitude)
+        XCTAssertNil(event.coordinate)
+        XCTAssertNil(event.startTime)
+        XCTAssertEqual(event.status, .published)
+        XCTAssertFalse(event.isDemo)
+        XCTAssertEqual(event.timeZone, .current)
     }
 
-    func testEvent_FlyerUrl_NonNull() throws {
-        let json = """
-        {"id":3,"name":"Flyer Event","event_code":"FLY001","description":"",
-         "latitude":0,"longitude":0,"start_time":"2026-01-01T00:00:00Z",
-         "created_at":"2025-12-01T00:00:00Z",
-         "paid":false,"flyer_url":"https://example.com/flyer.pdf","address":""}
-        """
-        let event = try decode(Event.self, from: json)
-        XCTAssertEqual(event.flyerUrl, "https://example.com/flyer.pdf")
+    func testEvent_Archived_AndUnknownStatus() throws {
+        XCTAssertTrue(try decode(Event.self, #"{"id":1,"status":"archived"}"#).isArchived)
+        XCTAssertEqual(try decode(Event.self, #"{"id":1,"status":"something_new"}"#).status, .published)
     }
 
-    func testEvent_SnakeCaseMapping() throws {
-        // Verifies that event_code, start_time, created_at, flyer_url map to Swift camelCase names
-        let json = """
-        {"id":1,"name":"X","event_code":"ABC123","description":"","latitude":0,
-         "longitude":0,"start_time":"2026-06-01T10:00:00Z",
-         "created_at":"2026-01-01T00:00:00Z","paid":false,"flyer_url":null,"address":""}
-        """
-        let event = try decode(Event.self, from: json)
-        XCTAssertEqual(event.eventCode, "ABC123")
-        XCTAssertEqual(event.startTime, "2026-06-01T10:00:00Z")
-        XCTAssertEqual(event.createdAt, "2026-01-01T00:00:00Z")
+    func testEvent_IsDemoFallsBackToUnpaid() throws {
+        XCTAssertTrue(try decode(Event.self, #"{"id":1,"paid":false}"#).isDemo)
+        XCTAssertFalse(try decode(Event.self, #"{"id":1,"paid":true}"#).isDemo)
     }
 
-    // MARK: - ScheduledItem
-
-    func testScheduledItem_Decodes_AllFields() throws {
-        let json = """
-        {
-          "id": 1,
-          "name": "Opening Ceremony",
-          "description": "Welcome to the festival.",
-          "start_time": "2026-04-26T17:00:00+00:00",
-          "location_id": 1,
-          "location_name": "Main Stage"
-        }
-        """
-        let item = try decode(ScheduledItem.self, from: json)
-        XCTAssertEqual(item.id, 1)
-        XCTAssertEqual(item.name, "Opening Ceremony")
-        XCTAssertEqual(item.description, "Welcome to the festival.")
-        XCTAssertEqual(item.startTime, "2026-04-26T17:00:00+00:00")
-        XCTAssertEqual(item.locationId, 1)
-        XCTAssertEqual(item.locationName, "Main Stage")
+    func testEvent_NullAndZeroCoordinates_HaveNoCoordinate() throws {
+        XCTAssertNil(try decode(Event.self, #"{"id":1,"latitude":null,"longitude":null}"#).coordinate)
+        XCTAssertNil(try decode(Event.self, #"{"id":1,"latitude":0,"longitude":0}"#).coordinate)
     }
 
-    func testScheduledItem_SnakeCaseMapping() throws {
-        let json = """
-        {"id":2,"name":"Headliner","description":"Main act.",
-         "start_time":"2026-04-26T21:00:00Z","location_id":5,"location_name":"Big Stage"}
-        """
-        let item = try decode(ScheduledItem.self, from: json)
-        XCTAssertEqual(item.locationId, 5)
-        XCTAssertEqual(item.locationName, "Big Stage")
+    func testEvent_WrongTypes_FallBackInsteadOfFailing() throws {
+        let event = try decode(Event.self, #"{"id":1,"name":42,"paid":"yes","content_version":"x"}"#)
+        XCTAssertEqual(event.name, "")
+        XCTAssertFalse(event.paid)
+        XCTAssertEqual(event.contentVersion, 0)
     }
 
-    func testScheduledItem_EmptyDescription() throws {
-        let json = """
-        {"id":3,"name":"Intermission","description":"",
-         "start_time":"2026-04-26T19:30:00Z","location_id":1,"location_name":"Stage"}
-        """
-        let item = try decode(ScheduledItem.self, from: json)
-        XCTAssertTrue(item.description.isEmpty)
+    func testEvent_MicrosecondTimestamps() throws {
+        let event = try decode(Event.self, #"{"id":1,"start_time":"2026-11-14T13:29:44.123456+00:00"}"#)
+        XCTAssertEqual(event.startTime?.timeIntervalSince1970 ?? 0,
+                       ISODate.parse("2026-11-14T13:29:44Z")!.timeIntervalSince1970 + 0.123,
+                       accuracy: 0.001)
     }
 
     // MARK: - Location
 
-    func testLocation_Decodes_WithScheduledItems() throws {
-        let json = """
-        {
-          "id": 1,
-          "name": "Main Stage",
-          "snippet": "Live music all day.",
-          "description": "The main stage area.",
-          "website": "https://example.com",
-          "image_url": "https://example.com/stage.jpg",
-          "latitude": 32.755,
-          "longitude": -97.331,
-          "address": "123 Main St, Fort Worth, TX",
-          "scheduled_items": [
-            {"id":1,"name":"Opening Ceremony","description":"Welcome.",
-             "start_time":"2026-04-26T17:00:00Z","location_id":1,"location_name":"Main Stage"},
-            {"id":2,"name":"Headliner Performance","description":"Main act.",
-             "start_time":"2026-04-26T21:00:00Z","location_id":1,"location_name":"Main Stage"}
-          ]
-        }
-        """
-        let loc = try decode(Location.self, from: json)
-        XCTAssertEqual(loc.id, 1)
-        XCTAssertEqual(loc.name, "Main Stage")
-        XCTAssertEqual(loc.snippet, "Live music all day.")
-        XCTAssertEqual(loc.website, "https://example.com")
-        XCTAssertEqual(loc.imageUrl, "https://example.com/stage.jpg")
-        XCTAssertEqual(loc.latitude,  32.755, accuracy: 0.001)
-        XCTAssertEqual(loc.longitude, -97.331, accuracy: 0.001)
-        XCTAssertEqual(loc.address, "123 Main St, Fort Worth, TX")
-        XCTAssertEqual(loc.scheduledItems.count, 2)
-        XCTAssertEqual(loc.scheduledItems[0].name, "Opening Ceremony")
-        XCTAssertEqual(loc.scheduledItems[1].name, "Headliner Performance")
+    func testLocation_NullableFields() throws {
+        let loc = try decode(Location.self, """
+        {"id":5,"name":"Food Court","snippet":"Eat","description":"","category":null,
+         "website":null,"image_url":null,"address":"","latitude":null,"longitude":null,"sort_order":3}
+        """)
+        XCTAssertEqual(loc.id, 5)
+        XCTAssertNil(loc.category)
+        XCTAssertNil(loc.coordinate)
+        XCTAssertEqual(loc.sortOrder, 3)
     }
 
-    func testLocation_Decodes_EmptyScheduledItems() throws {
-        let json = """
-        {"id":2,"name":"Food Court","snippet":"Food","description":"Lots of food.",
-         "website":null,"image_url":null,"latitude":0,"longitude":0,
-         "address":"456 Other St","scheduled_items":[]}
-        """
-        let loc = try decode(Location.self, from: json)
-        XCTAssertTrue(loc.scheduledItems.isEmpty)
-        XCTAssertNil(loc.website)
-        XCTAssertNil(loc.imageUrl)
+    func testLocation_CategoryAndCoordinates() throws {
+        let loc = try decode(Location.self, """
+        {"id":5,"name":"Grill","category":"Food","website":"https://example.com",
+         "image_url":"https://example.com/a.jpg","latitude":32.74,"longitude":-97.36}
+        """)
+        XCTAssertEqual(loc.category, "Food")
+        XCTAssertEqual(loc.website?.host, "example.com")
+        XCTAssertEqual(loc.coordinate, Coordinate(latitude: 32.74, longitude: -97.36))
     }
 
-    func testLocation_Decodes_NullOptionals() throws {
-        let json = """
-        {"id":3,"name":"Gallery","snippet":"Art","description":"Contemporary art.",
-         "website":null,"image_url":null,"latitude":0,"longitude":0,
-         "address":"789 Art Ave","scheduled_items":[]}
-        """
-        let loc = try decode(Location.self, from: json)
-        XCTAssertNil(loc.website)
-        XCTAssertNil(loc.imageUrl)
+    func testLocation_EmptyCategory_IsNil() throws {
+        XCTAssertNil(try decode(Location.self, #"{"id":1,"category":"  "}"#).category)
     }
 
-    func testLocation_ScheduledItems_PreserveOrder() throws {
-        // Items should decode in the order the API returns them
-        let json = """
-        {"id":1,"name":"Stage","snippet":"","description":"","website":null,"image_url":null,
-         "latitude":0,"longitude":0,"address":"","scheduled_items":[
-           {"id":2,"name":"Headliner","description":"","start_time":"2026-04-26T21:00:00Z","location_id":1,"location_name":"Stage"},
-           {"id":1,"name":"Opener","description":"","start_time":"2026-04-26T17:00:00Z","location_id":1,"location_name":"Stage"}
-         ]}
-        """
-        let loc = try decode(Location.self, from: json)
-        // First item in array = first decoded, regardless of id order
-        XCTAssertEqual(loc.scheduledItems[0].id, 2)
-        XCTAssertEqual(loc.scheduledItems[1].id, 1)
+    // MARK: - Schedule item
+
+    func testScheduleItem_AllFields() throws {
+        let item = try decode(ScheduleItem.self, """
+        {"id":1,"name":"Headliner","description":"Main act.",
+         "start_time":"2026-11-14T21:00:00+00:00","end_time":"2026-11-14T22:30:00+00:00",
+         "location_id":5,"location_name":"Main Stage","tags":["Music","Free"]}
+        """)
+        XCTAssertEqual(item.locationId, 5)
+        XCTAssertEqual(item.locationName, "Main Stage")
+        XCTAssertEqual(item.tags, ["Music", "Free"])
+        XCTAssertEqual(item.endTime?.timeIntervalSince(item.startTime!), 5400)
     }
 
-    // MARK: - AppNotification
-
-    func testAppNotification_Decodes_AllFields() throws {
-        let json = """
-        {
-          "id": 1,
-          "title": "Festival kicks off tomorrow!",
-          "body": "Get ready for an amazing time.",
-          "send_time": "2026-04-25T12:00:00Z",
-          "sent": true
-        }
-        """
-        let notif = try decode(AppNotification.self, from: json)
-        XCTAssertEqual(notif.id, 1)
-        XCTAssertEqual(notif.title, "Festival kicks off tomorrow!")
-        XCTAssertEqual(notif.body, "Get ready for an amazing time.")
-        XCTAssertEqual(notif.sendTime, "2026-04-25T12:00:00Z")
-        XCTAssertTrue(notif.sent)
+    func testScheduleItem_NoLocation_NoEnd_NoTags() throws {
+        let item = try decode(ScheduleItem.self, """
+        {"id":2,"name":"Fireworks","start_time":"2026-11-14T23:00:00Z","end_time":null,
+         "location_id":null,"location_name":null}
+        """)
+        XCTAssertNil(item.locationId)
+        XCTAssertNil(item.locationName)
+        XCTAssertNil(item.endTime)
+        XCTAssertEqual(item.tags, [])
     }
 
-    func testAppNotification_Unsent() throws {
-        let json = """
-        {"id":2,"title":"Coming soon","body":"Stay tuned.",
-         "send_time":"2026-05-01T00:00:00Z","sent":false}
-        """
-        XCTAssertFalse(try decode(AppNotification.self, from: json).sent)
+    // MARK: - Notification
+
+    func testNotification() throws {
+        let n = try decode(AppNotification.self, #"{"id":1,"title":"Gate B open","body":"Head over.","send_time":"2026-11-14T17:45:00+00:00"}"#)
+        XCTAssertEqual(n.title, "Gate B open")
+        XCTAssertNotNil(n.sendTime)
     }
 
-    func testAppNotification_SnakeCaseMapping() throws {
-        let json = """
-        {"id":1,"title":"T","body":"B","send_time":"2026-01-01T00:00:00Z","sent":true}
-        """
-        let notif = try decode(AppNotification.self, from: json)
-        XCTAssertEqual(notif.sendTime, "2026-01-01T00:00:00Z")
+    // MARK: - Display
+
+    func testDisplay_EmptyObject_UsesAllDefaults() throws {
+        let d = try decode(DisplayConfig.self, "{}")
+        XCTAssertEqual(d, DisplayConfig.default)
+        XCTAssertNil(d.tabs)
+        XCTAssertEqual(d.locationsStyle, .list)
+        XCTAssertEqual(d.scheduleStyle, .byDay)
+        XCTAssertFalse(d.mapClustering)
+        XCTAssertTrue(d.mapFitAll)
+        XCTAssertTrue(d.showLocationImages)
+        XCTAssertTrue(d.enableSearch)
+        XCTAssertFalse(d.groupByCategory)
+        XCTAssertEqual(d.secondaryPane, .locations)
+        XCTAssertEqual(d.resolvedTabs(hasFlyer: false), [.map, .locations, .schedule, .notifications])
+        XCTAssertEqual(d.resolvedTabs(hasFlyer: true), [.map, .locations, .schedule, .flyer, .notifications])
+        XCTAssertEqual(d.resolvedDefaultTab(hasFlyer: false), .map)
     }
 
-    // MARK: - NearbyEventResult
-
-    func testNearbyEventResult_Decodes() throws {
-        let json = """
-        {
-          "event": {
-            "id":1,"name":"Fort Worth Festival","event_code":"FWFM2026","description":"",
-            "latitude":32.7555,"longitude":-97.3308,"start_time":"2026-04-26T18:00:00Z",
-            "created_at":"2026-01-15T09:00:00Z","paid":false,"flyer_url":null,"address":"Fort Worth, TX"
-          },
-          "distance_miles": 0.3,
-          "starts_in_hours": 6.0
-        }
-        """
-        let result = try decode(NearbyEventResult.self, from: json)
-        XCTAssertEqual(result.event.id, 1)
-        XCTAssertEqual(result.event.eventCode, "FWFM2026")
-        XCTAssertEqual(result.distanceMiles, 0.3, accuracy: 0.001)
-        XCTAssertEqual(result.startsInHours, 6.0, accuracy: 0.001)
-        // id is proxied from event.id
-        XCTAssertEqual(result.id, 1)
+    func testDisplay_FullObject() throws {
+        let d = try decode(DisplayConfig.self, """
+        {"tabs":["schedule","map","locations","flyer","notifications"],"default_tab":"schedule",
+         "locations_style":"grouped","schedule_style":"now_next","map_clustering":true,
+         "map_fit_all":false,"show_location_images":false,"enable_search":true,
+         "group_by_category":true,"secondary_pane":"schedule","accent_color":"#112233",
+         "logo_url":"https://example.com/logo.png","preset":"festival","resolved_preset":"festival",
+         "reason":"Chosen","stats":{"location_count":40},"schema_version":2}
+        """)
+        XCTAssertEqual(d.tabs, [.schedule, .map, .locations, .flyer, .notifications])
+        XCTAssertEqual(d.resolvedDefaultTab(hasFlyer: true), .schedule)
+        XCTAssertEqual(d.locationsStyle, .grouped)
+        XCTAssertEqual(d.scheduleStyle, .nowNext)
+        XCTAssertTrue(d.mapClustering)
+        XCTAssertFalse(d.mapFitAll)
+        XCTAssertFalse(d.showLocationImages)
+        XCTAssertTrue(d.groupByCategory)
+        XCTAssertEqual(d.secondaryPane, .schedule)
+        XCTAssertEqual(d.accentColor, "#112233")
+        XCTAssertNotNil(d.logoUrl)
     }
 
-    func testNearbyEventResult_SnakeCaseMapping() throws {
-        let json = """
-        {
-          "event":{"id":2,"name":"E","event_code":"E2","description":"","latitude":0,"longitude":0,
-                   "start_time":"2026-01-01T00:00:00Z","created_at":"2025-12-01T00:00:00Z",
-                   "paid":false,"flyer_url":null,"address":""},
-          "distance_miles":12.5,
-          "starts_in_hours":-2.0
-        }
-        """
-        let result = try decode(NearbyEventResult.self, from: json)
-        XCTAssertEqual(result.distanceMiles, 12.5, accuracy: 0.001)
-        XCTAssertEqual(result.startsInHours, -2.0, accuracy: 0.001)
+    func testDisplay_UnknownValues_FallBack() throws {
+        let d = try decode(DisplayConfig.self, """
+        {"tabs":["map","tickets","map","notifications"],"default_tab":"tickets",
+         "locations_style":"carousel","schedule_style":"gantt","secondary_pane":"weather",
+         "map_clustering":"yes"}
+        """)
+        XCTAssertEqual(d.tabs, [.map, .notifications], "unknown tabs and duplicates are dropped")
+        XCTAssertEqual(d.resolvedDefaultTab(hasFlyer: false), .map)
+        XCTAssertEqual(d.locationsStyle, .list)
+        XCTAssertEqual(d.scheduleStyle, .byDay)
+        XCTAssertEqual(d.secondaryPane, .locations)
+        XCTAssertFalse(d.mapClustering)
     }
 
-    // MARK: - APIList envelope
-
-    func testAPIList_Decodes_Events() throws {
-        let json = """
-        {
-          "count": 2,
-          "results": [
-            {"id":1,"name":"Event A","event_code":"EVA001","description":"","latitude":0,
-             "longitude":0,"start_time":"2026-01-01T00:00:00Z","created_at":"2025-12-01T00:00:00Z",
-             "paid":false,"flyer_url":null,"address":""},
-            {"id":2,"name":"Event B","event_code":"EVB002","description":"","latitude":0,
-             "longitude":0,"start_time":"2026-01-01T00:00:00Z","created_at":"2025-12-01T00:00:00Z",
-             "paid":true,"flyer_url":null,"address":""}
-          ]
-        }
-        """
-        let list = try decode(APIList<Event>.self, from: json)
-        XCTAssertEqual(list.count, 2)
-        XCTAssertEqual(list.results.count, 2)
-        XCTAssertEqual(list.results[0].eventCode, "EVA001")
-        XCTAssertEqual(list.results[1].eventCode, "EVB002")
-        XCTAssertTrue(list.results[1].paid)
+    func testDisplay_DefaultTabNotVisible_FallsBackToMapThenFirst() throws {
+        let withMap = try decode(DisplayConfig.self, #"{"tabs":["locations","map"],"default_tab":"schedule"}"#)
+        XCTAssertEqual(withMap.resolvedDefaultTab(hasFlyer: false), .map)
+        let noMap = try decode(DisplayConfig.self, #"{"tabs":["notifications","locations"]}"#)
+        XCTAssertEqual(noMap.resolvedDefaultTab(hasFlyer: false), .notifications)
     }
 
-    func testAPIList_Decodes_ScheduledItems() throws {
-        let json = """
-        {
-          "count": 1,
-          "results": [
-            {"id":1,"name":"Opening Ceremony","description":"Welcome.",
-             "start_time":"2026-04-26T17:00:00Z","location_id":1,"location_name":"Stage"}
-          ]
-        }
-        """
-        let list = try decode(APIList<ScheduledItem>.self, from: json)
-        XCTAssertEqual(list.count, 1)
-        XCTAssertEqual(list.results[0].name, "Opening Ceremony")
+    func testDisplay_AllTabsUnknown_UsesDefaults() throws {
+        let d = try decode(DisplayConfig.self, #"{"tabs":["tickets"]}"#)
+        XCTAssertEqual(d.resolvedTabs(hasFlyer: false), [.map, .locations, .schedule, .notifications])
     }
 
-    func testAPIList_Decodes_EmptyResults() throws {
-        let json = """
-            {"count":0,"results":[]}
-            """
-        let list = try decode(APIList<ScheduledItem>.self, from: json)
-        XCTAssertEqual(list.count, 0)
-        XCTAssertTrue(list.results.isEmpty)
+    // MARK: - Bundle
+
+    func testBundle_Full() throws {
+        let bundle = try decode(EventBundle.self, """
+        {"schema_version":2,"content_version":15,"updated_at":"2026-11-14T13:29:44+00:00",
+         "event":\(fullEvent),
+         "display":{"tabs":["map","schedule"],"schedule_style":"timeline"},
+         "categories":["Food","Stage"],
+         "locations":[{"id":5,"name":"Grill","category":"Food","latitude":32.74,"longitude":-97.36},
+                      {"id":6,"name":"Info tent","latitude":null,"longitude":null}],
+         "schedule":[{"id":1,"name":"Open","start_time":"2026-11-14T18:00:00Z","location_id":5,"location_name":"Grill","tags":[]},
+                     {"id":2,"name":"Parade","start_time":"2026-11-14T19:00:00Z","location_id":null,"location_name":null}],
+         "notifications":[{"id":3,"title":"Welcome","body":"Hi","send_time":"2026-11-14T17:00:00Z"}]}
+        """)
+        XCTAssertEqual(bundle.contentVersion, 15)
+        XCTAssertNotNil(bundle.updatedAt)
+        XCTAssertEqual(bundle.event.eventCode, "FWFM2026")
+        XCTAssertEqual(bundle.display.tabs, [.map, .schedule])
+        XCTAssertEqual(bundle.display.scheduleStyle, .timeline)
+        XCTAssertEqual(bundle.display.locationsStyle, .list, "missing keys default")
+        XCTAssertEqual(bundle.categories, ["Food", "Stage"])
+        XCTAssertEqual(bundle.locations.map(\.id), [5, 6])
+        XCTAssertNil(bundle.locations[1].coordinate)
+        XCTAssertEqual(bundle.schedule.count, 2)
+        XCTAssertNil(bundle.schedule[1].locationId)
+        XCTAssertEqual(bundle.notifications.first?.title, "Welcome")
     }
 
-    func testAPIList_CountAndResults_AlwaysMatch() throws {
-        let json = """
-        {"count":3,"results":[
-          {"id":1,"name":"A","event_code":"A1","description":"","latitude":0,"longitude":0,"start_time":"2026-01-01T00:00:00Z","created_at":"2025-12-01T00:00:00Z","paid":false,"flyer_url":null,"address":""},
-          {"id":2,"name":"B","event_code":"B2","description":"","latitude":0,"longitude":0,"start_time":"2026-01-01T00:00:00Z","created_at":"2025-12-01T00:00:00Z","paid":false,"flyer_url":null,"address":""},
-          {"id":3,"name":"C","event_code":"C3","description":"","latitude":0,"longitude":0,"start_time":"2026-01-01T00:00:00Z","created_at":"2025-12-01T00:00:00Z","paid":false,"flyer_url":null,"address":""}
-        ]}
-        """
-        let list = try decode(APIList<Event>.self, from: json)
-        XCTAssertEqual(list.count, list.results.count)
+    func testBundle_MissingDisplayAndLists_UseDefaults() throws {
+        let bundle = try decode(EventBundle.self, #"{"event":{"id":1,"content_version":4}}"#)
+        XCTAssertEqual(bundle.display, .default)
+        XCTAssertEqual(bundle.contentVersion, 4)
+        XCTAssertTrue(bundle.locations.isEmpty)
+        XCTAssertTrue(bundle.schedule.isEmpty)
+        XCTAssertTrue(bundle.notifications.isEmpty)
     }
 
-    // MARK: - Hashable conformance (ScheduledItem & Location)
-
-    func testScheduledItem_Hashable_NoDuplicatesInSet() throws {
-        let json = """
-        {"id":1,"name":"Act","description":"","start_time":"2026-01-01T00:00:00Z",
-         "location_id":1,"location_name":"Stage"}
-        """
-        let item = try decode(ScheduledItem.self, from: json)
-        var set = Set<ScheduledItem>()
-        set.insert(item)
-        set.insert(item)
-        XCTAssertEqual(set.count, 1)
+    func testBundle_DisplayNull_UsesDefaults() throws {
+        let bundle = try decode(EventBundle.self, #"{"event":{"id":1},"display":null}"#)
+        XCTAssertEqual(bundle.display, .default)
     }
 
-    func testLocation_Hashable_NoDuplicatesInSet() throws {
-        let json = """
-        {"id":1,"name":"Loc","snippet":"s","description":"d","website":null,"image_url":null,
-         "latitude":0,"longitude":0,"address":"","scheduled_items":[]}
-        """
-        let loc = try decode(Location.self, from: json)
-        var set = Set<Location>()
-        set.insert(loc)
-        set.insert(loc)
-        XCTAssertEqual(set.count, 1)
+    func testBundle_BadElementIsSkipped_NotFatal() throws {
+        let bundle = try decode(EventBundle.self, """
+        {"event":{"id":1},"locations":[{"id":1,"name":"Good"},{"name":"No id"},{"id":3,"name":"Also good"}]}
+        """)
+        XCTAssertEqual(bundle.locations.map(\.id), [1, 3])
+    }
+
+    func testBundle_MissingEvent_Fails() {
+        XCTAssertThrowsError(try decode(EventBundle.self, #"{"locations":[]}"#))
+    }
+
+    // MARK: - Nearby / Lookup / Status
+
+    func testNearbyResponse() throws {
+        let r = try decode(NearbyEventsResponse.self, """
+        {"count":1,"results":[{"event":{"id":1,"event_code":"A"},"distance_miles":1.2,"starts_in_hours":5.0}]}
+        """)
+        XCTAssertEqual(r.results.count, 1)
+        XCTAssertEqual(r.results[0].id, 1)
+        XCTAssertEqual(r.results[0].distanceMiles ?? 0, 1.2, accuracy: 0.001)
+    }
+
+    func testLookupResponse() throws {
+        XCTAssertEqual(try decode(LookupResponse.self, #"{"event":{"id":9,"event_code":"X"}}"#).event.id, 9)
+    }
+
+    func testStatusResponse() throws {
+        let r = try decode(StatusResponse.self, #"{"status":"ok","subscribed":true,"event_id":null}"#)
+        XCTAssertEqual(r.status, "ok")
+        XCTAssertEqual(r.subscribed, true)
+        XCTAssertNil(r.eventId)
+    }
+
+    // MARK: - Request bodies
+
+    func testJoinRequest_OmitsNilFields() throws {
+        let data = try JSONEncoder().encode(JoinRequest(deviceId: "abc", pushToken: nil, appVersion: nil))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(json["device_id"] as? String, "abc")
+        XCTAssertEqual(json["platform"] as? String, "ios")
+        XCTAssertNil(json["push_token"])
+    }
+
+    func testDeviceRequest_Keys() throws {
+        let data = try JSONEncoder().encode(DeviceRequest(deviceId: "abc", pushToken: "ff00", appVersion: "2.0", subscribed: true))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(json["push_token"] as? String, "ff00")
+        XCTAssertEqual(json["app_version"] as? String, "2.0")
+        XCTAssertEqual(json["subscribed"] as? Bool, true)
     }
 }

@@ -118,19 +118,21 @@ for rt, devs in json.load(sys.stdin)["devices"].items():
     echo "Using $name ($dname, iOS $rversion): $udid"
   fi
   udids="$udids$key $udid"$'\n'
-  # Boot now so the simulators are ready when the build finishes.
-  xcrun simctl boot "$udid" < /dev/null 2>/dev/null || true
 done <<< "$plan"
+# Simulators are booted one at a time, after the build (prepare): booting them during the build starves
+# the compiler of CPU (a 2-minute build took 13+ minutes with three simulators booting alongside it).
 
 # --- Build once -------------------------------------------------------------------------------------
+xcrun simctl shutdown all 2>/dev/null || true  # nothing else competing with the build
 echo "Building for the simulator against $server"
+build_started=$SECONDS
 xcodebuild build -project Attnd.xcodeproj -scheme Attnd -configuration Debug \
   -destination 'generic/platform=iOS Simulator' -derivedDataPath build/ScreenshotsDerivedData \
   ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO \
   ATTND_API_KEY="$ATTND_API_KEY" ATTND_SERVER="$server" -quiet
 app=build/ScreenshotsDerivedData/Build/Products/Debug-iphonesimulator/Attnd.app
 bundle_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")
-echo "Built $app ($bundle_id)"
+echo "Built $app ($bundle_id) in $((SECONDS - build_started)) s"
 
 # --- Helpers ----------------------------------------------------------------------------------------
 png_size() {  # "WIDTHxHEIGHT" of a PNG
@@ -187,8 +189,10 @@ clean_status_bar() {  # udid
 }
 
 prepare() {  # udid
-  local udid=$1
+  local udid=$1 started=$SECONDS
+  xcrun simctl boot "$udid" 2>/dev/null || true
   xcrun simctl bootstatus "$udid" -b > /dev/null
+  echo "  booted in $((SECONDS - started)) s"
   xcrun simctl ui "$udid" appearance light
   clean_status_bar "$udid"
   xcrun simctl uninstall "$udid" "$bundle_id" 2>/dev/null || true

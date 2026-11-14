@@ -343,8 +343,10 @@ def metadata(args, app):
 # --- Store listing: screenshots ------------------------------------------------------------------
 
 # Composed folder -> (display type, exact size). 1206x2622 is "iPhone with Dynamic Island (medium
-# display)", APP_IPHONE_61; 1320x2868 is the large display, APP_IPHONE_67. APP_IPHONE_DUO is accepted by
-# the live API but missing from Apple's ScreenshotDisplayType reference.
+# display)", APP_IPHONE_61; 1320x2868 is the large display, APP_IPHONE_67. APP_IPHONE_DUO (Nov 2026):
+# not yet in Apple's ScreenshotDisplayType reference, but the live API creates the set and accepts uploads
+# at the inner (2007x2853) and outer (1398x2034) display sizes. Duo screenshots are required from April 2027
+# for apps built with the iOS 27.1 SDK or later (we are), and add the "made for iPhone Duo" badge.
 SCREENSHOT_TYPES = {
     'iphone-69': ('APP_IPHONE_67', (1320, 2868)),
     'iphone-63': ('APP_IPHONE_61', (1206, 2622)),

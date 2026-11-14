@@ -99,6 +99,15 @@ jobs:
           path: build/TestResults.xcresult
           if-no-files-found: ignore
           retention-days: 7
+      # Until the stored development certificate exists (SETUP.md 3d), each runner mints a new one and
+      # Apple's limit fills up: revoke earlier CI-created ones (only "Created via API" development
+      # certificates older than 90 min; never distribution or hand-made ones).
+      - name: Free development certificate slots
+        env:
+          IOS_DEV_CERT_P12_BASE64: ${{ secrets.IOS_DEV_CERT_P12_BASE64 }}
+        run: |
+          if [ -n "$IOS_DEV_CERT_P12_BASE64" ]; then echo "Stored certificate in use; nothing to revoke"; exit 0; fi
+          python scripts/ci/asc.py revoke-ci-dev-certs 90
       - name: Archive & upload
         env:
           IOS_DEV_CERT_P12_BASE64: ${{ secrets.IOS_DEV_CERT_P12_BASE64 }}

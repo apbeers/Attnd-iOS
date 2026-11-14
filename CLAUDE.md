@@ -1,115 +1,146 @@
 # Attnd iOS
 
-SwiftUI app that lets attendees discover and follow live events. Consumes the Attnd REST API served by **[attnd-web](https://github.com/apbeers/Attnd-Web)**.
+SwiftUI app that lets attendees discover and follow live events. Consumes the Attnd REST API v2 served by **[attnd-web](https://github.com/apbeers/Attnd-Web)** (contract: `API_V2.md`).
+
+## Dependency Policy
+
+**Apple frameworks only; no third-party packages.** No SPM, CocoaPods or Carthage dependencies, no Firebase. Push uses APNs directly via `UIApplication` / `UserNotifications`.
 
 ## Tech Stack
 
-- **Swift / SwiftUI** — iOS 17+ (`@Observable` macro throughout)
-- **URLSession** — no third-party networking libraries
+- **Swift 6 / SwiftUI** — iOS 26+, Swift 6 language mode, `@Observable` + `@MainActor` state
+- **URLSession** — networking
 - **Apple App Attest** — device attestation for API authentication in production
-- **DataScannerViewController** — built-in QR code scanning
+- **APNs** (`UserNotifications`) — organizer notifications and silent `content_updated` pushes
+- **DataScannerViewController** (VisionKit) — QR code scanning
 - **MapKit** — map view
-- **Xcode project**: `Attnd.xcodeproj`
-- **Targets**: `Attnd` (main app), `AttndAppClip`
+- **Xcode project**: `Attnd.xcodeproj` (latest Xcode; required for iPhone Duo layouts)
+- **Targets**: `Attnd` (iPhone + iPad, all orientations), `AttndAppClip`, `AttndTests`
 
 ## Source Structure (`Attnd/`)
 
 | File | Purpose |
 |------|---------|
-| `AttndApp.swift` | App entry point; sets up `AppState`, wires Universal Link handler |
-| `AppState.swift` | Central `@Observable` state: current event, locations, schedule, notifications, device ID, preferences |
-| `APIClient.swift` | `URLSession`-based API client singleton; async/await; handles 401 retry with re-attestation |
+| `AttndApp.swift` | App entry point; installs `AppDelegate`, wires Universal Links |
+| `AppDelegate.swift` | Owns `AppState`; APNs token registration, silent pushes, notification taps |
+| `AppState.swift` | `@MainActor @Observable` state: event, bundle content, display config, selected tab, device ID, push token, preferences; bundle refresh with ETag |
+| `APIClient.swift` | Stateless, `Sendable` v2 client; async/await; 401 → re-attest → retry once |
+| `Models.swift` | v2 models (`Event`, `Location`, `ScheduleItem`, `AppNotification`, `DisplayConfig`, `EventBundle`, request bodies, `PushPayload`) with lenient decoding |
+| `DisplayLogic.swift` | Pure, unit-tested logic: schedule grouping (timeline/by day/by location/now-next), location grouping, search, map clustering & framing, fold-avoiding insets |
+| `Helpers.swift` | ISO 8601 parsing, event-time-zone formatting, hex colours, deep-link/QR parsing |
 | `AttestationManager.swift` | Apple App Attest key generation, attestation, and JWT token caching |
 | `KeychainHelper.swift` | Keychain read/write wrapper |
-| `ContentView.swift` | Tab bar container shown after joining an event |
-| `LaunchScreen.swift` | Home screen: nearby events list, manual search, QR scanner button |
-| `LocationsView.swift` | Locations tab with detail drill-down |
-| `ScheduleView.swift` | Schedule tab; filterable by location |
-| `NotificationsView.swift` | Notifications tab; polls the API |
-| `MapView.swift` | Full map view with location pins |
-| `FlyerView.swift` | Loads and displays the event flyer PDF/image from `flyer_url` |
-| `QRScannerView.swift` | Wraps `DataScannerViewController` for QR code scanning |
-| `SettingsView.swift` | User preferences (show location dot, notification opt-in/out) |
-| `Helpers.swift` | Shared utilities (date formatting, etc.) |
+| `LocationPermissionManager.swift` | One-shot async location request |
+| `ContentView.swift` | `AppRootView` (launch vs. event) and the server-driven `TabView`; refresh triggers; demo / ended banners; accent tint |
+| `LaunchScreen.swift` | Nearby events, system search for a code/exact name, QR scanner |
+| `MapArrangement.swift` | Map tab: map + secondary pane via `ArrangementView` on regular width |
+| `MapView.swift` | Map with clustering, fit-all, category chips, fold-aware overlays |
+| `FoldableLayout.swift` | Wrappers for foldable-era APIs (`reservedRegions`, pinned toolbar placement) |
+| `LocationsView.swift` | Locations tab (`NavigationSplitView`), cards/list/grouped styles, detail view |
+| `ScheduleView.swift` | Schedule tab (`NavigationSplitView`), styles, filter menu, item detail |
+| `NotificationsView.swift` | Organizer updates from the bundle |
+| `FlyerView.swift` | Event flyer (image/PDF) from `flyer_url` |
+| `QRScannerView.swift` | `DataScannerViewController` sheet; pauses/restarts across scene and size changes |
+| `SettingsView.swift` | Options tab: event header (logo), location dot, notifications, leave event |
 
 ## App Flow
 
 ```
 Launch
-├── autoJoin() — looks up saved event code and rejoins silently
-│   ├── On success → ContentView (tab bar)
+├── POST devices/ (registration, push token, subscribed)
+├── Saved event code? → GET events/lookup/?q=<code> → join silently
 │   └── On failure / none saved → LaunchScreen
 │
 LaunchScreen
-├── GET /nearby_events/<lat>/<lng>/
-├── QR scan → GET /lookup/?q=<code>
-└── Manual search → /lookup/ then /event_by_code_or_name/
+├── GET events/nearby/?lat=&lng=
+├── QR scan / search → GET events/lookup/?q=<code or exact name>
 │
 Join event
-├── POST /join/<deviceId>/ { platform: "ios" }
-└── Load locations, schedule, notifications in parallel (TaskGroup)
+├── POST events/<id>/join/ {device_id, platform: "ios", push_token, app_version}
+└── GET events/<id>/bundle/ (If-None-Match, X-Device-Id)
 │
-ContentView (tab bar)
-├── Locations     → GET /locations/
-├── Schedule      → GET /schedule/
-├── Map           → shows location pins from locations data
-├── Flyer         → loads flyer_url
-└── Notifications → GET /notifications/
+ContentView (tabs and default tab from bundle.display; Options always last)
+├── Map / Locations / Schedule / Flyer / Updates
+└── Bundle refetched on: foreground, pull-to-refresh, every 5 min on event days,
+    content_updated / notification pushes (304 when unchanged)
 │
 Leave event
-└── POST /leave/<deviceId>/
+└── POST events/<id>/leave/ {device_id}
 ```
 
-## Authentication
+## API v2 Notes
 
-`APIClient` resolves the bearer token in priority order:
-1. Attestation JWT from `AttestationManager` (production devices)
-2. Static `ATTND_API_KEY` from `Info.plist` (simulator / CI / dev builds)
+- Base URL `https://attnd.app/api/v2/`. Attestation endpoints remain at `/api/v1/attest/`.
+- Models must ignore unknown keys and default missing ones (see `API_V2.md` → Display defaults). Decoding helpers in `Models.swift` (`lenient`, `lossyArray`) enforce this; add new fields the same way.
+- Coordinates may be `null`; `0,0` is treated as unknown. Never drop a pin without a valid coordinate.
+- Schedule items may have no location — shown under "General".
+- All times are displayed in the **event's** `timezone` (`EventTimeFormat`), never the device's.
+- `is_demo` → "Demo Event" banner. `status == "archived"` → "This event has ended" banner.
+- `display.accent_color` (or the event's) tints the app.
 
-On a 401, the stored JWT is invalidated and the request retries once after re-attesting. Token rotation is transparent to callers.
+## Display Config (`bundle.display`)
 
-`AttestationManager.shared.warmup()` is called at app init to pre-fetch the JWT so it's ready before the first API call.
+| Key | Where |
+|-----|-------|
+| `tabs`, `default_tab` | `ContentView` / `AppState.apply` |
+| `locations_style` | `LocationsView` |
+| `schedule_style` | `ScheduleView` via `ScheduleGrouping` |
+| `map_clustering`, `map_fit_all` | `MapView` via `MapClustering`, `MapRegionMath` |
+| `show_location_images`, `enable_search`, `group_by_category` | Locations, Schedule, Map |
+| `secondary_pane` | `MapArrangement` (regular width only) |
+
+## Push Notifications
+
+- Enabling notifications in Options requests authorization, calls `registerForRemoteNotifications()`, and sends the hex token with `POST devices/`.
+- `type = "notification"` → alert; tapping opens the Updates tab for that event.
+- `type = "content_updated"` → silent (`content-available`); refetches the bundle. Requires the `remote-notification` background mode (in `Info.plist`).
+- `aps-environment` is `development` in `Attnd.entitlements`; distribution signing switches it to production.
+
+## iPhone Duo / Foldables
+
+Follow Apple's "Preparing your app for iPhone Duo":
+- Build with the latest Xcode; support all orientations; never use `UIScreen` bounds, `userInterfaceIdiom` or interface orientation for layout — use size classes and container geometry.
+- Use system bars only. Toolbar items always have an icon **and** a title (`Label`), so they work in vertical bars. Keep must-see items pinned (`.pinnedTrailing`).
+- Floating overlays go through `ReservedRegionAvoiding` so they avoid the fold and camera housings.
+- `ArrangementView` only at the top of a tab (never inside `NavigationSplitView`, `List` or `ScrollView`).
+- Hero images use `.backgroundExtensionEffect()`.
+- New-SDK symbols live in `FoldableLayout.swift` / `MapArrangement.swift` behind `#available`.
+- Manual test matrix: `IPHONE_DUO_CHECKLIST.md`.
+
+## App Clip
+
+`AttndAppClip` compiles the same sources (see its Sources build phase) with its own entry point, `AttndAppClipApp.swift`, which shows the shared `AppRootView`. It has no app delegate and doesn't register for pushes. New shared `.swift` files in `Attnd/` must be added to both the `Attnd` and `AttndAppClip` targets (the `Attnd` group is not file-system synchronized).
 
 ## API Key Configuration
 
-`ATTND_API_KEY` is injected into `Info.plist` at build time via xcconfig files in `Config/`. Do not hardcode it in source.
+`ATTND_API_KEY` (static key for simulators / CI) reaches `Info.plist` as `$(ATTND_API_KEY)` from `Config/Debug.xcconfig` / `Release.xcconfig`, which define it empty and `#include? "Secrets.xcconfig"`. Copy `Config/Secrets.xcconfig.example` to `Config/Secrets.xcconfig` (gitignored) and add your key, or pass `ATTND_API_KEY=…` to `xcodebuild`. **Never commit a key.** Production builds use App Attest.
 
 ## Deep Linking (Universal Links)
 
-The app handles `https://attnd.app/join/<event_code>/` Universal Links. `AppState.handleDeepLink(_:)` parses the code, calls `/lookup/` to resolve the event, gracefully leaves any current event, then joins the new one.
-
-The `AttndAppClip` target uses the same URL scheme so users can join events without installing the full app.
+`https://attnd.app/join/<event_code>/` → `AppState.handleDeepLink(_:)` → `join(code:)`: looks the event up, leaves any current event, then joins. The App Clip uses the same URL.
 
 ## Device Identity
 
-A UUID is generated on first launch and stored in `UserDefaults` under `com.arcu.attnd.deviceId`. This stable ID is sent to all join/leave/push subscription endpoints.
+A UUID is generated on first launch and stored in `UserDefaults` under `com.arcu.attnd.deviceId`.
 
 ## Persistent Preferences (UserDefaults)
 
 | Key | Description |
 |-----|-------------|
-| `pref.savedEventCode` | Last joined event code; used for auto-rejoin on launch |
+| `pref.savedEventCode` | Last joined event code; used for silent rejoin on launch |
 | `pref.showUserLocation` | Map blue-dot toggle |
-| `pref.notificationsEnabled` | Push opt-in; toggling calls subscribe/unsubscribe API |
-
-## Demo Event Banner
-
-When `event.paid == false` the event is a demo/trial created by the scraper. Always show a prominent banner so attendees know it is not a live production event.
+| `pref.notificationsEnabled` | Push opt-in; changes are sent with `POST devices/` |
+| `pref.pushToken` | Last APNs token (hex) |
 
 ## Building
 
-Open `Attnd.xcodeproj` in Xcode. Ensure `Config/Debug.xcconfig` has `ATTND_API_KEY` set for local development.
+Open `Attnd.xcodeproj` in the latest Xcode. For simulator builds, create `Config/Secrets.xcconfig` (see above).
 
 ## Running Tests
 
-In Xcode: **Product → Test** (`⌘U`)
-
-Or from the command line:
-```bash
-./run_tests.command
-```
+In Xcode: **Product → Test** (`⌘U`), or `./run_tests.command`. Unit tests (`ModelDecodingTests`, `DisplayLogicTests`, `BusinessLogicTests`) need no network; `APIClientIntegrationTests` hit the live v2 API and need the static key on a simulator.
 
 ## Related Repos
 
-- **[attnd-web](https://github.com/apbeers/Attnd-Web)** — Django backend + REST API (see `API.md` for full endpoint reference)
+- **[attnd-web](https://github.com/apbeers/Attnd-Web)** — Django backend + REST API (`API_V2.md`)
 - **[attnd-android](https://github.com/apbeers/Attnd-Android)** — Kotlin/Compose Android client

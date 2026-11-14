@@ -35,7 +35,7 @@ jobs:
         run: bash scripts/ci/test.sh
       - name: Keep test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ios-test-results
           path: build/TestResults.xcresult

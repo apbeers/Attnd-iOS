@@ -1,9 +1,13 @@
 # One-off: convert Attnd.xcodeproj to Xcode 27.2's JSON project format (project.xcproj) on a real
 # Xcode, check that the converted project still lists and builds, then commit it to develop and start
-# the iOS pipeline. Run from Actions → "Convert Xcode project" → Run workflow (branch: develop).
+# the iOS pipeline. Runs when this file changes on develop (manual runs need the file on main);
+# once project.xcproj exists it does nothing.
 name: Convert Xcode project
 
 on:
+  push:
+    branches: [develop]
+    paths: ['.github/workflows/convert-project.yml']
   workflow_dispatch:
 
 permissions:

@@ -28,7 +28,7 @@ attnd-web is the coordinating repo. The API contract ([`API_V2.md`](https://gith
 - **APNs** (`UserNotifications`) — organizer notifications and silent `content_updated` pushes
 - **DataScannerViewController** (VisionKit) — QR code scanning
 - **MapKit** — map view
-- **Xcode project**: `Attnd.xcodeproj` in Xcode 27.2's JSON format (`project.xcproj`, converted by the one-off `convert-project.yml` workflow; JSON with trailing commas — edit carefully or in Xcode). **Xcode 27.2** (build 27B52) is required: the JSON project format needs 27.2 and the iPhone Duo APIs need 27.1. CI pins it with `XCODE_VERSION` (repo variable, default `27.2`) on the `xcode-27` runner; bump it when a newer release lands on the image. Xcode Cloud is not used (it would number builds independently and collide with CI's).
+- **Xcode project**: `Attnd.xcodeproj` in Xcode 27.2's JSON format (`project.xcproj`, converted on Nov 14, 2026 with `xcodebuild -convert-project "Xcode Project"` on Xcode 27.2; JSON with trailing commas — edit carefully or in Xcode; `-convert-project pbxproj` converts back). **Xcode 27.2** (build 27B52) is required: the JSON project format needs 27.2 and the iPhone Duo APIs need 27.1. CI pins it with `XCODE_VERSION` (repo variable, default `27.2`) on the `xcode-27` runner; bump it when a newer release lands on the image. Xcode Cloud is not used (it would number builds independently and collide with CI's).
 - **Targets**: `Attnd` (iPhone only, including iPhone Duo; all orientations; no iPad), `AttndAppClip`, `AttndTests`
 
 ## Source Structure (`Attnd/`)

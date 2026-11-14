@@ -26,7 +26,7 @@ jobs:
     runs-on: ${{ vars.MACOS_RUNNER || 'macos-26' }}
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Select newest Xcode
         run: bash scripts/ci/select_xcode.sh
       - name: Unit tests
@@ -37,7 +37,7 @@ jobs:
         run: bash scripts/ci/test.sh
       - name: Keep test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ios-test-results
           path: build/TestResults.xcresult
@@ -57,7 +57,7 @@ jobs:
       ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
       ATTND_SERVER: ${{ vars.ATTND_SERVER || 'attnd.app' }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Select newest Xcode
         run: bash scripts/ci/select_xcode.sh
       - name: Version

@@ -55,7 +55,7 @@ struct MapArrangement<Primary: View, Secondary: View>: View {
     @ViewBuilder var secondary: Secondary
 
     var body: some View {
-        #if compiler(>=6.3)
+        #if IOS27_SDK
         if #available(iOS 27.0, *) {
             ArrangementView {
                 primary

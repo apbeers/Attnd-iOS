@@ -13,3 +13,9 @@ ATTND_API_KEY =
 ATTND_SERVER = attnd.app
 
 #include? "Secrets.xcconfig"
+
+// iPhone Duo / iOS 27 APIs are compiled only against the iOS 27+ SDK (see FoldableLayout.swift).
+OTHER_SWIFT_FLAGS[sdk=iphoneos27*] = $(inherited) -DIOS27_SDK
+OTHER_SWIFT_FLAGS[sdk=iphonesimulator27*] = $(inherited) -DIOS27_SDK
+OTHER_SWIFT_FLAGS[sdk=iphoneos28*] = $(inherited) -DIOS27_SDK
+OTHER_SWIFT_FLAGS[sdk=iphonesimulator28*] = $(inherited) -DIOS27_SDK

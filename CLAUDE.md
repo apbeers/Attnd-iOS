@@ -2,6 +2,12 @@
 
 SwiftUI app that lets attendees discover and follow live events. Consumes the Attnd REST API v2 served by **[attnd-web](https://github.com/apbeers/Attnd-Web)** (contract: `API_V2.md`).
 
+
+## Branching (initial development)
+
+- `main` = production (default branch), `develop` = dev/beta. Pushing to `develop` deploys to the dev server / TestFlight / Play internal testing; pushing to `main` deploys to production.
+- **While there are no real users yet, commit and push straight to `develop`** — no feature branches or PRs needed. Merge `develop` → `main` to release. Revisit this once the apps have users.
+
 ## Dependency Policy
 
 **Apple frameworks only; no third-party packages.** No SPM, CocoaPods or Carthage dependencies, no Firebase. Push uses APNs directly via `UIApplication` / `UserNotifications`.
@@ -156,4 +162,4 @@ In Xcode: **Product → Test** (`⌘U`), or `./run_tests.command`. Unit tests (`
 - Version = contents of `VERSION` + `.` + run number (e.g. `2.0.57`); build number = run number. Bump `VERSION` for a new major/minor line.
 - Signing is cloud-managed via the App Store Connect API key (`ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` secrets; the key needs the **Admin** role). No certificates or profiles are stored anywhere.
 - Server host: `ATTND_SERVER` build setting → `Info.plist` → `APIClient.serverHost` (default `attnd.app`).
-- Full setup checklist: `DEPLOYMENT.md` in attnd-web.
+- Full setup checklist: `SETUP.md` in attnd-web.

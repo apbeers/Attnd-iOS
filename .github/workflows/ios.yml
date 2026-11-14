@@ -3,7 +3,7 @@
 #   push to develop   → archive, upload, TestFlight internal testers (talks to the dev server)
 #   push to main      → archive, upload, submit to App Review (released when approved)
 #
-# Signing is automatic via an App Store Connect API key — see DEPLOYMENT.md.
+# Signing is automatic via an App Store Connect API key — see SETUP.md.
 # Version: <VERSION file>.<run number>; build number: run number (always increasing).
 name: iOS
 

@@ -191,7 +191,7 @@ In Xcode: **Product → Test** (`⌘U`), or `./run_tests.command`. Unit tests (`
 
 - Docs-only commits (`*.md`) don't run; a newer push to `develop` cancels the older run (`main` never cancels). Anything that only waits on Apple runs on Linux (Mac minutes cost ~10×).
 - Version = contents of `VERSION` + `.` + run number (e.g. `2.0.57`); build number = run number. Bump `VERSION` for a new major/minor line.
-- Signing is cloud-managed via the App Store Connect API key (`ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` secrets; the key needs the **Admin** role). No certificates or profiles are stored anywhere.
+- Signing is automatic via the App Store Connect API key (`ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` secrets; the key needs the **Admin** role): Xcode manages the profiles and the upload uses a cloud-managed distribution certificate. The archive step reuses one stored **Apple Development** certificate (`IOS_DEV_CERT_P12_BASE64`, `IOS_DEV_CERT_PASSWORD` secrets, imported into a throwaway keychain by `scripts/ci/archive_upload.sh`); without it every fresh runner mints a new "Created via API" certificate and Apple's limit fills up. Renew yearly (attnd-web `SETUP.md` step 3d).
 - Server host: `ATTND_SERVER` build setting → `Info.plist` → `APIClient.serverHost` (default `attnd.app`).
 - Full setup checklist: `SETUP.md` in attnd-web.
 

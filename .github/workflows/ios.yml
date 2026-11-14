@@ -100,6 +100,9 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
       - name: Archive & upload
+        env:
+          IOS_DEV_CERT_P12_BASE64: ${{ secrets.IOS_DEV_CERT_P12_BASE64 }}
+          IOS_DEV_CERT_PASSWORD: ${{ secrets.IOS_DEV_CERT_PASSWORD }}
         run: bash scripts/ci/archive_upload.sh
 
   # Waiting on Apple's processing (and submitting for review) needs no Mac.

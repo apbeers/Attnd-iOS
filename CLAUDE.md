@@ -28,7 +28,7 @@ attnd-web is the coordinating repo. The API contract ([`API_V2.md`](https://gith
 - **APNs** (`UserNotifications`) — organizer notifications and silent `content_updated` pushes
 - **DataScannerViewController** (VisionKit) — QR code scanning
 - **MapKit** — map view
-- **Xcode project**: `Attnd.xcodeproj` (latest Xcode; required for iPhone Duo layouts)
+- **Xcode project**: `Attnd.xcodeproj`. **Xcode 27.1 or later** (iOS 27.1 SDK) is required for the iPhone Duo APIs; CI uses the newest released Xcode on the `xcode-27` runner (27.2 as of Nov 2026) and refuses anything older than 27.1, betas and RCs
 - **Targets**: `Attnd` (iPhone only, including iPhone Duo; all orientations; no iPad), `AttndAppClip`, `AttndTests`
 
 ## Source Structure (`Attnd/`)
@@ -118,7 +118,7 @@ Follow Apple's "Preparing your app for iPhone Duo":
 - Floating overlays go through `ReservedRegionAvoiding` so they avoid the fold and camera housings.
 - `ArrangementView` only at the top of a tab (never inside `NavigationSplitView`, `List` or `ScrollView`).
 - Hero images use `.backgroundExtensionEffect()`.
-- New-SDK symbols live in `FoldableLayout.swift` / `MapArrangement.swift` behind `#available`.
+- New-SDK symbols live in `FoldableLayout.swift` / `MapArrangement.swift`, compiled only with the 27.1+ SDK (`IOS27_SDK`) and behind `#available(iOS 27.1, *)`. Reserved regions are queried per kind (`.division` fold, `.occlusion` cameras); there is no "all" kind.
 - Manual test matrix: `IPHONE_DUO_CHECKLIST.md`.
 
 ## App Clip

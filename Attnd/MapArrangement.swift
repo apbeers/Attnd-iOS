@@ -4,11 +4,9 @@
 // The Map tab on wide layouts (an unfolded iPhone Duo): the map plus the
 // pane named by `display.secondary_pane` (locations, schedule or now/next).
 //
-// ⚠️ COMPILE-TIME CHECK: `ArrangementView` / `.arrangementViewStyle(.split)` are the
-// iPhone Duo-era SwiftUI container for a primary + secondary view (side by side when
-// wide, stacked when tall). They were written from Apple's guidance without a
-// compiler — if the spelling differs, fix it in `MapArrangement.body` only.
-// The iOS 27 check is the assumed SDK; older systems get an equivalent fallback.
+// `ArrangementView { primary } secondary: { … }` with `.arrangementViewStyle(.split)`
+// (iOS 27.1, iPhone Duo): side by side when wide, stacked when tall, split on the fold.
+// Older systems and SDKs get an equivalent fallback.
 //
 // Rules from Apple's guidance this file follows:
 //   - ArrangementView sits at the top of the tab, never inside a NavigationSplitView,
@@ -56,13 +54,13 @@ struct MapArrangement<Primary: View, Secondary: View>: View {
 
     var body: some View {
         #if IOS27_SDK
-        if #available(iOS 27.0, *) {
+        if #available(iOS 27.1, *) {
             ArrangementView {
                 primary
             } secondary: {
                 secondary
             }
-            .arrangementViewStyle(.split) // ⚠️ VERIFY spelling
+            .arrangementViewStyle(.split)
         } else {
             FallbackArrangement(primary: primary, secondary: secondary)
         }

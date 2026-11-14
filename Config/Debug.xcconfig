@@ -14,8 +14,26 @@ ATTND_SERVER = attnd.app
 
 #include? "Secrets.xcconfig"
 
-// iPhone Duo / iOS 27 APIs are compiled only against the iOS 27+ SDK (see FoldableLayout.swift).
-OTHER_SWIFT_FLAGS[sdk=iphoneos27*] = $(inherited) -DIOS27_SDK
-OTHER_SWIFT_FLAGS[sdk=iphonesimulator27*] = $(inherited) -DIOS27_SDK
+// iPhone Duo APIs need the iOS 27.1+ SDK (Xcode 27.1+); see FoldableLayout.swift. 27.0 is excluded.
+OTHER_SWIFT_FLAGS[sdk=iphoneos27.1*] = $(inherited) -DIOS27_SDK
+OTHER_SWIFT_FLAGS[sdk=iphoneos27.2*] = $(inherited) -DIOS27_SDK
+OTHER_SWIFT_FLAGS[sdk=iphoneos27.3*] = $(inherited) -DIOS27_SDK
+OTHER_SWIFT_FLAGS[sdk=iphoneos27.4*] = $(inherited) -DIOS27_SDK
+OTHER_SWIFT_FLAGS[sdk=iphoneos27.5*] = $(inherited) -DIOS27_SDK
+OTHER_SWIFT_FLAGS[sdk=iphoneos27.6*] = $(inherited) -DIOS27_SDK
+OTHER_SWIFT_FLAGS[sdk=iphoneos27.7*] = $(inherited) -DIOS27_SDK
+OTHER_SWIFT_FLAGS[sdk=iphoneos27.8*] = $(inherited) -DIOS27_SDK
+OTHER_SWIFT_FLAGS[sdk=iphoneos27.9*] = $(inherited) -DIOS27_SDK
 OTHER_SWIFT_FLAGS[sdk=iphoneos28*] = $(inherited) -DIOS27_SDK
+OTHER_SWIFT_FLAGS[sdk=iphoneos29*] = $(inherited) -DIOS27_SDK
+OTHER_SWIFT_FLAGS[sdk=iphonesimulator27.1*] = $(inherited) -DIOS27_SDK
+OTHER_SWIFT_FLAGS[sdk=iphonesimulator27.2*] = $(inherited) -DIOS27_SDK
+OTHER_SWIFT_FLAGS[sdk=iphonesimulator27.3*] = $(inherited) -DIOS27_SDK
+OTHER_SWIFT_FLAGS[sdk=iphonesimulator27.4*] = $(inherited) -DIOS27_SDK
+OTHER_SWIFT_FLAGS[sdk=iphonesimulator27.5*] = $(inherited) -DIOS27_SDK
+OTHER_SWIFT_FLAGS[sdk=iphonesimulator27.6*] = $(inherited) -DIOS27_SDK
+OTHER_SWIFT_FLAGS[sdk=iphonesimulator27.7*] = $(inherited) -DIOS27_SDK
+OTHER_SWIFT_FLAGS[sdk=iphonesimulator27.8*] = $(inherited) -DIOS27_SDK
+OTHER_SWIFT_FLAGS[sdk=iphonesimulator27.9*] = $(inherited) -DIOS27_SDK
 OTHER_SWIFT_FLAGS[sdk=iphonesimulator28*] = $(inherited) -DIOS27_SDK
+OTHER_SWIFT_FLAGS[sdk=iphonesimulator29*] = $(inherited) -DIOS27_SDK

@@ -5,13 +5,13 @@
 // depends on an API introduced alongside it lives here, behind one availability
 // check, so spelling or signature differences can be fixed in one place.
 //
-// ⚠️ COMPILE-TIME CHECK: these APIs were written from Apple's "Preparing your app
-// for iPhone Duo" guidance without a compiler. If a symbol below doesn't resolve,
-// fix it here — callers only use the wrappers.
-//   - GeometryProxy.reservedRegions(kind:options:layoutDirectionBehavior:) → [ReservedRegion]
-//   - ToolbarItemPlacement.topBarPinnedTrailing
-// The availability version (iOS 27) is the assumed SDK that introduced them; if they
-// shipped earlier, the checks still compile and only gate older systems.
+// The iPhone Duo APIs shipped in iOS 27.1 (Xcode 27.1+):
+//   - GeometryProxy.reservedRegions(kind:options:) → [ReservedRegion], one kind per call:
+//     .division (the fold) and .occlusion (camera housings). Each region's `frame`
+//     already includes its margins. Read them during layout; don't cache them.
+//   - ToolbarItemPlacement.topBarPinnedTrailing (never moves to the overflow menu)
+// They compile only against the 27.1+ SDK (IOS27_SDK in Config/*.xcconfig) and run
+// behind `#available(iOS 27.1, *)`.
 
 import SwiftUI
 
@@ -46,18 +46,13 @@ enum ReservedRegionReader {
     /// Reserved hardware regions in the proxy's local coordinate space, leading = minX.
     @MainActor
     static func rects(in proxy: GeometryProxy) -> [CGRect] {
-        // Compiled only against the iOS 27+ SDK (IOS27_SDK, set in Config/*.xcconfig).
+        // Compiled only against the iOS 27.1+ SDK (IOS27_SDK, set in Config/*.xcconfig).
         #if IOS27_SDK
-        if #available(iOS 27.0, *) {
-            // ⚠️ VERIFY: exact parameter types/values and the element's rect property.
-            // Intent: every kind of hardware occlusion (fold + camera), in local
-            // coordinates, with leading/trailing resolved for the layout direction.
-            let regions = proxy.reservedRegions(
-                kind: .all,
-                options: [],
-                layoutDirectionBehavior: .mirrors
-            )
-            return regions.map { $0.frame }
+        if #available(iOS 27.1, *) {
+            // Active regions only: the fold when the device is open, camera housings always.
+            let fold = proxy.reservedRegions(kind: .division, options: [])
+            let cameras = proxy.reservedRegions(kind: .occlusion, options: [])
+            return (fold + cameras).map { $0.frame }
         }
         #endif
         return []
@@ -71,8 +66,8 @@ extension ToolbarItemPlacement {
     /// still shown in the vertical bars of iPhone Duo's wide postures).
     static var pinnedTrailing: ToolbarItemPlacement {
         #if IOS27_SDK
-        if #available(iOS 27.0, *) {
-            return .topBarPinnedTrailing // ⚠️ VERIFY spelling
+        if #available(iOS 27.1, *) {
+            return .topBarPinnedTrailing
         }
         #endif
         return .topBarTrailing

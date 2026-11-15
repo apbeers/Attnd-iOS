@@ -51,6 +51,11 @@ enum LiveFollowKeys {
     static let localItemKey = "attnd_item"
 }
 
+// ActivityKit's `Activity` is a final class Apple documents as safe to use from any thread, but the
+// iOS 26/27 SDK doesn't mark it Sendable, so Swift 6 rejects awaiting its own `update`/`end` from the
+// main actor ("sending 'activity' risks causing data races"). Remove this once the SDK declares it.
+extension Activity: @retroactive @unchecked Sendable {}
+
 @MainActor
 final class LiveFollowController {
 

@@ -334,7 +334,7 @@ enum LogRedaction {
     }
 
     // NSRegularExpression is immutable and thread-safe once made.
-    nonisolated(unsafe) private static let rules: [(NSRegularExpression, String)] = [
+    private static let rules: [(NSRegularExpression, String)] = [
         // URL queries can carry anything (q=, tokens): keep scheme, host and path.
         (regex(#"(https?://[^\s?#]+)[?#][^\s]*"#), "$1"),
         (regex(#"\bbearer\s+[A-Za-z0-9._~+/=-]+"#), "Bearer <redacted>"),

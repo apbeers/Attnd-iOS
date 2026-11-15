@@ -63,8 +63,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     /// Why iOS launched the app in the background (`background.wake` reason).
     private static func launchReason(_ options: [UIApplication.LaunchOptionsKey: Any]?) -> String {
         guard let options else { return "app_refresh" }
-        if options[.remoteNotification] != nil { return "silent_push" }
-        if options[.location] != nil { return "region" }
+        // The .remoteNotification / .location keys are deprecated in iOS 26 (scene-based launch handling);
+        // their raw values still arrive here, and this only labels the log line.
+        if options[UIApplication.LaunchOptionsKey(rawValue: "UIApplicationLaunchOptionsRemoteNotificationKey")] != nil { return "silent_push" }
+        if options[UIApplication.LaunchOptionsKey(rawValue: "UIApplicationLaunchOptionsLocationKey")] != nil { return "region" }
         return "intent"
     }
 

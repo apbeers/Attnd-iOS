@@ -60,7 +60,9 @@ print(best[1] if best else "")
   # build was planned (Nov 2026 experiment) made the compile 6+ min and the whole job 5 min slower.
   xcrun simctl boot "$device" > /dev/null 2>&1 &
   # No index store (CI never uses it); only this Mac's architecture; no signing for the simulator.
-  settings=(CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO ONLY_ACTIVE_ARCH=YES ARCHS="$(uname -m)")
+  # ENABLE_DEBUG_DYLIB=NO: Debug's preview split leaves Attnd.app/Attnd a stub, so the App Intents metadata
+  # step finds no AppIntents dependency and warns; CI has no previews, and the shipped Dev/Release builds don't split.
+  settings=(CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO ONLY_ACTIVE_ARCH=YES ARCHS="$(uname -m)" ENABLE_DEBUG_DYLIB=NO)
   if [ -n "${COMPILATION_CACHE_DIR:-}" ]; then
     settings+=(COMPILATION_CACHE_ENABLE_CACHING=YES COMPILATION_CACHE_CAS_PATH="$PWD/$COMPILATION_CACHE_DIR")
   fi

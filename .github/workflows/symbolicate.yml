@@ -1,0 +1,124 @@
+# Symbolicate an iOS crash/hang report for attnd-web's Diagnostics panel (API-013).
+#
+# Dispatched by attnd-web (Diagnostics → report → Symbolicate) through the GitHub REST API with a one-time token.
+# It fetches the frames to look up from the server, downloads the build's dSYM artifact (`dsyms-<build>`, uploaded
+# by ios.yml's archive job and kept 90 days), runs `atos` and posts the symbols back. Nothing is committed.
+# Must be on the default branch (main) to be dispatchable.
+name: Symbolicate
+
+on:
+  workflow_dispatch:
+    inputs:
+      report_id:
+        description: attnd-web diagnostics report id
+        required: true
+      build:
+        description: Build number (CFBundleVersion) of the crashed app
+        required: true
+      version:
+        description: App version (informational)
+        required: false
+        default: ''
+      server:
+        description: attnd-web origin that asked (https://attnd.app or https://dev.attnd.app)
+        required: true
+      token:
+        description: One-time callback token (masked)
+        required: true
+
+permissions:
+  actions: read     # find and download the dSYM artifact
+  contents: read
+
+concurrency:
+  group: symbolicate-${{ inputs.report_id }}
+  cancel-in-progress: false
+
+jobs:
+  symbolicate:
+    name: Symbolicate report ${{ inputs.report_id }} (build ${{ inputs.build }})
+    runs-on: macos-latest   # only needs atos/dwarfdump (Xcode command line tools), not a specific Xcode
+    timeout-minutes: 15
+    env:
+      # Inputs go through env, never straight into a script (no injection).
+      REPORT_ID: ${{ inputs.report_id }}
+      BUILD: ${{ inputs.build }}
+      SERVER: ${{ inputs.server }}
+      CALLBACK_TOKEN: ${{ inputs.token }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check inputs
+        run: |
+          echo "::add-mask::$CALLBACK_TOKEN"
+          [[ "$REPORT_ID" =~ ^[0-9]+$ ]] || { echo "::error::report_id must be a number"; exit 1; }
+          [[ "$BUILD" =~ ^[0-9A-Za-z.]+$ ]] || { echo "::error::bad build"; exit 1; }
+          # Only ever send the token back to our own servers.
+          [[ "$SERVER" == "https://attnd.app" || "$SERVER" == "https://dev.attnd.app" ]] || {
+            echo "::error::server must be https://attnd.app or https://dev.attnd.app"; exit 1; }
+          echo "CALLBACK_URL=$SERVER/api/diagnostics/symbolicate/$REPORT_ID/" >> "$GITHUB_ENV"
+
+      - name: Fetch the frames
+        run: |
+          curl -sSf --retry 3 -H "Authorization: Bearer $CALLBACK_TOKEN" "$CALLBACK_URL" -o job.json
+          python3 -c "import json; j = json.load(open('job.json')); print(len(j['frames']), 'frames for build', j['build'])"
+
+      - name: Download the dSYMs
+        run: |
+          id="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=dsyms-$BUILD&per_page=1" --jq '.artifacts[0].id // empty')"
+          if [ -z "$id" ]; then
+            echo "SYMBOLICATE_ERROR=No dSYM artifact dsyms-$BUILD (kept 90 days; was the build archived by CI?)" >> "$GITHUB_ENV"
+            exit 1
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > dsyms.zip
+          mkdir -p dsyms && unzip -q dsyms.zip -d dsyms
+          # The artifact may hold the .dSYM bundles directly or zipped.
+          find dsyms -name '*.zip' -exec unzip -q -o {} -d dsyms \;
+          find dsyms -name '*.dSYM' -maxdepth 4 -print
+
+      - name: Symbolicate
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess, glob
+          job = json.load(open('job.json'))
+          # UUID (upper case, with dashes) -> (DWARF file, arch)
+          dwarfs = {}
+          for path in glob.glob('dsyms/**/*.dSYM/Contents/Resources/DWARF/*', recursive=True):
+              out = subprocess.run(['dwarfdump', '--uuid', path], capture_output=True, text=True).stdout
+              for uuid, arch in re.findall(r'UUID: ([0-9A-F-]+) \(([^)]+)\)', out):
+                  dwarfs[uuid.upper()] = (path, arch)
+          print(f'{len(dwarfs)} binaries in the dSYMs:', ', '.join(sorted(os.path.basename(p) for p, _ in dwarfs.values())))
+          load = 0x100000000  # any load address works with -l: atos subtracts it again
+          by_uuid = {}
+          for frame in job['frames']:
+              by_uuid.setdefault(frame['uuid'].upper(), []).append(frame)
+          results = []
+          for uuid, frames in by_uuid.items():
+              if uuid not in dwarfs:
+                  continue  # system frameworks: not ours
+              path, arch = dwarfs[uuid]
+              addresses = [hex(load + f['offset']) for f in frames]
+              for start in range(0, len(addresses), 200):
+                  chunk = addresses[start:start + 200]
+                  out = subprocess.run(['atos', '-arch', arch, '-o', path, '-l', hex(load), *chunk],
+                                       capture_output=True, text=True).stdout.splitlines()
+                  for frame, address, symbol in zip(frames[start:start + 200], chunk, out):
+                      symbol = symbol.strip()
+                      if symbol and symbol != address and not symbol.startswith('0x'):
+                          results.append({'uuid': frame['uuid'], 'offset': frame['offset'], 'symbol': symbol})
+          print(f'{len(results)} of {len(job["frames"])} frames symbolicated')
+          body = {'frames': results} if results else {'error': f'No frame matched the dSYMs of build {job["build"]}'}
+          json.dump(body, open('result.json', 'w'))
+          PY
+
+      - name: Post the symbols
+        run: |
+          curl -sSf --retry 3 -X POST -H "Authorization: Bearer $CALLBACK_TOKEN" -H "Content-Type: application/json" \
+            --data-binary @result.json "$CALLBACK_URL"
+
+      - name: Report the failure to the panel
+        if: failure()
+        run: |
+          msg="${SYMBOLICATE_ERROR:-The symbolicate workflow failed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID}"
+          python3 -c 'import json, sys; print(json.dumps({"error": sys.argv[1][:480]}))' "$msg" > error.json
+          curl -sS -X POST -H "Authorization: Bearer $CALLBACK_TOKEN" -H "Content-Type: application/json" \
+            --data-binary @error.json "$CALLBACK_URL" || true

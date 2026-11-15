@@ -1,15 +1,16 @@
 # iOS pipeline
-#   pull request      → build + unit tests on the newest iPhone simulator, and the live API tests against
-#                       the dev server (same-repo PRs only: forks get no secrets)
-#   push to develop   → one Mac job: unit tests, then archive + upload; a Linux job waits for TestFlight
-#                       processing (internal testers get every build; the build talks to the dev server)
-#   push to main      → the same, then the Linux job sets the store listing text (store/en-US) on the version
-#                       and submits it to App Review (released when approved). Screenshots stay as last
-#                       uploaded by the manual store-screenshots.yml.
-#   every push        → in parallel: "Integration · dev" and "Integration · prod" run only the live API tests
-#                       (APIClientIntegrationTests, no archive). They never gate the upload; prod is
-#                       continue-on-error (it fails until production has the CI key / catches up with develop).
-# Mac minutes cost ~10x Linux minutes, so anything that only waits on Apple runs on Linux.
+#   every run         → "Test" (Mac): build for testing once (generic simulator, while the simulator boots),
+#                       then three suites on that build and simulator: unit tests, "Integration · dev"
+#                       (live API tests against the dev server; same-repo PRs only, forks get no secrets) and
+#                       "Integration · prod" (pushes only; continue-on-error: production may lag develop).
+#   push to develop   → in parallel with Test: "Archive & upload" (Mac) sends the build straight to
+#                       TestFlight (internal testers get it once Apple has processed it; nothing waits).
+#   push to main      → the same two jobs, then "Submit for App Review" (Linux, needs Test and Archive):
+#                       store listing text (store/en-US) and App Review submission (released when approved).
+#                       A failing test blocks the release. Screenshots stay as last uploaded by the manual
+#                       store-screenshots.yml.
+# Xcode's compilation cache (CAS) is kept between runs per job (actions/cache, keyed on the Xcode version;
+# only pushes save it). Mac minutes cost ~10x Linux minutes, so anything that only waits on Apple runs on Linux.
 # Docs-only commits don't run; a newer push to develop cancels the older run (main never cancels).
 #
 # Signing is automatic via an App Store Connect API key — see SETUP.md.
@@ -36,46 +37,95 @@ permissions:
 
 jobs:
   test:
-    name: Build & test
-    # Delivery runs the same tests in its own job, so this one is only for pull requests and other refs.
-    if: github.event_name == 'pull_request' || (github.ref != 'refs/heads/develop' && github.ref != 'refs/heads/main')
+    name: Test
     runs-on: ${{ vars.MACOS_RUNNER || 'xcode-27' }}
     timeout-minutes: 45
+    env:
+      COMPILATION_CACHE_DIR: build/CompilationCache
     steps:
       - uses: actions/checkout@v7
       - name: Select Xcode ${{ vars.XCODE_VERSION || '27.2' }}
         env:
           XCODE_VERSION: ${{ vars.XCODE_VERSION || '27.2' }}
         run: bash scripts/ci/select_xcode.sh
-      # Unit tests only; the live API tests have their own jobs (integration-dev / integration-prod).
+      - name: Xcode build version
+        id: xcode
+        run: echo "build=$(xcodebuild -version | tail -1 | awk '{print $NF}')" >> "$GITHUB_OUTPUT"
+      - name: Restore compilation cache
+        uses: actions/cache/restore@v6
+        with:
+          path: build/CompilationCache
+          key: ios-cas-test-${{ steps.xcode.outputs.build }}-${{ github.sha }}
+          restore-keys: ios-cas-test-${{ steps.xcode.outputs.build }}-
+      - name: Build for testing
+        id: build
+        run: bash scripts/ci/test.sh build
       - name: Unit tests
-        run: bash scripts/ci/test.sh
+        run: bash scripts/ci/test.sh unit "Unit tests"
+      # Live API tests through the app's APIClient. Server and key reach the test process as
+      # TEST_RUNNER_ATTND_IT_* (scripts/ci/test.sh). They never gate a release on main.
+      - name: Integration · dev
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        continue-on-error: ${{ github.ref == 'refs/heads/main' }}
+        env:
+          ATTND_IT_SERVER: dev.attnd.app
+          ATTND_IT_KEY: ${{ secrets.ATTND_API_KEY }}
+        run: bash scripts/ci/test.sh integration "Integration · dev"
+      - name: Integration · prod
+        id: prod
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && github.event_name != 'pull_request' }}
+        continue-on-error: true
+        env:
+          ATTND_IT_SERVER: attnd.app
+          ATTND_IT_KEY: ${{ secrets.ATTND_PROD_CI_KEY }}
+        run: bash scripts/ci/test.sh integration "Integration · prod"
+      - name: Integration · prod failed (allowed)
+        if: ${{ !cancelled() && steps.prod.outcome == 'failure' }}
+        run: |
+          echo "::warning title=Integration · prod::Live API tests failed against attnd.app (allowed: production may be behind develop). The run stays green."
+          echo "Integration · prod failed — allowed (continue-on-error); production may be behind develop." >> "$GITHUB_STEP_SUMMARY"
       - name: Keep test results
-        if: always()
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: ios-test-results
-          path: build/TestResults.xcresult
+          path: build/*.xcresult
           if-no-files-found: ignore
           retention-days: 7
+      - name: Save compilation cache
+        if: ${{ !cancelled() && github.event_name != 'pull_request' && steps.build.outcome == 'success' }}
+        uses: actions/cache/save@v6
+        with:
+          path: build/CompilationCache
+          key: ios-cas-test-${{ steps.xcode.outputs.build }}-${{ github.sha }}
 
-  deliver:
-    name: Test, archive & upload
+  archive:
+    name: Archive & upload
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
     runs-on: ${{ vars.MACOS_RUNNER || 'xcode-27' }}
-    timeout-minutes: 90
+    timeout-minutes: 60
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'dev' }}
     env:
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
       ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
       ATTND_SERVER: ${{ vars.ATTND_SERVER || 'attnd.app' }}
+      COMPILATION_CACHE_DIR: build/CompilationCache
     steps:
       - uses: actions/checkout@v7
       - name: Select Xcode ${{ vars.XCODE_VERSION || '27.2' }}
         env:
           XCODE_VERSION: ${{ vars.XCODE_VERSION || '27.2' }}
         run: bash scripts/ci/select_xcode.sh
+      - name: Xcode build version
+        id: xcode
+        run: echo "build=$(xcodebuild -version | tail -1 | awk '{print $NF}')" >> "$GITHUB_OUTPUT"
+      - name: Restore compilation cache
+        uses: actions/cache/restore@v6
+        with:
+          path: build/CompilationCache
+          key: ios-cas-archive-${{ steps.xcode.outputs.build }}-${{ github.sha }}
+          restore-keys: ios-cas-archive-${{ steps.xcode.outputs.build }}-
       - name: Version
         run: |
           echo "MARKETING_VERSION=$(tr -d '[:space:]' < VERSION).${{ github.run_number }}" >> "$GITHUB_ENV"
@@ -87,19 +137,9 @@ jobs:
           echo "$RUNNER_TEMP/asc/bin" >> "$GITHUB_PATH"
       - name: Check App Store Connect key
         run: python scripts/ci/asc.py check
-      - name: Unit tests
-        run: bash scripts/ci/test.sh
-      - name: Keep test results
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: ios-test-results
-          path: build/TestResults.xcresult
-          if-no-files-found: ignore
-          retention-days: 7
-      # Until the stored development certificate exists (SETUP.md 3d), each runner mints a new one and
-      # Apple's limit fills up: revoke earlier CI-created ones (only "Created via API" development
-      # certificates older than 90 min; never distribution or hand-made ones).
+      # Without the stored development certificate (SETUP.md 3e) each runner mints a new one and Apple's
+      # limit fills up: revoke earlier CI-created ones (only "Created via API" development certificates
+      # older than 90 min; never distribution or hand-made ones).
       - name: Free development certificate slots
         env:
           IOS_DEV_CERT_P12_BASE64: ${{ secrets.IOS_DEV_CERT_P12_BASE64 }}
@@ -107,79 +147,26 @@ jobs:
           if [ -n "$IOS_DEV_CERT_P12_BASE64" ]; then echo "Stored certificate in use; nothing to revoke"; exit 0; fi
           python scripts/ci/asc.py revoke-ci-dev-certs 90
       - name: Archive & upload
+        id: archive
         env:
           IOS_DEV_CERT_P12_BASE64: ${{ secrets.IOS_DEV_CERT_P12_BASE64 }}
           IOS_DEV_CERT_PASSWORD: ${{ secrets.IOS_DEV_CERT_PASSWORD }}
         run: bash scripts/ci/archive_upload.sh
-
-  # Live API tests (AttndTests/APIClientIntegrationTests) through the app's APIClient, in parallel with
-  # delivery and never needed by it. Server and key reach the test process as TEST_RUNNER_ATTND_IT_*
-  # (scripts/ci/test.sh integration). No archive here, to keep Mac minutes down.
-  integration-dev:
-    name: Integration · dev
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ${{ vars.MACOS_RUNNER || 'xcode-27' }}
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-      - name: Select Xcode ${{ vars.XCODE_VERSION || '27.2' }}
-        env:
-          XCODE_VERSION: ${{ vars.XCODE_VERSION || '27.2' }}
-        run: bash scripts/ci/select_xcode.sh
-      - name: Live API tests (dev server)
-        env:
-          ATTND_IT_SERVER: dev.attnd.app
-          ATTND_IT_KEY: ${{ secrets.ATTND_API_KEY }}
-        run: bash scripts/ci/test.sh integration "Integration · dev"
-      - name: Keep test results
-        if: failure()
-        uses: actions/upload-artifact@v7
+      - name: Save compilation cache
+        if: ${{ !cancelled() && steps.archive.outcome == 'success' }}
+        uses: actions/cache/save@v6
         with:
-          name: ios-integration-dev-results
-          path: build/IntegrationResults.xcresult
-          if-no-files-found: ignore
-          retention-days: 7
+          path: build/CompilationCache
+          key: ios-cas-archive-${{ steps.xcode.outputs.build }}-${{ github.sha }}
 
-  integration-prod:
-    name: Integration · prod
-    # Production may be behind develop (and needs the DEMO-only CI key), so a failure here is reported
-    # but never turns the run red.
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    continue-on-error: true
-    runs-on: ${{ vars.MACOS_RUNNER || 'xcode-27' }}
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-      - name: Select Xcode ${{ vars.XCODE_VERSION || '27.2' }}
-        env:
-          XCODE_VERSION: ${{ vars.XCODE_VERSION || '27.2' }}
-        run: bash scripts/ci/select_xcode.sh
-      - name: Live API tests (production)
-        env:
-          ATTND_IT_SERVER: attnd.app
-          ATTND_IT_KEY: ${{ secrets.ATTND_PROD_CI_KEY }}
-        run: bash scripts/ci/test.sh integration "Integration · prod"
-      - name: Note
-        if: failure()
-        run: |
-          echo "::warning title=Integration · prod::Live API tests failed against attnd.app (allowed: production may be behind develop or lack the CI key). The run stays green."
-          echo "Integration · prod failed — allowed (continue-on-error); production may be behind develop or ATTND_PROD_CI_KEY may be missing." >> "$GITHUB_STEP_SUMMARY"
-      - name: Keep test results
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: ios-integration-prod-results
-          path: build/IntegrationResults.xcresult
-          if-no-files-found: ignore
-          retention-days: 7
-
-  # Waiting on Apple's processing (and submitting for review) needs no Mac.
+  # Releases only. Waiting on Apple's processing and submitting for review needs no Mac.
   publish:
-    name: ${{ github.ref == 'refs/heads/main' && 'Submit for App Review' || 'TestFlight processing' }}
-    needs: deliver
+    name: Submit for App Review
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: [test, archive]
     runs-on: ubuntu-26.04
     timeout-minutes: 90
-    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'dev' }}
+    environment: production
     env:
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
@@ -200,12 +187,7 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/asc"
           "$RUNNER_TEMP/asc/bin/pip" install --quiet --disable-pip-version-check "pyjwt[crypto]"
           echo "$RUNNER_TEMP/asc/bin" >> "$GITHUB_PATH"
-      # Internal testers get every build automatically; this confirms it finished processing (VALID).
-      - name: Wait for TestFlight processing
-        if: github.ref == 'refs/heads/develop'
-        run: python scripts/ci/asc.py testflight --version "$MARKETING_VERSION" --build "$BUILD_NUMBER"
       - name: Store listing text
-        if: github.ref == 'refs/heads/main'
         env:
           REVIEW_CONTACT_FIRST_NAME: ${{ vars.REVIEW_CONTACT_FIRST_NAME }}
           REVIEW_CONTACT_LAST_NAME: ${{ vars.REVIEW_CONTACT_LAST_NAME }}
@@ -213,7 +195,6 @@ jobs:
           REVIEW_CONTACT_EMAIL: ${{ vars.REVIEW_CONTACT_EMAIL }}
         run: python scripts/ci/asc.py metadata --version "$MARKETING_VERSION"
       - name: Submit for App Review
-        if: github.ref == 'refs/heads/main'
         env:
           # Empty: What's New comes from store/en-US/release_notes.txt (set by the step above).
           WHATS_NEW: ${{ vars.WHATS_NEW }}

@@ -47,11 +47,17 @@ log=build/xcodebuild-archive.log
 : > "$log"
 trap 'python3 scripts/ci/warnings.py "$log" "Archive & upload" || true; cleanup' EXIT
 
+# COMPILATION_CACHE_DIR (optional): Xcode's compilation cache, kept between CI runs by ios.yml.
+cache=()
+if [ -n "${COMPILATION_CACHE_DIR:-}" ]; then
+  cache=(COMPILATION_CACHE_ENABLE_CACHING=YES COMPILATION_CACHE_CAS_PATH="$PWD/$COMPILATION_CACHE_DIR")
+fi
+
 echo "Archiving $MARKETING_VERSION ($BUILD_NUMBER) for server ${ATTND_SERVER:-attnd.app}"
 xcodebuild archive -project Attnd.xcodeproj -scheme Attnd -configuration Release \
   -destination 'generic/platform=iOS' -archivePath build/Attnd.xcarchive "${auth[@]}" \
   CURRENT_PROJECT_VERSION="$BUILD_NUMBER" MARKETING_VERSION="$MARKETING_VERSION" \
-  ATTND_SERVER="${ATTND_SERVER:-attnd.app}" ATTND_API_KEY= COMPILER_INDEX_STORE_ENABLE=NO 2>&1 | tee -a "$log"
+  ATTND_SERVER="${ATTND_SERVER:-attnd.app}" ATTND_API_KEY= COMPILER_INDEX_STORE_ENABLE=NO ${cache[@]+"${cache[@]}"} 2>&1 | tee -a "$log"
 
 cat > build/ExportOptions.plist <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

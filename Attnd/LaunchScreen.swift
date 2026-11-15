@@ -89,6 +89,8 @@ struct LaunchScreen: View {
                 Task { await joinByCode(trimmedQuery) }
             }
             .refreshable { await loadNearby() }
+            // Distance + compass arrow to each nearby event while the list shows any.
+            .usesUserLocation(heading: true, active: !nearbyResults.isEmpty)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button { showScanner = true } label: {
@@ -170,24 +172,43 @@ struct LaunchScreen: View {
 private struct EventRow: View {
     let result: NearbyEventResult
 
+    @Environment(AppState.self) private var appState
+
     private var event: Event { result.event }
 
     var body: some View {
+        // Re-evaluated every minute so "in 12 min" stays current.
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            content(now: context.date)
+        }
+    }
+
+    private func content(now: Date) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(event.name).font(.headline)
             HStack {
-                if let miles = result.distanceMiles {
-                    Text(String(format: "%.1f mi away", miles))
+                if appState.userLocation.direction(to: event.coordinate) != nil {
+                    // "0.6 mi ↗" from the live position.
+                    DistanceBadge(target: event.coordinate, font: .subheadline)
+                } else if let miles = result.distanceMiles, miles.isFinite {
+                    // The server's distance, in the phone's region units.
+                    Text(DistanceText.text(meters: miles * DistanceText.metersPerMile, imperial: DistanceText.usesImperial()))
                 }
                 Spacer()
-                if let start = event.startTime {
-                    Text(EventTimeFormat.dateTime(start, in: event.timeZone))
+                // "in 3 days", "today 7:30 PM", "Now" — `starts_in_hours` is never printed as hours.
+                if let relative = RelativeTimeText.event(event, startsInHours: result.startsInHours, now: now) {
+                    Text(relative)
+                        .foregroundStyle(.tint)
                 }
             }
             .font(.subheadline)
             .foregroundStyle(.secondary)
-            if !event.address.isEmpty {
-                Text(event.address)
+            let details = [
+                event.startTime.map { EventTimeFormat.dateTime($0, in: event.timeZone) },
+                event.address.isEmpty ? nil : event.address,
+            ].compactMap { $0 }
+            if !details.isEmpty {
+                Text(details.joined(separator: " · "))
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }

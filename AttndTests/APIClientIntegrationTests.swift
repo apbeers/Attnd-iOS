@@ -430,6 +430,19 @@ final class APIClientIntegrationTests: XCTestCase {
         XCTAssertEqual(mainStage.snippet, "Headliners every night")
         XCTAssertTrue(mainStage.description.hasPrefix("The big one: headliners each night"))
 
+        // Tags (API-010): every location and item has 2–6 lower-case tags.
+        func checkTags(_ tags: [String], _ name: String) {
+            XCTAssertTrue((2...6).contains(tags.count), "\(name) has 2–6 tags: \(tags)")
+            XCTAssertTrue(tags.allSatisfy { $0 == $0.lowercased() }, "\(name) tags are lower case: \(tags)")
+        }
+        for location in bundle.locations { checkTags(location.tags, location.name) }
+        for item in bundle.schedule { checkTags(item.tags, item.name) }
+        XCTAssertEqual(mainStage.tags, ["live music", "headliners", "free"])
+        XCTAssertEqual(Set(bundle.locations.filter { $0.tags.contains("live music") }.map(\.name)),
+                       ["Main Stage", "Trinity Stage", "Panther Island Pavilion", "Roaming Mariachi"])
+        XCTAssertEqual(Set(bundle.locations.filter { $0.tags.contains("food") }.map(\.name)),
+                       ["Chef Demo Kitchen", "Taco Row", "BBQ Pit Lane", "Sweet Spot"])
+
         // Schedule: 51 items, sorted, start < end, 3 without a location, now/next non-empty.
         XCTAssertEqual(bundle.schedule.count, 51)
         let starts = bundle.schedule.compactMap(\.startTime)
@@ -444,16 +457,20 @@ final class APIClientIntegrationTests: XCTestCase {
         }
         let general = bundle.schedule.filter { $0.locationId == nil }
         XCTAssertEqual(general.count, 3)
-        XCTAssertTrue(general.allSatisfy { $0.tags == ["General"] && $0.locationName == nil })
+        XCTAssertTrue(general.allSatisfy { $0.tags == ["general", "free"] && $0.locationName == nil })
         XCTAssertEqual(Set(general.map(\.name)), ["Opening ceremony", "Gates open"])
         let stages: Set<String> = ["Main Stage", "Trinity Stage", "Panther Island Pavilion"]
-        let music = bundle.schedule.filter { $0.tags.contains("Music") }
+        let music = bundle.schedule.filter { $0.tags.contains("live music") }
         XCTAssertEqual(music.count, 36)
         XCTAssertTrue(music.allSatisfy { stages.contains($0.locationName ?? "") }, "music is on the three stages")
-        XCTAssertEqual(bundle.schedule.filter { $0.locationName == "Chef Demo Kitchen" }.count, 9)
+        let kitchen = bundle.schedule.filter { $0.locationName == "Chef Demo Kitchen" }
+        XCTAssertEqual(kitchen.count, 9)
+        XCTAssertTrue(kitchen.allSatisfy { $0.tags.contains("food") && $0.tags.contains("demo") }, "demos are tagged food + demo")
         let kids = bundle.schedule.filter { $0.locationName == "Kids Zone" }
         XCTAssertEqual(kids.count, 3)
-        XCTAssertTrue(kids.allSatisfy { $0.name == "Face painting & games" && $0.tags.contains("Family") })
+        XCTAssertTrue(kids.allSatisfy {
+            $0.name == "Face painting & games" && $0.tags.contains("family") && $0.tags.contains("kid-friendly")
+        })
         let now = Date()
         XCTAssertTrue(bundle.schedule.contains { ($0.endTime ?? .distantPast) > now }, "something is on now or next")
         let locationIds = Set(bundle.locations.map(\.id))
@@ -472,5 +489,7 @@ final class APIClientIntegrationTests: XCTestCase {
         XCTAssertEqual(sent.count, bundle.notifications.count, "every notification has a send time")
         XCTAssertEqual(sent, sent.sorted(by: >), "notifications are newest first")
         XCTAssertTrue(sent.allSatisfy { $0 <= now.addingTimeInterval(60) }, "no future notifications")
+        // API-011: only "Set time change" is urgent.
+        XCTAssertEqual(bundle.notifications.filter(\.isUrgent).map(\.title), ["Set time change"])
     }
 }

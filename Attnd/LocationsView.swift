@@ -61,44 +61,68 @@ struct LocationsView: View {
     @Environment(AppState.self) private var appState
     @State private var searchText = ""
     @State private var selectedCategory: String?
+    /// The "Hearted" chip: only hearted locations.
+    @State private var heartedOnly = false
 
     private var display: DisplayConfig { appState.display }
 
     private var filtered: [Location] {
         LocationGrouping.filter(appState.locations, category: selectedCategory)
+            .filter { !heartedOnly || appState.isHearted(.location($0.id)) }
             .filter { SearchMatching.matches($0, query: searchText) }
     }
 
+    /// The Hearted chip appears once something is hearted (or while it is on).
+    private var showsHeartedChip: Bool { appState.hasHearts || heartedOnly }
+
     var body: some View {
         let locations = filtered
+        // Re-evaluated every minute for the "Now: … · Next …" lines.
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            list(locations, now: context.date)
+        }
+        .navigationTitle("Locations")
+        .modifier(SearchableIf(enabled: display.enableSearch, text: $searchText, prompt: "Search locations"))
+        .refreshable { await appState.pullToRefresh() }
+        .usesUserLocation(heading: true)
+    }
+
+    private func list(_ locations: [Location], now: Date) -> some View {
         List(selection: $selection) {
-            if !appState.filterCategories.isEmpty {
-                CategoryChips(categories: appState.filterCategories, selection: $selectedCategory)
-                    .listRowInsets(EdgeInsets())
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
+            if !appState.filterCategories.isEmpty || showsHeartedChip {
+                CategoryChips(
+                    categories: appState.filterCategories,
+                    selection: $selectedCategory,
+                    heartedOnly: showsHeartedChip ? $heartedOnly : nil
+                )
+                .listRowInsets(EdgeInsets())
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
             }
             switch display.locationsStyle {
             case .grouped:
                 ForEach(LocationGrouping.byCategory(locations, categoryOrder: appState.categories)) { section in
                     Section(section.title) {
-                        rows(section.locations)
+                        rows(section.locations, now: now)
                     }
                 }
             case .list, .cards:
-                rows(locations)
+                rows(locations, now: now)
             }
         }
         .modifier(LocationsListStyle(isCards: display.locationsStyle == .cards))
         // Siri on-screen awareness: the rows are LocationEntity values.
         .onScreenEntities(forSelectionType: Location.self) { .location($0.id) }
-        .navigationTitle("Locations")
-        .modifier(SearchableIf(enabled: display.enableSearch, text: $searchText, prompt: "Search locations"))
-        .refreshable { await appState.pullToRefresh() }
         .overlay {
             if locations.isEmpty {
                 if !searchText.isEmpty {
                     ContentUnavailableView.search(text: searchText)
+                } else if heartedOnly {
+                    ContentUnavailableView(
+                        "No Hearted Places",
+                        systemImage: "heart",
+                        description: Text("Tap the heart on a place to keep it here.")
+                    )
                 } else if appState.isLoading {
                     ProgressView()
                 } else {
@@ -113,16 +137,66 @@ struct LocationsView: View {
     }
 
     @ViewBuilder
-    private func rows(_ locations: [Location]) -> some View {
+    private func rows(_ locations: [Location], now: Date) -> some View {
         ForEach(locations) { location in
             NavigationLink(value: location) {
                 if display.locationsStyle == .cards {
-                    LocationCard(location: location, showImage: display.showLocationImages)
+                    LocationCard(location: location, showImage: display.showLocationImages, now: now)
                 } else {
-                    LocationRow(location: location, showImage: display.showLocationImages)
+                    LocationRow(location: location, showImage: display.showLocationImages, now: now)
                 }
             }
             .listRowSeparator(display.locationsStyle == .cards ? .hidden : .automatic)
+            .locationPeek(location, now: now) { selection = location }
+        }
+    }
+}
+
+// MARK: - Peek
+
+extension View {
+    /// Long press: a preview card with the key info, and Heart / Show on Map / Open.
+    func locationPeek(_ location: Location, now: Date, open: @escaping () -> Void) -> some View {
+        modifier(LocationPeekModifier(location: location, now: now, open: open))
+    }
+}
+
+private struct LocationPeekModifier: ViewModifier {
+    let location: Location
+    let now: Date
+    let open: () -> Void
+
+    @Environment(AppState.self) private var appState
+
+    func body(content: Content) -> some View {
+        let target = SearchTarget.location(location.id)
+        let hearted = appState.isHearted(target)
+        content.contextMenu {
+            Button {
+                appState.toggleHeart(target)
+            } label: {
+                Label(hearted ? "Remove Heart" : "Heart", systemImage: hearted ? "heart.slash" : "heart")
+            }
+            if location.coordinate != nil, appState.tabs.contains(.map) {
+                Button {
+                    appState.showOnMap(locationId: location.id)
+                } label: {
+                    Label("Show on Map", systemImage: "map")
+                }
+            }
+            Button(action: open) {
+                Label("Open", systemImage: "arrow.up.forward.app")
+            }
+        } preview: {
+            LocationPeek(
+                location: location,
+                glanceLine: LocationGlance.make(locationId: location.id, schedule: appState.schedule, now: now)
+                    .rowLine(now: now, timeZone: appState.timeZone),
+                distance: appState.userLocation.direction(to: location.coordinate)?
+                    .text(imperial: DistanceText.usesImperial()),
+                hearted: hearted
+            )
+            .environment(appState)
         }
     }
 }
@@ -213,6 +287,8 @@ struct CategoryChips: View {
     @Binding var selection: String?
     /// True over the map; false inside the Locations list.
     var floating = false
+    /// The "Hearted" toggle chip, first in the row (nil: not shown).
+    var heartedOnly: Binding<Bool>? = nil
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -221,7 +297,7 @@ struct CategoryChips: View {
                 .padding(.vertical, 6)
         }
         .scrollClipDisabled()
-        .accessibilityLabel("Filter by category")
+        .accessibilityLabel("Filters")
     }
 
     @ViewBuilder
@@ -237,20 +313,34 @@ struct CategoryChips: View {
 
     private var chips: some View {
         HStack(spacing: 8) {
-            chip("All", isSelected: selection == nil) { selection = nil }
-            ForEach(categories, id: \.self) { category in
-                chip(category, isSelected: selection == category) {
-                    selection = selection == category ? nil : category
+            if let heartedOnly {
+                let isOn = heartedOnly.wrappedValue
+                chip("Hearted", systemImage: isOn ? "heart.fill" : "heart", isSelected: isOn) {
+                    heartedOnly.wrappedValue.toggle()
+                }
+            }
+            if !categories.isEmpty {
+                chip("All", isSelected: selection == nil) { selection = nil }
+                ForEach(categories, id: \.self) { category in
+                    chip(category, isSelected: selection == category) {
+                        selection = selection == category ? nil : category
+                    }
                 }
             }
         }
     }
 
     @ViewBuilder
-    private func chip(_ title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+    private func chip(_ title: String, systemImage: String? = nil, isSelected: Bool, action: @escaping () -> Void) -> some View {
         let button = Button(action: action) {
-            Text(title)
-                .font(.subheadline.weight(isSelected ? .semibold : .regular))
+            Group {
+                if let systemImage {
+                    Label(title, systemImage: systemImage)
+                } else {
+                    Text(title)
+                }
+            }
+            .font(.subheadline.weight(isSelected ? .semibold : .regular))
         }
         .buttonBorderShape(.capsule)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
@@ -265,10 +355,12 @@ struct CategoryChips: View {
 
 // MARK: - Rows
 
-/// Compact row with an optional thumbnail.
+/// Compact row with an optional thumbnail, what's on now / next there, the distance from the
+/// user (with location permission) and a heart.
 struct LocationRow: View {
     let location: Location
     let showImage: Bool
+    var now: Date = .now
 
     var body: some View {
         HStack(spacing: 12) {
@@ -286,7 +378,11 @@ struct LocationRow: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
+                LocationGlanceLine(location: location, now: now)
+                DistanceBadge(target: location.coordinate)
             }
+            Spacer(minLength: 0)
+            HeartButton(target: .location(location.id))
         }
         .padding(.vertical, 4)
     }
@@ -296,6 +392,7 @@ struct LocationRow: View {
 struct LocationCard: View {
     let location: Location
     let showImage: Bool
+    var now: Date = .now
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -305,21 +402,53 @@ struct LocationCard: View {
                     .frame(height: 180)
                     .clipShape(RoundedRectangle(cornerRadius: 14))
             }
-            Text(location.name)
-                .font(.title3.bold())
+            HStack(alignment: .firstTextBaseline) {
+                Text(location.name)
+                    .font(.title3.bold())
+                Spacer(minLength: 0)
+                HeartButton(target: .location(location.id))
+            }
             if !location.snippet.isEmpty {
                 Text(location.snippet)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(3)
             }
-            if let category = location.category {
-                Text(category)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.tint)
+            LocationGlanceLine(location: location, now: now)
+            HStack {
+                if let category = location.category {
+                    Text(category)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.tint)
+                }
+                Spacer(minLength: 0)
+                DistanceBadge(target: location.coordinate)
             }
         }
         .padding(.vertical, 8)
+    }
+}
+
+/// "Now: Prairie Lights · Next 8:30 Midnight Choir" for a location with schedule items.
+struct LocationGlanceLine: View {
+    let location: Location
+    let now: Date
+
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        let glance = LocationGlance.make(locationId: location.id, schedule: appState.schedule, now: now)
+        if let line = glance.rowLine(now: now, timeZone: appState.timeZone) {
+            HStack(spacing: 6) {
+                if glance.isLive {
+                    Circle().fill(.red).frame(width: 7, height: 7).accessibilityHidden(true)
+                }
+                Text(line)
+                    .lineLimit(1)
+            }
+            .font(.caption)
+            .foregroundStyle(.tint)
+        }
     }
 }
 
@@ -445,7 +574,9 @@ struct LocationDetailView: View {
         .navigationTitle(location.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            HeartToolbarItem(target: .location(location.id), appState: appState)
             if location.coordinate != nil, appState.tabs.contains(.map) {
+                ToolbarSpacer(.fixed, placement: .topBarTrailing)
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         // Also closes the search sheet when the detail was opened from search.
@@ -461,6 +592,7 @@ struct LocationDetailView: View {
         .onScreenEntity(.location(location.id))
         // Counted for every route here: the list, a map pin, a schedule item (API-005).
         .task(id: location.id) { appState.track(.locationView, id: location.id) }
+        .usesUserLocation(heading: true)
     }
 
     @ViewBuilder
@@ -487,11 +619,22 @@ struct LocationDetailView: View {
                             .foregroundStyle(.tint)
                     }
 
+                    if !location.tags.isEmpty {
+                        // Lower case from the server (API-010), capitalised for display.
+                        Text(TagText.line(location.tags))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+
                     if !location.address.isEmpty {
                         Text(location.address)
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
+
+                    DistanceBadge(target: location.coordinate, font: .subheadline)
+
+                    LocationGlanceLine(location: location, now: now)
 
                     if let coordinate = location.coordinate {
                         Button {
@@ -563,18 +706,21 @@ private struct LocationScheduleRow: View {
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
                 Spacer()
-                if ScheduleTiming.isHappening(item, at: now) {
-                    Text("Now")
-                        .font(.caption.bold())
-                        .foregroundStyle(.tint)
-                } else if let countdown = item.startsInText(relativeTo: now) {
-                    Text(countdown)
+                if let relative = RelativeTimeText.item(item, now: now, timeZone: timeZone) {
+                    Text(relative)
                         .font(.caption)
                         .fontWeight(.bold)
-                        .foregroundStyle(.tint)
+                        .foregroundStyle(ScheduleTiming.hasEnded(item, at: now) ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
                 }
             }
-            Text(item.name).font(.headline)
+            if let progress = ScheduleTiming.progress(item, at: now) {
+                ItemProgressBar(progress: progress)
+            }
+            HStack(alignment: .firstTextBaseline) {
+                Text(item.name).font(.headline)
+                Spacer(minLength: 0)
+                HeartButton(target: .scheduleItem(item.id), font: .subheadline)
+            }
             if !item.description.isEmpty {
                 Text(item.description)
                     .font(.subheadline)

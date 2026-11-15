@@ -10,6 +10,12 @@
 // housings on foldables. They sit above the tab's floating search button
 // (ContentView `floatingSearchButton()` adds its height to the bottom safe area), so the
 // map buttons and the search button form one trailing column and the card never covers it.
+//
+// Glance (Glance.swift): a live dot / "Next 7:30" over pins with something on now or soon, a
+// "now playing" strip under the chips, a Hearted chip, and for the selected pin the distance,
+// a heart and — within walking range — a walking route ("12 min walk · 0.6 mi"; a dashed
+// straight line + "about 8 min walk" when there is no believable route). Location and compass
+// run only while a pin is selected. Navigation is never started (Directions stays in the detail).
 
 import SwiftUI
 import MapKit
@@ -27,11 +33,41 @@ struct MapView: View {
     @State private var selectedLocationId: Int?
     @State private var navigateToLocation: Location?
     @State private var selectedCategory: String?
+    /// The "Hearted" chip: only hearted pins.
+    @State private var heartedOnly = false
+    /// Refreshed every 30 s for the live dots, "Next 7:30" and the now-playing strip.
+    @State private var now = Date.now
     /// Visible span, for clustering. Updated when the camera stops moving.
     @State private var visibleSpan = MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
 
     private var visibleLocations: [Location] {
         LocationGrouping.filter(appState.locations, category: selectedCategory)
+            .filter { !heartedOnly || appState.isHearted(.location($0.id)) }
+    }
+
+    private var showsHeartedChip: Bool { appState.hasHearts || heartedOnly }
+
+    /// Screenshot mode keeps the App Store map clean.
+    private var showsGlance: Bool { !ScreenshotMode.isActive }
+
+    /// The walk to the selected pin: needs location permission and the user within ~8 km.
+    private var walkRequest: WalkRequest? {
+        guard let location = selectedLocation, let destination = location.coordinate,
+              let direction = appState.userLocation.direction(to: destination),
+              let user = appState.userLocation.location,
+              !direction.isHere, WalkTime.isWithinWalkingRange(direction.meters) else { return nil }
+        return WalkRequest(locationId: location.id, user: user, destination: destination)
+    }
+
+    private struct WalkRequest: Equatable {
+        var locationId: Int
+        var user: Coordinate
+        var destination: Coordinate
+    }
+
+    private var currentWalk: WalkRoute? {
+        guard let request = walkRequest else { return nil }
+        return appState.walkingRoutes.route(for: request.locationId, from: request.user)
     }
 
     private var clusters: [MapCluster] {
@@ -49,10 +85,36 @@ struct MapView: View {
 
     var body: some View {
         let allClusters = self.clusters
+        let walk = currentWalk
+        let glances = showsGlance ? LocationGlance.all(schedule: appState.schedule, now: now) : [:]
+        let badges = allClusters.filter(\.isSingle).compactMap { cluster -> PinBadge? in
+            let location = cluster.locations[0]
+            guard let glance = glances[location.id] else { return nil }
+            let subtitle = glance.pinSubtitle(now: now, timeZone: appState.timeZone)
+            guard glance.isLive || subtitle != nil else { return nil }
+            return PinBadge(locationId: location.id, coordinate: cluster.coordinate, isLive: glance.isLive, subtitle: subtitle)
+        }
         Map(position: $cameraPosition, selection: $selectedLocationId) {
+            if let walk {
+                if walk.isEstimate {
+                    MapPolyline(coordinates: walk.linePoints.map(\.clCoordinate))
+                        .stroke(.tint, style: StrokeStyle(lineWidth: 4, lineCap: .round, dash: [2, 8]))
+                } else {
+                    MapPolyline(coordinates: walk.linePoints.map(\.clCoordinate))
+                        .stroke(.tint, lineWidth: 5)
+                }
+            }
             ForEach(allClusters.filter(\.isSingle)) { cluster in
                 Marker(cluster.locations[0].name, coordinate: cluster.coordinate.clCoordinate)
                     .tag(cluster.locations[0].id)
+            }
+            // Live dot / "Next 7:30" floating just above the pin's balloon (not selectable).
+            ForEach(badges) { badge in
+                Annotation("", coordinate: badge.coordinate.clCoordinate, anchor: .bottom) {
+                    PinGlanceBadge(isLive: badge.isLive, subtitle: badge.subtitle)
+                        .padding(.bottom, badge.locationId == selectedLocationId ? 66 : 42)
+                }
+                .annotationTitles(.hidden)
             }
             ForEach(allClusters.filter { !$0.isSingle }) { cluster in
                 Annotation("\(cluster.locations.count) places", coordinate: cluster.coordinate.clCoordinate) {
@@ -83,11 +145,22 @@ struct MapView: View {
             focus(on: id)
             appState.mapFocusLocationId = nil
         }
-        .onChange(of: selectedCategory) {
-            if let id = selectedLocationId, !visibleLocations.contains(where: { $0.id == id }) {
-                selectedLocationId = nil
+        .onChange(of: selectedCategory) { dropHiddenSelection() }
+        .onChange(of: heartedOnly) { dropHiddenSelection() }
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                guard !Task.isCancelled else { break }
+                now = .now
             }
         }
+        // The walking route for the selected pin (cached until the user moves > 50 m).
+        .task(id: walkRequest) {
+            guard let request = walkRequest else { return }
+            await appState.walkingRoutes.load(locationId: request.locationId, from: request.user, to: request.destination)
+        }
+        // Position + compass only while the selected-location card shows distance and route.
+        .usesUserLocation(heading: true, active: selectedLocationId != nil)
         .overlay {
             ReservedRegionAvoiding {
                 overlayContent
@@ -108,11 +181,22 @@ struct MapView: View {
     // MARK: - Overlays
 
     private var overlayContent: some View {
-        VStack(spacing: 0) {
-            if !appState.filterCategories.isEmpty {
-                CategoryChips(categories: appState.filterCategories, selection: $selectedCategory, floating: true)
-                    // Clear the floating demo / ended / offline badges (eventStatusBanners).
-                    .padding(.top, 8 + EventStatusBadgeKind.reservedTopHeight(appState))
+        let nowPlaying = showsGlance ? NowPlayingItem.items(schedule: appState.schedule, locations: visibleLocations, now: now) : []
+        let hasChips = !appState.filterCategories.isEmpty || showsHeartedChip
+        return VStack(spacing: 0) {
+            if hasChips {
+                CategoryChips(
+                    categories: appState.filterCategories,
+                    selection: $selectedCategory,
+                    floating: true,
+                    heartedOnly: showsHeartedChip ? $heartedOnly : nil
+                )
+            }
+            if !nowPlaying.isEmpty {
+                NowPlayingStrip(items: nowPlaying) { locationId in
+                    focus(on: locationId)
+                }
+                .padding(.top, hasChips ? 0 : 4)
             }
             Spacer(minLength: 0)
             HStack {
@@ -124,7 +208,7 @@ struct MapView: View {
                 .padding()
             }
             if let location = selectedLocation {
-                LocationInfoCard(location: location) {
+                LocationInfoCard(location: location, walkText: walkCardText) {
                     navigateToLocation = location
                 }
                 .frame(maxWidth: 480)
@@ -133,7 +217,21 @@ struct MapView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        // Clear the floating demo / ended / offline badges (eventStatusBanners).
+        .padding(.top, hasChips || !nowPlaying.isEmpty ? 8 + EventStatusBadgeKind.reservedTopHeight(appState) : 0)
         .animation(.spring(duration: 0.3), value: selectedLocationId)
+        .animation(.easeInOut, value: nowPlaying.map(\.id))
+    }
+
+    /// "12 min walk · 0.6 mi", or "about 8 min walk" without a believable route.
+    private var walkCardText: String? {
+        currentWalk?.text(imperial: DistanceText.usesImperial())
+    }
+
+    private func dropHiddenSelection() {
+        if let id = selectedLocationId, !visibleLocations.contains(where: { $0.id == id }) {
+            selectedLocationId = nil
+        }
     }
 
     // MARK: - Camera
@@ -162,6 +260,9 @@ struct MapView: View {
         guard let location = appState.location(id: locationId), let coordinate = location.coordinate else { return }
         if selectedCategory != nil, location.category != selectedCategory {
             selectedCategory = nil
+        }
+        if heartedOnly, !appState.isHearted(.location(locationId)) {
+            heartedOnly = false
         }
         selectedLocationId = locationId
         // A focus that arrives as the map appears wins over the initial framing.
@@ -264,35 +365,64 @@ private struct MapButtonStack: View {
     }
 }
 
+// MARK: - Pin glance
+
+/// A String id on purpose: Map content in a ForEach is tagged with its id when the id has the
+/// selection's type (Int), and these badges must never be selectable.
+private struct PinBadge: Identifiable {
+    var locationId: Int
+    var coordinate: Coordinate
+    var isLive: Bool
+    var subtitle: String?
+
+    var id: String { "badge-\(locationId)" }
+}
+
 // MARK: - Location Info Card
 
+/// The selected pin: name, snippet, what's on, distance + arrow, the walk, a heart. Tapping the
+/// text opens the detail; the heart is its own button.
 private struct LocationInfoCard: View {
     let location: Location
+    let walkText: String?
     let onTap: () -> Void
 
     var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(location.name)
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-                    if !location.snippet.isEmpty {
-                        Text(location.snippet)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
+        HStack(spacing: 8) {
+            Button(action: onTap) {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(location.name)
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                        if !location.snippet.isEmpty {
+                            Text(location.snippet)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                        LocationGlanceLine(location: location, now: .now)
+                        HStack(spacing: 8) {
+                            DistanceBadge(target: location.coordinate, font: .subheadline)
+                            if let walkText {
+                                Label(walkText, systemImage: "figure.walk")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
                     }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                .contentShape(.rect(cornerRadius: 22))
             }
-            .padding()
-            .contentShape(.rect(cornerRadius: 22))
+            .buttonStyle(.plain)
+            HeartButton(target: .location(location.id), font: .title3)
         }
-        .buttonStyle(.plain)
+        .padding()
         // Interactive Liquid Glass card (was a glass capsule drawn behind a rounded rectangle).
         .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 22))
     }

@@ -110,6 +110,16 @@ final class AppState {
     /// The joined event prepared for local search; rebuilt with every applied bundle.
     private(set) var searchIndex: EventSearchIndex?
 
+    // MARK: - Glance (location, hearts, unread updates)
+
+    /// The user's position and heading while a screen showing distances is visible.
+    let userLocation = UserLocationTracker()
+    /// Walking routes for the map card.
+    let walkingRoutes = WalkingRouteProvider()
+    /// Hearts and the Updates "seen" mark for the current event (UserDefaults, per event).
+    private(set) var personal = EventPersonalState()
+    @ObservationIgnored private var personalEventId: Int?
+
     // MARK: - Device
 
     let deviceId: String
@@ -208,6 +218,8 @@ final class AppState {
         static let notificationsEnabled = "pref.notificationsEnabled"
         static let pushToken = "pref.pushToken"
         static let dismissedUpdateVersion = "pref.dismissedUpdateVersion"
+        /// `EventPersonalState` JSON (hearts, Updates seen) for one event.
+        static func personal(_ eventId: Int) -> String { "pref.event.\(eventId)" }
     }
 
     // MARK: - Init
@@ -459,6 +471,7 @@ final class AppState {
         }
         savedEventCode = event.eventCode
         currentEvent = event
+        loadPersonalState(for: event.id)
         Task { await self.ensureJoined() }
         await refreshBundle()
     }
@@ -520,6 +533,7 @@ final class AppState {
         focusRequest = nil
         presentedSheet = nil
         searchIndex = nil
+        loadPersonalState(for: nil)
         #if !APP_CLIP
         EventEntityIndex.shared.update(with: nil)
         #endif
@@ -589,6 +603,7 @@ final class AppState {
     private func apply(_ bundle: EventBundle) {
         let isFirstApply = !hasAppliedDefaultTab
         currentEvent = bundle.event
+        loadPersonalState(for: bundle.event.id)
         contentVersion = bundle.contentVersion
         display = ScreenshotMode.current?.adjusted(bundle.display) ?? bundle.display
         categories = bundle.categories
@@ -803,6 +818,83 @@ final class AppState {
         }
         await diskTask?.value
         return true
+    }
+
+    // MARK: - Hearts (API-009 usage) and unread updates
+
+    /// Loads the event's hearts and Updates mark when the event changes (nil clears them).
+    private func loadPersonalState(for eventId: Int?) {
+        guard personalEventId != eventId else { return }
+        personalEventId = eventId
+        walkingRoutes.clear()
+        // Screenshot mode starts clean and never writes.
+        guard let eventId, !ScreenshotMode.isActive,
+              let data = UserDefaults.standard.data(forKey: Keys.personal(eventId)),
+              let saved = try? JSONDecoder().decode(EventPersonalState.self, from: data) else {
+            personal = EventPersonalState()
+            return
+        }
+        personal = saved
+    }
+
+    private func savePersonalState() {
+        guard let eventId = personalEventId, !ScreenshotMode.isActive,
+              let data = try? JSONEncoder().encode(personal) else { return }
+        UserDefaults.standard.set(data, forKey: Keys.personal(eventId))
+    }
+
+    func isHearted(_ target: SearchTarget) -> Bool {
+        personal.isHearted(target)
+    }
+
+    /// Hearts or unhearts a location or schedule item of the current event, counted as
+    /// `location_heart` / `schedule_item_unheart` … with the item's id (API-009).
+    func setHeart(_ hearted: Bool, for target: SearchTarget) {
+        guard currentEvent != nil, let metric = personal.setHeart(hearted, for: target) else { return }
+        savePersonalState()
+        switch target {
+        case .location(let id), .scheduleItem(let id):
+            track(metric, id: id)
+        case .notification, .event:
+            break
+        }
+    }
+
+    func toggleHeart(_ target: SearchTarget) {
+        setHeart(!isHearted(target), for: target)
+    }
+
+    var hasHearts: Bool { personal.hasHearts }
+
+    /// The Updates tab's badge: updates sent since the tab was last seen (0 in screenshot mode).
+    var unreadUpdatesCount: Int {
+        guard !ScreenshotMode.isActive else { return 0 }
+        return UpdatesInbox.unreadCount(notifications, seenAt: personal.updatesSeenAt)
+    }
+
+    /// The newest unread update (≤ 24 h old, not dismissed) for the banner above the other tabs.
+    func latestUpdateBanner(now: Date = .now) -> AppNotification? {
+        guard !ScreenshotMode.isActive, currentEvent != nil else { return nil }
+        return UpdatesInbox.banner(
+            notifications,
+            seenAt: personal.updatesSeenAt,
+            dismissedId: personal.dismissedUpdateBannerId,
+            now: now
+        )
+    }
+
+    /// The Updates list is on screen: everything in it counts as seen.
+    func markUpdatesSeen() {
+        guard currentEvent != nil else { return }
+        let unread = UpdatesInbox.unreadCount(notifications, seenAt: personal.updatesSeenAt)
+        guard unread > 0 || personal.updatesSeenAt == nil else { return }
+        personal.updatesSeenAt = UpdatesInbox.seenMark(notifications, now: .now)
+        savePersonalState()
+    }
+
+    func dismissLatestUpdate(_ notificationId: Int) {
+        personal.dismissedUpdateBannerId = notificationId
+        savePersonalState()
     }
 
     // MARK: - Usage (API-005)

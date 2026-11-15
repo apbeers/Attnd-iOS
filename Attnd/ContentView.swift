@@ -54,7 +54,9 @@ struct AppRootView: View {
             await appState.launch()
             isLaunching = false
         }
-        .onChange(of: scenePhase) { _, phase in
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            // Location and compass only run while the scene is active (and a screen needs them).
+            appState.userLocation.setSceneActive(phase == .active)
             if phase == .active, !isLaunching {
                 Task { await appState.checkForUpdate() }
             }
@@ -179,8 +181,11 @@ struct ContentView: View {
             ForEach(appState.tabs) { tab in
                 Tab(tab.title, systemImage: tab.systemImage, value: tab) {
                     tabContent(tab)
+                        .latestUpdateBanner(enabled: tab != .notifications)
                         .floatingSearchButton()
                 }
+                // Updates sent since the tab was last seen (0 hides the badge).
+                .badge(tab == .notifications ? appState.unreadUpdatesCount : 0)
             }
         }
         // The tab bar stays visible (no minimize on scroll).
@@ -253,6 +258,35 @@ struct ContentView: View {
     /// The event's own accent; nil → the asset AccentColor (brand purple #431F86).
     private var accentColor: Color? {
         HexColor.components(appState.accentHex).map { Color(red: $0.red, green: $0.green, blue: $0.blue) }
+    }
+}
+
+// MARK: - Newest update banner
+
+extension View {
+    /// The newest unread organizer update (sent within 24 h, not dismissed) as a Liquid Glass
+    /// card above the tab's content, on every tab except Updates. Tapping it opens the update;
+    /// the cross dismisses it (remembered per event). Never in screenshot mode.
+    func latestUpdateBanner(enabled: Bool) -> some View {
+        modifier(LatestUpdateBannerModifier(enabled: enabled))
+    }
+}
+
+private struct LatestUpdateBannerModifier: ViewModifier {
+    let enabled: Bool
+
+    @Environment(AppState.self) private var appState
+
+    func body(content: Content) -> some View {
+        let notification = enabled ? appState.latestUpdateBanner() : nil
+        content
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if let notification {
+                    LatestUpdateBanner(notification: notification)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .animation(.easeInOut, value: notification?.id)
     }
 }
 

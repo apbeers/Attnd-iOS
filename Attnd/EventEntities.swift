@@ -46,6 +46,32 @@ enum IntentBridge {
         await appState.restoreSavedEventIfNeeded()
         appState.showSearch(query)
     }
+
+    /// Hearts / unhearts an item of the joined event. False outside an event or for an item
+    /// the event no longer has.
+    static func setHeart(_ hearted: Bool, for target: SearchTarget) async -> Bool {
+        guard let appState else { return false }
+        await appState.restoreSavedEventIfNeeded()
+        guard let bundle = appState.currentBundle else { return false }
+        switch target {
+        case .scheduleItem(let id):
+            guard bundle.schedule.contains(where: { $0.id == id }) else { return false }
+        case .location(let id):
+            guard bundle.locations.contains(where: { $0.id == id }) else { return false }
+        case .notification, .event:
+            return false
+        }
+        appState.setHeart(hearted, for: target)
+        return true
+    }
+
+    /// The joined event and what the user hearted in it (nil outside an event).
+    static func hearted() async -> (bundle: EventBundle, targets: [SearchTarget])? {
+        guard let appState else { return nil }
+        await appState.restoreSavedEventIfNeeded()
+        guard let bundle = appState.currentBundle else { return nil }
+        return (bundle, appState.personal.heartedTargets(in: bundle))
+    }
 }
 
 /// String queries for entities: the local search, retried with the question's keywords

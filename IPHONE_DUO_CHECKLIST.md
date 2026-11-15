@@ -27,6 +27,10 @@ Test each posture **upright and rotated 90° both ways**. Change posture **while
 - [ ] **Search button**: the floating glass magnifying glass sits bottom-trailing above the tab bar on every tab, clear of the fold and camera housings; it opens the search sheet with the field focused and the keyboard up; results push details, Back returns to the results.
 - [ ] **Options**: the gear item (icon + title, pinned trailing) is on every tab's root screen and opens Options as a sheet; toggles work; leave-event confirmation dialog is presented correctly in each posture.
 - [ ] **Banners**: Demo / ended banners stay below the navigation bar in every posture.
+- [ ] **Newest-update banner**: the glass card above non-Updates tabs stays readable and tappable in every posture, never under the fold or a camera housing; dismiss works; the Updates tab badge clears once Updates is shown.
+- [ ] **Map glance**: the "now playing" strip sits under the chips (both clear of the fold and camera housings, below the status badges); pin badges (live dot / "Next 7:30") stay attached to their pins after fold/unfold; the selected-location card shows distance, arrow and walk without overlapping the map buttons or the search button; the walking route line survives fold/unfold.
+- [ ] **Compass arrows**: with the phone held in each posture and rotation, arrows point the right way (iOS 27 `headingBody` follows the active display); they stop updating when the app goes to the background.
+- [ ] **Peek**: long-press previews on Locations and Schedule rows present correctly in each posture.
 
 ## Sheets and popovers
 

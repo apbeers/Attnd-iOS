@@ -2,7 +2,6 @@
 // AttndTests
 //
 // Network-free tests for small helpers:
-//   - ScheduleItem.startsInText(relativeTo:)
 //   - DeepLink parsing (Universal Links and scanned QR codes)
 //   - query-value encoding for names containing & = +
 //   - PushPayload parsing
@@ -15,43 +14,6 @@ import XCTest
 @testable import Attnd
 
 final class BusinessLogicTests: XCTestCase {
-
-    /// Fixed anchor so both the item's start and `now` derive from the same point.
-    private let anchor = Date(timeIntervalSinceReferenceDate: 0) // 2001-01-01 00:00:00 UTC
-
-    private func item(secondsFromAnchor seconds: TimeInterval) -> ScheduleItem {
-        ScheduleItem(id: 1, name: "Test", startTime: anchor.addingTimeInterval(seconds))
-    }
-
-    // MARK: - startsInText
-
-    func testStartsInText_HoursAndMinutes() {
-        XCTAssertEqual(item(secondsFromAnchor: 2 * 3600 + 30 * 60).startsInText(relativeTo: anchor), "Starts in 2h 30m")
-    }
-
-    func testStartsInText_ExactHours() {
-        XCTAssertEqual(item(secondsFromAnchor: 3600).startsInText(relativeTo: anchor), "Starts in 1h")
-        XCTAssertEqual(item(secondsFromAnchor: 7200).startsInText(relativeTo: anchor), "Starts in 2h")
-    }
-
-    func testStartsInText_MinutesOnly() {
-        XCTAssertEqual(item(secondsFromAnchor: 45 * 60).startsInText(relativeTo: anchor), "Starts in 45m")
-        XCTAssertEqual(item(secondsFromAnchor: 90).startsInText(relativeTo: anchor), "Starts in 1m")
-    }
-
-    func testStartsInText_UnderAMinute_IsStartingNow() {
-        XCTAssertEqual(item(secondsFromAnchor: 30).startsInText(relativeTo: anchor), "Starting now")
-    }
-
-    func testStartsInText_StartedOrPast_IsNil() {
-        XCTAssertNil(item(secondsFromAnchor: 0).startsInText(relativeTo: anchor))
-        XCTAssertNil(item(secondsFromAnchor: -60).startsInText(relativeTo: anchor))
-        XCTAssertNil(item(secondsFromAnchor: -86400).startsInText(relativeTo: anchor))
-    }
-
-    func testStartsInText_NoStartTime_IsNil() {
-        XCTAssertNil(ScheduleItem(id: 1, name: "TBA").startsInText(relativeTo: anchor))
-    }
 
     // MARK: - ISO 8601
 
@@ -229,6 +191,7 @@ final class BusinessLogicTests: XCTestCase {
     func testUsageMetric_WireNames() {
         XCTAssertEqual(UsageMetric.allCases.map(\.rawValue), [
             "app_open", "tab_view", "location_view", "schedule_item_view", "notification_open", "search", "refresh",
+            "location_heart", "location_unheart", "schedule_item_heart", "schedule_item_unheart",
         ])
         // tab_view details: the event tabs' raw values, and "options" for the Options sheet.
         XCTAssertEqual(EventTab.allCases.map(\.rawValue), ["map", "locations", "schedule", "flyer", "notifications"])

@@ -3,7 +3,7 @@
 //
 // Pure functions behind the server-driven display config: schedule grouping
 // (timeline / by day / by location / now-next), location grouping, search,
-// countdowns, map clustering and region fitting, and fold-aware overlay insets.
+// map clustering and region fitting, and fold-aware overlay insets.
 //
 // Nothing in here touches SwiftUI, MapKit or app state, so it is all unit-tested.
 
@@ -48,20 +48,6 @@ enum ScheduleTiming {
         return end <= now
     }
 
-    /// "Starts in 2h 30m" for upcoming items, nil once started (or without a start time).
-    static func startsInText(start: Date?, now: Date) -> String? {
-        guard let start else { return nil }
-        let seconds = start.timeIntervalSince(now)
-        guard seconds > 0 else { return nil }
-        let totalMinutes = Int(seconds / 60)
-        if totalMinutes < 1 { return "Starting now" }
-        let hours = totalMinutes / 60
-        let minutes = totalMinutes % 60
-        if hours == 0 { return "Starts in \(minutes)m" }
-        if minutes == 0 { return "Starts in \(hours)h" }
-        return "Starts in \(hours)h \(minutes)m"
-    }
-
     /// True when `now` falls on a day of the event (start day through end day,
     /// in the event's time zone). Unknown start → true, so refreshes keep running.
     static func isEventDay(now: Date, start: Date?, end: Date?, timeZone: TimeZone) -> Bool {
@@ -71,12 +57,6 @@ enum ScheduleTiming {
         let lastDay = cal.startOfDay(for: max(end ?? start, start))
         let today = cal.startOfDay(for: now)
         return firstDay <= today && today <= lastDay
-    }
-}
-
-extension ScheduleItem {
-    func startsInText(relativeTo now: Date = .now) -> String? {
-        ScheduleTiming.startsInText(start: startTime, now: now)
     }
 }
 

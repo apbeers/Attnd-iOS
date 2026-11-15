@@ -9,6 +9,8 @@
 //   - Answers without opening the app (dialog + snippet): what's happening now / next, when is
 //     <item>, where is <location>, latest updates, and "ask about the event" (the on-device
 //     model when available, else local search results).
+//   - Hearts: heart / unheart a schedule item or place, and "what have I hearted" (stored on
+//     the device per event, counted as API-009 usage like a heart in the app).
 //   - Search in the app, and App Shortcuts with natural phrases (AttndShortcuts).
 
 import AppIntents
@@ -141,7 +143,11 @@ struct WhenIsIntent: AppIntent {
         case .now?:   text += " It's on now."
         case .ended?: text += " It has ended."
         case .next?, nil:
-            if let countdown = scheduleItem.startsInText(relativeTo: now) { text += " \(countdown)." }
+            // "It starts in 12 min." / "It starts tomorrow 7:30 PM." (RelativeTimeText, never "in 50 h").
+            if let start = scheduleItem.startTime, start > now {
+                let relative = RelativeTimeText.start(start, end: scheduleItem.endTime, now: now, timeZone: bundle.event.timeZone)
+                text += relative == "Starting now" ? " It's starting now." : " It starts \(relative)."
+            }
         }
         let row = EventSearchIndex(bundle).result(for: .scheduleItem(scheduleItem.id), now: now)
         return .result(
@@ -235,6 +241,75 @@ struct AskEventIntent: AppIntent {
         }
         let dialog = "Here's what I found: \(first.title)" + (first.subtitle.isEmpty ? "." : ", \(first.subtitle).")
         return .result(dialog: "\(dialog)", view: EventResultsSnippet(title: bundle.event.name, results: rows))
+    }
+}
+
+// MARK: - Hearts
+
+struct HeartScheduleItemIntent: AppIntent {
+    static let title: LocalizedStringResource = "Heart Schedule Item"
+    static let supportedModes: IntentModes = .background
+
+    @Parameter(title: "Schedule Item", requestValueDialog: "Which part of the schedule?")
+    var item: ScheduleItemEntity
+
+    @Parameter(title: "Heart", default: true)
+    var heart: Bool
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        guard await IntentBridge.setHeart(heart, for: .scheduleItem(item.id)) else {
+            return .result(dialog: IntentAnswers.noEvent)
+        }
+        let text = heart ? "Hearted \(item.name)." : "Removed the heart from \(item.name)."
+        return .result(dialog: "\(text)")
+    }
+}
+
+struct HeartLocationIntent: AppIntent {
+    static let title: LocalizedStringResource = "Heart Location"
+    static let supportedModes: IntentModes = .background
+
+    @Parameter(title: "Location", requestValueDialog: "Which place?")
+    var location: LocationEntity
+
+    @Parameter(title: "Heart", default: true)
+    var heart: Bool
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        guard await IntentBridge.setHeart(heart, for: .location(location.id)) else {
+            return .result(dialog: IntentAnswers.noEvent)
+        }
+        let text = heart ? "Hearted \(location.name)." : "Removed the heart from \(location.name)."
+        return .result(dialog: "\(text)")
+    }
+}
+
+/// "What have I hearted in Attnd": hearted schedule items (by time), then places.
+struct HeartedItemsIntent: AppIntent {
+    static let title: LocalizedStringResource = "What Have I Hearted"
+    static let supportedModes: IntentModes = .background
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ProvidesDialog & ShowsSnippetView {
+        guard let hearted = await IntentBridge.hearted() else {
+            return .result(dialog: IntentAnswers.noEvent, view: EmptyView())
+        }
+        let bundle = hearted.bundle
+        let targets = hearted.targets
+        let now = Date.now
+        let index = EventSearchIndex(bundle)
+        let rows = targets.compactMap { index.result(for: $0, now: now) }
+        guard !rows.isEmpty else {
+            return .result(dialog: "You haven't hearted anything in \(bundle.event.name) yet.", view: EmptyView())
+        }
+        let names = IntentAnswers.list(rows.prefix(3).map(\.title))
+        let more = rows.count > 3 ? " and \(rows.count - 3) more" : ""
+        return .result(
+            dialog: "You've hearted \(names)\(more).",
+            view: EventResultsSnippet(title: bundle.event.name, results: Array(rows.prefix(8)))
+        )
     }
 }
 
@@ -349,6 +424,24 @@ struct AttndShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Ask About the Event",
             systemImageName: "sparkles"
+        )
+        AppShortcut(
+            intent: HeartScheduleItemIntent(),
+            phrases: [
+                "Heart \(\.$item) in \(.applicationName)",
+                "Save \(\.$item) in \(.applicationName)",
+            ],
+            shortTitle: "Heart",
+            systemImageName: "heart"
+        )
+        AppShortcut(
+            intent: HeartedItemsIntent(),
+            phrases: [
+                "What have I hearted in \(.applicationName)",
+                "Show my hearts in \(.applicationName)",
+            ],
+            shortTitle: "Hearted",
+            systemImageName: "heart.fill"
         )
         AppShortcut(
             intent: SearchEventIntent(),

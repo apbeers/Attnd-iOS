@@ -62,6 +62,8 @@ struct ScheduleView: View {
     @State private var searchText = ""
     @State private var selectedLocationId: Int?
     @State private var showEnded = false
+    /// The "Hearted" chip: only hearted items.
+    @State private var heartedOnly = false
 
     private var resolvedStyle: ScheduleStyle { style ?? appState.display.scheduleStyle }
 
@@ -74,6 +76,7 @@ struct ScheduleView: View {
         appState.schedule.filter { item in
             if hidesEnded, ScheduleTiming.hasEnded(item, at: now) { return false }
             if let id = selectedLocationId, item.locationId != id { return false }
+            if heartedOnly, !appState.isHearted(.scheduleItem(item.id)) { return false }
             return SearchMatching.matches(item, query: searchText)
         }
     }
@@ -96,6 +99,8 @@ struct ScheduleView: View {
         .navigationTitle(title)
         .modifier(SearchableIf(enabled: appState.display.enableSearch, text: $searchText, prompt: "Search schedule"))
         .refreshable { await appState.pullToRefresh() }
+        // Walk times to each item's location (no compass needed here).
+        .usesUserLocation(heading: false)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 filterMenu
@@ -126,8 +131,17 @@ struct ScheduleView: View {
         }
     }
 
+    /// The Hearted chip appears once something is hearted (or while it is on).
+    private var showsHeartedChip: Bool { appState.hasHearts || heartedOnly }
+
     @ViewBuilder
     private func listContent(sections: [ScheduleSection], now: Date) -> some View {
+        if showsHeartedChip {
+            CategoryChips(categories: [], selection: .constant(nil), heartedOnly: $heartedOnly)
+                .listRowInsets(EdgeInsets())
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+        }
         ForEach(sections) { section in
             Section {
                 ForEach(section.items) { item in
@@ -139,6 +153,7 @@ struct ScheduleView: View {
                             timeZone: appState.timeZone
                         )
                     }
+                    .scheduleItemPeek(item, now: now) { open(item) }
                 }
             } header: {
                 if !section.title.isEmpty {
@@ -151,6 +166,15 @@ struct ScheduleView: View {
             } footer: {
                 Text(note)
             }
+        }
+    }
+
+    /// "Open" in a row's peek: select it in the split view, else show it in its tab / search.
+    private func open(_ item: ScheduleItem) {
+        if let selection {
+            selection.wrappedValue = item
+        } else {
+            appState.navigate(to: .scheduleItem(item.id))
         }
     }
 
@@ -186,6 +210,12 @@ struct ScheduleView: View {
                 ContentUnavailableView.search(text: searchText)
             } else if appState.isLoading {
                 ProgressView()
+            } else if heartedOnly {
+                ContentUnavailableView(
+                    "Nothing Hearted",
+                    systemImage: "heart",
+                    description: Text("Tap the heart on a schedule item to keep it here.")
+                )
             } else if hidesEnded, !appState.schedule.isEmpty {
                 ContentUnavailableView(
                     "All Done!",
@@ -223,6 +253,16 @@ private struct ScheduleRowView: View {
     let now: Date
     let timeZone: TimeZone
 
+    @Environment(AppState.self) private var appState
+
+    /// "8 min walk" to the item's location when the user is within walking range of it.
+    private var walkText: String? {
+        guard !ScheduleTiming.hasEnded(item, at: now),
+              let direction = appState.userLocation.direction(to: appState.location(id: item.locationId)?.coordinate),
+              WalkTime.isWithinWalkingRange(direction.meters) else { return nil }
+        return direction.isHere ? "You're here" : WalkTime.rowText(straightMeters: direction.meters)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline) {
@@ -243,16 +283,17 @@ private struct ScheduleRowView: View {
                 Text(item.name)
                     .font(.headline)
                 Spacer()
-                if ScheduleTiming.isHappening(item, at: now) {
-                    Text("Now")
-                        .font(.caption.bold())
-                        .foregroundStyle(.tint)
-                } else if let countdown = item.startsInText(relativeTo: now) {
-                    Text(countdown)
+                // Live countdown (the list re-renders every 30 s): "in 12 min", "Started 5 min ago", "Now".
+                if let relative = RelativeTimeText.item(item, now: now, timeZone: timeZone) {
+                    Text(relative)
                         .font(.caption)
                         .fontWeight(.bold)
-                        .foregroundStyle(.tint)
+                        .foregroundStyle(ScheduleTiming.hasEnded(item, at: now) ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
                 }
+                HeartButton(target: .scheduleItem(item.id), font: .subheadline)
+            }
+            if let progress = ScheduleTiming.progress(item, at: now) {
+                ItemProgressBar(progress: progress)
             }
             if !item.description.isEmpty {
                 Text(item.description)
@@ -261,12 +302,65 @@ private struct ScheduleRowView: View {
                     .lineLimit(2)
             }
             if !item.tags.isEmpty {
-                Text(item.tags.joined(separator: " · "))
+                Text(TagText.line(item.tags))
                     .font(.caption)
                     .foregroundStyle(.tint)
             }
+            if let walkText {
+                Label(walkText, systemImage: "figure.walk")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(.vertical, 4)
+    }
+}
+
+// MARK: - Peek
+
+extension View {
+    /// Long press: a preview card with the key info, and Heart / Show on Map / Open.
+    func scheduleItemPeek(_ item: ScheduleItem, now: Date, open: @escaping () -> Void) -> some View {
+        modifier(ScheduleItemPeekModifier(item: item, now: now, open: open))
+    }
+}
+
+private struct ScheduleItemPeekModifier: ViewModifier {
+    let item: ScheduleItem
+    let now: Date
+    let open: () -> Void
+
+    @Environment(AppState.self) private var appState
+
+    func body(content: Content) -> some View {
+        let target = SearchTarget.scheduleItem(item.id)
+        let hearted = appState.isHearted(target)
+        let location = appState.location(id: item.locationId)
+        content.contextMenu {
+            Button {
+                appState.toggleHeart(target)
+            } label: {
+                Label(hearted ? "Remove Heart" : "Heart", systemImage: hearted ? "heart.slash" : "heart")
+            }
+            if let location, location.coordinate != nil, appState.tabs.contains(.map) {
+                Button {
+                    appState.showOnMap(locationId: location.id)
+                } label: {
+                    Label("Show on Map", systemImage: "map")
+                }
+            }
+            Button(action: open) {
+                Label("Open", systemImage: "arrow.up.forward.app")
+            }
+        } preview: {
+            ScheduleItemPeek(
+                item: item,
+                timeText: EventTimeFormat.range(start: item.startTime, end: item.endTime, in: appState.timeZone, now: now),
+                relativeText: RelativeTimeText.item(item, now: now, timeZone: appState.timeZone, includeEnd: true),
+                locationName: location?.name ?? item.locationName ?? ScheduleGrouping.generalTitle,
+                hearted: hearted
+            )
+        }
     }
 }
 
@@ -283,9 +377,14 @@ struct ScheduleItemDetailView: View {
         }
         .navigationTitle(item.name)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            HeartToolbarItem(target: .scheduleItem(item.id), appState: appState)
+        }
         // Siri on-screen awareness ("where is this?", "remind me about this").
         .onScreenEntity(.scheduleItem(item.id))
         .task(id: item.id) { appState.track(.scheduleItemView, id: item.id) }
+        // Distance + arrow to the item's location.
+        .usesUserLocation(heading: true)
     }
 
     private func content(now: Date) -> some View {
@@ -298,16 +397,22 @@ struct ScheduleItemDetailView: View {
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                     if ScheduleTiming.isHappening(item, at: now) {
-                        Label("Happening now", systemImage: "dot.radiowaves.left.and.right")
+                        Label(
+                            RelativeTimeText.item(item, now: now, timeZone: appState.timeZone, includeEnd: true) ?? "Happening now",
+                            systemImage: "dot.radiowaves.left.and.right"
+                        )
+                        .font(.subheadline.bold())
+                        .foregroundStyle(.tint)
+                        if let progress = ScheduleTiming.progress(item, at: now) {
+                            ItemProgressBar(progress: progress)
+                        }
+                    } else if let relative = RelativeTimeText.item(item, now: now, timeZone: appState.timeZone) {
+                        Text(relative)
                             .font(.subheadline.bold())
-                            .foregroundStyle(.tint)
-                    } else if let countdown = item.startsInText(relativeTo: now) {
-                        Text(countdown)
-                            .font(.subheadline.bold())
-                            .foregroundStyle(.tint)
+                            .foregroundStyle(ScheduleTiming.hasEnded(item, at: now) ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
                     }
                     if !item.tags.isEmpty {
-                        Text(item.tags.joined(separator: " · "))
+                        Text(TagText.line(item.tags))
                             .font(.subheadline)
                             .foregroundStyle(.tint)
                     }
@@ -328,7 +433,11 @@ struct ScheduleItemDetailView: View {
             Section("Location") {
                 if let location = appState.location(id: item.locationId) {
                     NavigationLink(value: location) {
-                        Label(location.name, systemImage: "mappin.and.ellipse")
+                        HStack {
+                            Label(location.name, systemImage: "mappin.and.ellipse")
+                            Spacer(minLength: 8)
+                            DistanceBadge(target: location.coordinate, font: .subheadline)
+                        }
                     }
                 } else {
                     Label(item.locationName ?? ScheduleGrouping.generalTitle, systemImage: "mappin.slash")

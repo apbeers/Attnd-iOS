@@ -3,7 +3,8 @@
 //
 // Organizer notifications for the joined event, newest first, from the bundle.
 // Times are shown in the event's time zone. A jump (search, Siri, Spotlight) scrolls to
-// one notification and highlights it briefly.
+// one notification and highlights it briefly. While it is on screen everything listed counts
+// as seen (`AppState.markUpdatesSeen`: the tab's unread badge and the update banner clear).
 
 import SwiftUI
 
@@ -13,7 +14,10 @@ struct NotificationsView: View {
     var focusId: Int? = nil
 
     @Environment(AppState.self) private var appState
+    @Environment(\.scenePhase) private var scenePhase
     @State private var highlightedId: Int?
+    /// On screen: what it lists counts as seen (the tab's unread badge and the banner clear).
+    @State private var isVisible = false
 
     /// How long a jumped-to notification stays highlighted.
     private static let highlightDuration: Duration = .seconds(2)
@@ -23,7 +27,7 @@ struct NotificationsView: View {
             List {
                 ForEach(appState.notifications) { notification in
                     NotificationRow(notification: notification, timeZone: appState.timeZone)
-                        .listRowBackground(highlightedId == notification.id ? Rectangle().fill(.tint.opacity(0.18)) : nil)
+                        .listRowBackground(rowBackground(notification))
                         // Siri on-screen awareness for each update.
                         .onScreenEntity(.notification(notification.id))
                 }
@@ -38,6 +42,17 @@ struct NotificationsView: View {
             }
         }
         .navigationTitle("Updates")
+        .onAppear {
+            isVisible = true
+            appState.markUpdatesSeen()
+        }
+        .onDisappear { isVisible = false }
+        .onChange(of: appState.notifications) {
+            if isVisible, scenePhase == .active { appState.markUpdatesSeen() }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if isVisible, phase == .active { appState.markUpdatesSeen() }
+        }
         .refreshable { await appState.pullToRefresh() }
         .eventStatusBanners()
         .overlay {
@@ -53,6 +68,13 @@ struct NotificationsView: View {
                 }
             }
         }
+    }
+
+    /// The jump highlight, else a red tint for urgent updates (API-011), else the default.
+    private func rowBackground(_ notification: AppNotification) -> AnyView? {
+        if highlightedId == notification.id { return AnyView(Rectangle().fill(.tint.opacity(0.18))) }
+        if notification.isUrgent { return AnyView(Rectangle().fill(Color.red.opacity(0.12))) }
+        return nil
     }
 
     /// Scrolls `id` to the middle and highlights it for a moment.
@@ -76,6 +98,12 @@ private struct NotificationRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            if notification.isUrgent {
+                // API-011: cancellations, safety notices.
+                Label("Urgent", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption.bold())
+                    .foregroundStyle(.red)
+            }
             Text(notification.title)
                 .font(.headline)
             if !notification.body.isEmpty {

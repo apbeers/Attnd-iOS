@@ -114,6 +114,13 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertNil(try decode(Location.self, #"{"id":1,"category":"  "}"#).category)
     }
 
+    func testLocation_Tags_API010() throws {
+        XCTAssertEqual(try decode(Location.self, #"{"id":1,"tags":["live music","free"]}"#).tags, ["live music", "free"])
+        // Older servers: no key. Wrong type: default.
+        XCTAssertEqual(try decode(Location.self, #"{"id":1}"#).tags, [])
+        XCTAssertEqual(try decode(Location.self, #"{"id":1,"tags":"food"}"#).tags, [])
+    }
+
     // MARK: - Schedule item
 
     func testScheduleItem_AllFields() throws {
@@ -145,6 +152,18 @@ final class ModelDecodingTests: XCTestCase {
         let n = try decode(AppNotification.self, #"{"id":1,"title":"Gate B open","body":"Head over.","send_time":"2026-11-14T17:45:00+00:00"}"#)
         XCTAssertEqual(n.title, "Gate B open")
         XCTAssertNotNil(n.sendTime)
+        // No priority (servers before API-011): normal.
+        XCTAssertEqual(n.priority, .normal)
+        XCTAssertFalse(n.isUrgent)
+    }
+
+    func testNotification_Priority_API011() throws {
+        XCTAssertTrue(try decode(AppNotification.self, #"{"id":1,"title":"Closed","priority":"urgent"}"#).isUrgent)
+        XCTAssertEqual(try decode(AppNotification.self, #"{"id":1,"title":"A","priority":"normal"}"#).priority, .normal)
+        // Unknown values, wrong types and null mean normal.
+        XCTAssertEqual(try decode(AppNotification.self, #"{"id":1,"title":"A","priority":"critical"}"#).priority, .normal)
+        XCTAssertEqual(try decode(AppNotification.self, #"{"id":1,"title":"A","priority":3}"#).priority, .normal)
+        XCTAssertEqual(try decode(AppNotification.self, #"{"id":1,"title":"A","priority":null}"#).priority, .normal)
     }
 
     // MARK: - Display

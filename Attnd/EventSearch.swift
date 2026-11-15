@@ -568,6 +568,8 @@ struct EventSearchIndex: Sendable {
                 titleWords: Self.titleWords(location.name),
                 titleWeight: 3,
                 fields: [
+                    // Location tags (API-010) weigh like schedule item tags.
+                    Field(weight: 2, words: location.tags.flatMap(EventSearch.words)),
                     Field(weight: 2, words: EventSearch.words(location.category ?? "")),
                     Field(weight: 2, words: EventSearch.words(location.snippet)),
                     Field(weight: 2, words: EventSearch.words(location.address)),

@@ -131,6 +131,7 @@ private struct MapLocationsPane: View {
             .disabled(location.coordinate == nil)
         }
         .listStyle(.plain)
+        .usesUserLocation(heading: true)
         .navigationTitle("Locations")
         .navigationBarTitleDisplayMode(.inline)
         .refreshable { await appState.pullToRefresh() }

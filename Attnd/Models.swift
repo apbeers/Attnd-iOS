@@ -145,13 +145,15 @@ struct Location: Identifiable, Hashable, Sendable {
     var latitude: Double? = nil
     var longitude: Double? = nil
     var sortOrder: Int = 0
+    /// Lower-case labels (API-010), e.g. ["live music", "free"]; capitalise only for display (`TagText`).
+    var tags: [String] = []
 
     var coordinate: Coordinate? { Coordinate.valid(latitude: latitude, longitude: longitude) }
 }
 
 extension Location: Decodable {
     private enum CodingKeys: String, CodingKey {
-        case id, name, snippet, description, category, website, address, latitude, longitude
+        case id, name, snippet, description, category, website, address, latitude, longitude, tags
         case imageUrl = "image_url"
         case sortOrder = "sort_order"
     }
@@ -169,6 +171,7 @@ extension Location: Decodable {
         latitude = c.lenient(Double.self, .latitude)
         longitude = c.lenient(Double.self, .longitude)
         sortOrder = c.lenient(Int.self, .sortOrder) ?? 0
+        tags = c.lenient([String].self, .tags) ?? []
     }
 }
 
@@ -211,16 +214,25 @@ extension ScheduleItem: Decodable {
 // MARK: - Notification
 // Named AppNotification to avoid a clash with Foundation.Notification.
 
+/// API-011: `urgent` is an organizer announcement such as a cancellation or a safety notice.
+enum NotificationPriority: String, Hashable, Sendable {
+    case normal, urgent
+}
+
 struct AppNotification: Identifiable, Hashable, Sendable {
     var id: Int
     var title: String
     var body: String = ""
     var sendTime: Date? = nil
+    /// Any other or missing value is `normal`.
+    var priority: NotificationPriority = .normal
+
+    var isUrgent: Bool { priority == .urgent }
 }
 
 extension AppNotification: Decodable {
     private enum CodingKeys: String, CodingKey {
-        case id, title, body
+        case id, title, body, priority
         case sendTime = "send_time"
     }
 
@@ -230,6 +242,7 @@ extension AppNotification: Decodable {
         title = c.lenient(String.self, .title) ?? ""
         body = c.lenient(String.self, .body) ?? ""
         sendTime = c.date(.sendTime)
+        priority = c.nonEmptyString(.priority).flatMap { NotificationPriority(rawValue: $0) } ?? .normal
     }
 }
 
@@ -497,6 +510,12 @@ enum UsageMetric: String, Hashable, Sendable, CaseIterable {
     case notificationOpen = "notification_open"
     case search
     case refresh
+    // API-009: hearts (detail = the location or schedule item id). Until the server knows
+    // these names it drops them harmlessly.
+    case locationHeart = "location_heart"
+    case locationUnheart = "location_unheart"
+    case scheduleItemHeart = "schedule_item_heart"
+    case scheduleItemUnheart = "schedule_item_unheart"
 }
 
 /// One aggregated count. `detail` is omitted from the JSON when nil.

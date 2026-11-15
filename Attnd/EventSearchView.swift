@@ -52,6 +52,10 @@ struct EventSearchSheet: View {
                 .navigationDestination(for: Location.self) { location in
                     LocationDetailView(location: location)
                 }
+                // The "Hearted" suggestion.
+                .navigationDestination(for: HeartedListRoute.self) { _ in
+                    HeartedListView()
+                }
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Close", systemImage: "xmark", role: .close) {
@@ -106,6 +110,8 @@ struct EventSearchView: View {
         )
         .searchFocused($isSearchFocused)
         .modifier(SearchUsageCounting(text: appState.searchText))
+        // Distances to places in the results.
+        .usesUserLocation(heading: true)
         .onChange(of: appState.searchText) {
             if case .idle = assistant { return }
             assistant = .idle
@@ -174,7 +180,7 @@ struct EventSearchView: View {
     private func resultRows(_ results: [EventSearchResult]) -> some View {
         ForEach(results.prefix(100)) { result in
             NavigationLink(value: result.target) {
-                SearchResultRow(result: result)
+                HeartableResultRow(result: result)
             }
             .onScreenEntity(result.target)
         }
@@ -185,8 +191,13 @@ struct EventSearchView: View {
     @ViewBuilder
     private var suggestions: some View {
         let items = appState.currentBundle.map(EventSearch.suggestions) ?? []
-        if !items.isEmpty {
+        if !items.isEmpty || appState.hasHearts {
             Section {
+                if appState.hasHearts {
+                    NavigationLink(value: HeartedListRoute()) {
+                        Label("Hearted", systemImage: "heart.fill")
+                    }
+                }
                 ForEach(items) { suggestion in
                     Button {
                         appState.searchText = suggestion.query
@@ -268,6 +279,32 @@ struct EventSearchView: View {
 }
 
 // MARK: - Result row
+
+/// A search result with a heart (schedule items and places) and, for places, the distance.
+/// The plain `SearchResultRow` is also used by Siri snippets, which have no app state.
+struct HeartableResultRow: View {
+    let result: EventSearchResult
+
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        switch result.target {
+        case .location(let id):
+            HStack(spacing: 8) {
+                SearchResultRow(result: result)
+                DistanceBadge(target: appState.location(id: id)?.coordinate)
+                HeartButton(target: result.target, font: .subheadline)
+            }
+        case .scheduleItem:
+            HStack(spacing: 8) {
+                SearchResultRow(result: result)
+                HeartButton(target: result.target, font: .subheadline)
+            }
+        case .notification, .event:
+            SearchResultRow(result: result)
+        }
+    }
+}
 
 /// Kind icon, title with the matched part emphasised, one line of inline info and a Now /
 /// Next / Ended label for schedule items.

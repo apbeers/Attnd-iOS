@@ -35,6 +35,18 @@
             "AttndAppClip/compile-sources",
           ],
         }, {
+          "path": "Glance.swift",
+          "target-membership": [
+            "Attnd/compile-sources",
+            "AttndAppClip/compile-sources",
+          ],
+        }, {
+          "path": "GlanceViews.swift",
+          "target-membership": [
+            "Attnd/compile-sources",
+            "AttndAppClip/compile-sources",
+          ],
+        }, {
           "path": "EventSearch.swift",
           "target-membership": [
             "Attnd/compile-sources",
@@ -168,6 +180,7 @@
         { "path": "APIClientIntegrationTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "DisplayLogicTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "EventSearchTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
+        { "path": "GlanceTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "ModelDecodingTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
       ],
     }, {

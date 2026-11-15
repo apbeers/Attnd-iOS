@@ -59,19 +59,37 @@ enum EventTimeFormat {
     }
 
     /// "7:30 PM"
-    static func time(_ date: Date, in timeZone: TimeZone) -> String {
+    static func time(_ date: Date, in timeZone: TimeZone, locale: Locale = .current) -> String {
         var style = Date.FormatStyle.dateTime.hour().minute()
         style.timeZone = timeZone
+        style.locale = locale
+        return date.formatted(style)
+    }
+
+    /// "7:30" (no AM/PM; "19:30" in 24-hour locales): pin subtitles and "Next 8:30 …" lines.
+    static func clock(_ date: Date, in timeZone: TimeZone, locale: Locale = .current) -> String {
+        var style = Date.FormatStyle.dateTime.hour(.defaultDigits(amPM: .omitted)).minute()
+        style.timeZone = timeZone
+        style.locale = locale
+        return date.formatted(style)
+    }
+
+    /// "Sun 10:00" (weekday + clock without AM/PM).
+    static func weekdayClock(_ date: Date, in timeZone: TimeZone, locale: Locale = .current) -> String {
+        var style = Date.FormatStyle.dateTime.weekday(.abbreviated).hour(.defaultDigits(amPM: .omitted)).minute()
+        style.timeZone = timeZone
+        style.locale = locale
         return date.formatted(style)
     }
 
     /// "7:30 PM" today (in the event's zone), otherwise "Sat 7:30 PM".
-    static func shortDayTime(_ date: Date, in timeZone: TimeZone, now: Date = .now) -> String {
+    static func shortDayTime(_ date: Date, in timeZone: TimeZone, now: Date = .now, locale: Locale = .current) -> String {
         if calendar(in: timeZone).isDate(date, inSameDayAs: now) {
-            return time(date, in: timeZone)
+            return time(date, in: timeZone, locale: locale)
         }
         var style = Date.FormatStyle.dateTime.weekday(.abbreviated).hour().minute()
         style.timeZone = timeZone
+        style.locale = locale
         return date.formatted(style)
     }
 

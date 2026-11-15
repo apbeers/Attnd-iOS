@@ -29,7 +29,7 @@
 	<key>NSCameraUsageDescription</key>
 	<string>Scan an event QR code to join instantly</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Attnd uses your location to show events near you.</string>
+	<string>Attnd uses your location while you use the app to find events near you and to show how far away places at your event are, which way they are and how long the walk takes.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

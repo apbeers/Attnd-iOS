@@ -23,3 +23,17 @@ if [ "$unavailable" -gt 0 ]; then
   xcrun simctl delete unavailable
   echo "Deleted $unavailable unavailable simulator device(s) (runtime not installed)"
 fi
+# Some images list watchOS/tvOS/visionOS devices as available yet still trigger the same assertion
+# (seen with Apple Watch SE 3 / Series 12 / Ultra 4, Nov 2026). This app is iPhone-only: delete every
+# simulator device whose runtime isn't iOS, on this throwaway runner only.
+other=$(xcrun simctl list devices -j | python3 -c '
+import json, sys
+for runtime, devices in json.load(sys.stdin)["devices"].items():
+    if ".SimRuntime.iOS-" not in runtime:
+        for d in devices:
+            print(d["udid"])
+')
+if [ -n "$other" ]; then
+  for udid in $other; do xcrun simctl delete "$udid" 2>/dev/null || true; done
+  echo "Deleted $(echo "$other" | wc -l | tr -d ' ') non-iOS simulator device(s)"
+fi

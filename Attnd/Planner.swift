@@ -12,6 +12,9 @@
 //     category, description and location; not NLEmbedding, so plans match Android's).
 //   - Planner: scores, the best chain of items within the pace, hearted must-includes with
 //     "or instead", walk legs, meal breaks, reasons, swap alternatives, change detection.
+//   - PlanConstraints / MealSlot / PlanOrigin: what the assistant's plan edits add (rules
+//     13–20: pinned / excluded items, "I already ate", done by / start at, walk limit, pace,
+//     origin, more / less tags, group likes); `Planner.replan` re-solves a plan with them.
 //   - PlanCodec: the stored form (JSON per event in UserDefaults), lenient like the API models.
 //
 // Dates and clock times are the event's: `PlanDate` (a calendar day) and `PlanClock` (a time
@@ -344,10 +347,73 @@ struct Plan: Hashable, Sendable {
     var days: [PlanDay]
     /// Planned item id → `Planner.fingerprint` when planned, to notice content changes.
     var fingerprints: [Int: String]
+    /// The edits' constraints (assistant spec §4); the planner re-solves with them (`Planner.replan`).
+    var constraints: PlanConstraints = .none
+    /// Items the attendee checked off (by tap or auto check-off, spec §6); they stay in re-solves.
+    var checkedOff: Set<Int> = []
 
     var items: [PlannedItem] { days.flatMap(\.items) }
     var itemIds: [Int] { items.map(\.itemId) }
     var isEmpty: Bool { items.isEmpty }
+}
+
+/// One meal break of one event day ("I already ate" marks the next one done).
+struct MealSlot: Hashable, Sendable {
+    var date: PlanDate
+    var kind: MealKind
+
+    /// "2026-11-14:lunch".
+    var encoded: String { "\(date):\(kind.rawValue)" }
+
+    static func decode(_ value: String) -> MealSlot? {
+        guard let colon = value.firstIndex(of: ":"),
+              let date = PlanDate.parse(String(value[..<colon])),
+              let kind = MealKind(rawValue: value[value.index(after: colon)...].lowercased()) else { return nil }
+        return MealSlot(date: date, kind: kind)
+    }
+
+    /// (date, lunch before dinner).
+    static func < (a: MealSlot, b: MealSlot) -> Bool {
+        a.date != b.date ? a.date < b.date : (MealKind.allCases.firstIndex(of: a.kind) ?? 0) < (MealKind.allCases.firstIndex(of: b.kind) ?? 0)
+    }
+}
+
+/// Where the attendee said they are ("I'm at Taco Row") and when they said it.
+struct PlanOrigin: Hashable, Sendable {
+    var locationId: Int
+    var at: Date
+}
+
+/// What plan edits add on top of `PlanPreferences` (assistant spec §4, planner rules 13–20).
+/// Every field defaults to "no constraint"; `.none` makes the planner behave exactly as rules 1–12.
+struct PlanConstraints: Hashable, Sendable {
+    /// Items the attendee kept or added: must-includes ahead of liked items (rule 16).
+    var pinned: Set<Int> = []
+    /// Items the attendee removed or replaced: never candidates, even when liked or pinned (rule 14).
+    var excluded: Set<Int> = []
+    /// "I already ate": food items and meal breaks may not start before this (rules 14, 19).
+    var noFoodUntil: Date? = nil
+    /// Meal breaks marked done; they are not planned again (rule 19).
+    var mealsDone: Set<MealSlot> = []
+    /// "Start at 2": the window starts no earlier than this on every day (rule 13).
+    var startAt: PlanClock? = nil
+    /// "Done by 9": the window ends no later than this (next day when before 06:00; rule 13).
+    var doneBy: PlanClock? = nil
+    /// "Short walks": no walk between consecutive items longer than this (rule 17).
+    var maxWalkMinutes: Int? = nil
+    /// "I'm tired": replaces the preferences' pace (rule 18).
+    var pace: PlanPace? = nil
+    /// "I'm at Taco Row": the plan restarts from there (rule 15).
+    var origin: PlanOrigin? = nil
+    /// "More bbq" / "less dj": lower-case tags with an extra liked (+1) / disliked (−2) indicator.
+    var moreTags: Set<String> = []
+    var lessTags: Set<String> = []
+    /// Group plans (spec §7): item id → how many people liked or planned it (+1 point each).
+    var groupLikes: [Int: Int] = [:]
+
+    static let none = PlanConstraints()
+
+    var isEmpty: Bool { self == .none }
 }
 
 // MARK: - Similarity
@@ -461,12 +527,35 @@ struct TfIdfSimilarity: ItemSimilarity {
 ///    planned items: 45 minutes at the earliest of {clipped start, planned ends inside it}, each
 ///    rounded up to 5 minutes, that ends in time and overlaps nothing; a food location nearest the
 ///    item before it (ties: sort order, id), else the first food location.
-/// 11. **Reasons**, first that applies: "You hearted this"; "Because you hearted <name>" (S ≥ 0.2
-///    from a hearted item); "Because you like <tag>"; "Because you like <category>"; "At
-///    <location>, which you hearted"; "Kid-friendly"; "Like <name>" (S ≥ 0.2 from `similarTo`);
-///    "Fits your day".
+/// 11. **Reasons**, first that applies: "Liked by <n> of you" (group plans, n ≥ 2); "You liked
+///    this"; "You added this" (pinned); "Because you liked <name>" (S ≥ 0.2 from a hearted item);
+///    "Because you like <tag>"; "Because you like <category>"; "At <location>, which you liked";
+///    "Kid-friendly"; "Like <name>" (S ≥ 0.2 from `similarTo`); "Fits your day".
 /// 12. **Swap alternatives** (≤ 3): the item's "or instead" items, then candidates (not planned,
 ///    not left out) that fit between its neighbours, by (score desc, start, id). No pace cap.
+///    Entries that start before the day's window start (frozen by a re-solve) stay as they are.
+///
+/// Constraints (`PlanConstraints`, assistant spec §4; with `.none` rules 1–12 are unchanged):
+/// 13. **Window and score**: start = max(rule 3 start, day at `startAt`); end = min(rule 3 end,
+///    day at `doneBy`, next day when `doneBy` < 06:00). With `durationMinutes` the end is capped at
+///    anchor + duration (anchor = the window start, or in a re-solve the day's previous window
+///    start). x adds + 1 for a `moreTags` tag, − 2 for a `lessTags` tag, + `groupLikes[id]`.
+/// 14. **Candidates**: `excluded` never; pinned items pass the kid-friendly and score filters like
+///    hearted ones; with `noFoodUntil`, food items (`isFood`) starting before it are dropped unless pinned.
+/// 15. **Origin** ("I'm at X"): on the day of `origin.at`, when every frozen item started before it,
+///    a candidate b needs origin.at (minute) + walk(X, b) ≤ b.start (no buffer; walk 0 when unknown)
+///    and walk(X, b) ≤ `maxWalkMinutes`; the first new item shows walk(X, b).
+/// 16. **Pinned items are must-includes first** (by start, end, id), then hearted ones (rule 7); in
+///    a re-solve frozen items count as already kept.
+/// 17. **Walk limit**: b may follow a only when walk(a, b) ≤ `maxWalkMinutes` (unknown walks pass).
+/// 18. **Pace**: `pace` replaces the preferences' pace.
+/// 19. **Meals**: a kind in `mealsDone` or already covered by a frozen meal isn't planned; with
+///    `noFoodUntil` its rounded-up time is an extra start and earlier starts are skipped.
+/// 20. **Re-solve** (`replan`): `from` = now (minute). Earlier days stay; re-solved days = the
+///    plan's days on or after `from`'s date plus pinned items' event days (ascending; none → rule 2).
+///    Frozen = planned items that started before `from` or are checked off (still in the bundle,
+///    not excluded) and meal breaks that started before `from`: kept verbatim, not candidates, and
+///    new candidates must fit them. A day whose window is empty keeps only its frozen entries.
 final class Planner {
     /// Every candidate's base score, so a request with no stated likes still gets a plan.
     static let base = 0.5
@@ -494,6 +583,10 @@ final class Planner {
     private let dislikedCategories: Set<String>
     private let heartedLiked: [ScheduleItem]
     private let namedLiked: [ScheduleItem]
+    private let constraints: PlanConstraints
+    private let moreTags: Set<String>
+    private let lessTags: Set<String>
+    private let pace: PlanPace
     private var scores: [Int: Int] = [:]
 
     init(
@@ -501,12 +594,17 @@ final class Planner {
         preferences: PlanPreferences,
         heartedItems: Set<Int> = [],
         heartedLocations: Set<Int> = [],
+        constraints: PlanConstraints = .none,
         similarity: ItemSimilarity? = nil
     ) {
         self.bundle = bundle
         self.preferences = preferences
         self.heartedItems = heartedItems
         self.heartedLocations = heartedLocations
+        self.constraints = constraints
+        moreTags = Set(constraints.moreTags.map { $0.lowercased() })
+        lessTags = Set(constraints.lessTags.map { $0.lowercased() })
+        pace = constraints.pace ?? preferences.pace
         self.similarity = similarity ?? TfIdfSimilarity(bundle)
         calendar = PlanCalendar.calendar(bundle.event.timeZone)
         let itemsById = Dictionary(bundle.schedule.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
@@ -543,8 +641,68 @@ final class Planner {
             request: request,
             preferences: preferences,
             days: days,
-            fingerprints: fingerprints(of: days)
+            fingerprints: fingerprints(of: days),
+            constraints: constraints
         )
+    }
+
+    /// Rule 20: `plan` re-solved at `from` with this planner's preferences and constraints (every
+    /// plan edit). Without constraints and at the plan's own `from` this is the same plan.
+    func replan(_ plan: Plan, from: Date) -> Plan {
+        let start = PlanCalendar.truncatedToMinute(from)
+        let today = PlanDate(start, in: calendar)
+        let eventDays = PlanCalendar.eventDays(bundle, now: start)
+        let pinnedDays = constraints.pinned.compactMap { itemsById[$0]?.startTime.map { PlanDate($0, in: calendar) } }
+            .filter { eventDays.contains($0) && $0 >= today }
+        let wanted = Set(plan.days.map(\.date).filter { $0 >= today } + pinnedDays).sorted()
+        let past = plan.days.filter { $0.date < today }
+        let solved: [PlanDay]
+        if wanted.isEmpty {
+            solved = self.plan(from: start, request: plan.request, createdAt: plan.createdAt).days
+        } else {
+            solved = wanted.compactMap { date in
+                let old = plan.days.first { $0.date == date }
+                let frozen = (old?.items ?? []).filter {
+                    ($0.start < start || plan.checkedOff.contains($0.itemId)) && !constraints.excluded.contains($0.itemId) && itemsById[$0.itemId] != nil
+                }
+                let frozenMeals = (old?.meals ?? []).filter { $0.start < start }
+                let anchor = preferences.durationMinutes != nil ? old?.windowStart : nil
+                return planDay(date, from: start, frozen: frozen, frozenMeals: frozenMeals, anchor: anchor)
+            }
+        }
+        var updated = plan
+        updated.days = past + solved
+        updated.fingerprints = fingerprints(of: updated.days)
+        updated.constraints = constraints
+        return updated
+    }
+
+    /// Rule 4 (with 14) for a planned day's window: what could be planned that day.
+    func dayCandidates(_ day: PlanDay) -> [ScheduleItem] {
+        candidates(day.date, windowStart: day.windowStart, windowEnd: day.windowEnd)
+    }
+
+    /// Rule 6 (with 17): `b` can come right after `a`.
+    func canFollow(_ a: ScheduleItem, _ b: ScheduleItem) -> Bool { follows(a, b) }
+
+    /// Rules 6/17 in either order: both can be planned.
+    func fitsWith(_ a: ScheduleItem, _ b: ScheduleItem) -> Bool { compatible(a, b) }
+
+    /// The walk shown between two items (rule 6): 0 at the same location, nil without coordinates.
+    func walkBetween(_ a: ScheduleItem, _ b: ScheduleItem) -> Int? { walkShown(a, b) }
+
+    /// Rule 14: dropped by "I already ate".
+    func foodBlocked(_ item: ScheduleItem) -> Bool {
+        guard let until = constraints.noFoodUntil else { return false }
+        return !constraints.pinned.contains(item.id) && Self.isFood(bundle, item) && startOf(item) < until
+    }
+
+    /// Rule 14: a food item: its location's category or one of its tags, or one of the item's
+    /// tags, contains "food" after normalising.
+    static func isFood(_ bundle: EventBundle, _ item: ScheduleItem) -> Bool {
+        let location = item.locationId.flatMap { id in bundle.locations.first { $0.id == id } }
+        func food(_ text: String?) -> Bool { text.map { PlanText.normalize($0).contains("food") } ?? false }
+        return food(location?.category) || (location?.tags ?? []).contains { food($0) } || item.tags.contains { food($0) }
     }
 
     /// Replaces `oldId` by `newId` in `plan` (one of its alternatives); nil when either is gone.
@@ -560,13 +718,18 @@ final class Planner {
         // The swapped-out item's clashing hearted items stay with the slot.
         let moved = (orInstead.removeValue(forKey: oldId) ?? []) + [oldId]
         orInstead[newId] = moved.filter { $0 != newId && heartedItems.contains($0) }
+        var frozen: [Int: PlannedItem] = [:]
+        for item in day.items where item.start < day.windowStart && item.itemId != oldId { frozen[item.itemId] = item }
+        let frozenMeals = day.meals.filter { $0.start < day.windowStart }
         let rebuilt = buildDay(
             day.date,
             windowStart: day.windowStart,
             windowEnd: day.windowEnd,
             chosen: chosen,
             orInstead: orInstead,
-            candidates: candidates(day.date, windowStart: day.windowStart, windowEnd: day.windowEnd)
+            candidates: candidates(day.date, windowStart: day.windowStart, windowEnd: day.windowEnd),
+            frozen: frozen,
+            frozenMeals: frozenMeals
         )
         var updated = plan
         updated.days[dayIndex] = rebuilt
@@ -579,16 +742,23 @@ final class Planner {
         if let cached = scores[item.id] { return cached }
         let hearted = heartedItems.contains(item.id) ? 1.0 : 0.0
         let similar = bestSimilar(item, heartedLiked + namedLiked)?.similarity ?? 0
+        let more = item.tags.contains { moreTags.contains($0.lowercased()) } ? 1.0 : 0.0
+        let less = item.tags.contains { lessTags.contains($0.lowercased()) } ? 1.0 : 0.0
+        let group = Double(constraints.groupLikes[item.id] ?? 0)
         let raw = Self.base + 3.0 * hearted + 2.0 * similar + Double(matches(item)) + Double(kid(item)) - 2.0 * Double(disliked(item))
+            + more - 2.0 * less + group
         let value = Int((raw * 1000 + 0.5).rounded(.down))
         scores[item.id] = value
         return value
     }
 
     func reason(_ item: ScheduleItem) -> String {
-        if heartedItems.contains(item.id) { return "You hearted this" }
+        let group = constraints.groupLikes[item.id] ?? 0
+        if group >= 2 { return "Liked by \(group) of you" }
+        if heartedItems.contains(item.id) { return "You liked this" }
+        if constraints.pinned.contains(item.id) { return "You added this" }
         if let best = bestSimilar(item, heartedLiked), best.similarity >= Self.similarReason {
-            return "Because you hearted \(best.item.name)"
+            return "Because you liked \(best.item.name)"
         }
         if let tag = item.tags.first(where: { likedTags.contains($0.lowercased()) }) {
             return "Because you like \(tag.lowercased())"
@@ -597,7 +767,7 @@ final class Planner {
             return "Because you like \(category.lowercased())"
         }
         if let location = location(item.locationId), heartedLocations.contains(location.id) {
-            return "At \(location.name), which you hearted"
+            return "At \(location.name), which you liked"
         }
         if kid(item) == 1 { return "Kid-friendly" }
         if let best = bestSimilar(item, namedLiked), best.similarity >= Self.similarReason {
@@ -608,10 +778,11 @@ final class Planner {
 
     // MARK: Days
 
-    private func window(_ day: PlanDate, from: Date) -> (start: Date, end: Date)? {
+    private func window(_ day: PlanDate, from: Date, anchor: Date? = nil) -> (start: Date, end: Date)? {
         let earliest = preferences.earliest
         let latest = preferences.latest
-        let start = max(from, day.at(earliest ?? .midnight, in: calendar))
+        var start = max(from, day.at(earliest ?? .midnight, in: calendar))
+        if let startAt = constraints.startAt { start = max(start, day.at(startAt, in: calendar)) }
         var end: Date
         if let latest {
             let nextDay = latest < Self.nightOwlUntil || (earliest.map { latest <= $0 } ?? false)
@@ -619,39 +790,87 @@ final class Planner {
         } else {
             end = day.adding(days: 1).at(.midnight, in: calendar)
         }
+        if let doneBy = constraints.doneBy {
+            end = min(end, (doneBy < Self.nightOwlUntil ? day.adding(days: 1) : day).at(doneBy, in: calendar))
+        }
         if let duration = preferences.durationMinutes, duration > 0 {
-            end = min(end, start.addingTimeInterval(TimeInterval(duration * 60)))
+            end = min(end, (anchor ?? start).addingTimeInterval(TimeInterval(duration * 60)))
         }
         return end > start ? (start, end) : nil
     }
 
-    private func candidates(_ day: PlanDate, windowStart: Date, windowEnd: Date) -> [ScheduleItem] {
+    private func candidates(
+        _ day: PlanDate,
+        windowStart: Date,
+        windowEnd: Date,
+        frozen: Set<Int> = [],
+        origin: PlanOrigin? = nil
+    ) -> [ScheduleItem] {
         bundle.schedule.filter { item in
             guard let start = item.startTime, let end = ScheduleTiming.effectiveEnd(of: item) else { return false }
-            let hearted = heartedItems.contains(item.id)
-            return PlanDate(start, in: calendar) == day
+            let kept = heartedItems.contains(item.id) || constraints.pinned.contains(item.id)
+            return !constraints.excluded.contains(item.id) && !frozen.contains(item.id)
+                && PlanDate(start, in: calendar) == day
                 && start >= windowStart && end <= windowEnd
-                && (hearted || !(preferences.kidFriendly && item.tags.contains { Self.adultTags.contains($0.lowercased()) }))
-                && (hearted || score(item) > 0)
+                && (kept || !(preferences.kidFriendly && item.tags.contains { Self.adultTags.contains($0.lowercased()) }))
+                && (kept || score(item) > 0)
+                && !foodBlocked(item)
+                && (origin.map { reachable(from: $0, item) } ?? true)
         }
-        .sorted(by: Self.itemOrder)
+        .stableSorted(by: Self.itemOrder)
     }
 
-    private func planDay(_ day: PlanDate, from: Date) -> PlanDay? {
-        guard let bounds = window(day, from: from) else { return nil }
-        let windowStart = bounds.start, windowEnd = bounds.end
-        let candidates = candidates(day, windowStart: windowStart, windowEnd: windowEnd)
-        if candidates.isEmpty { return PlanDay(date: day, windowStart: windowStart, windowEnd: windowEnd, entries: []) }
+    /// Rule 15: `item` can be reached from where the attendee said they are.
+    private func reachable(from origin: PlanOrigin, _ item: ScheduleItem) -> Bool {
+        let walk = originWalk(origin, item)
+        if let walk, let limit = constraints.maxWalkMinutes, walk > limit { return false }
+        let at = PlanCalendar.truncatedToMinute(origin.at)
+        return at.addingTimeInterval(TimeInterval((walk ?? 0) * 60)) <= startOf(item)
+    }
 
-        // Rule 7: hearted items are must-include unless they clash with a better hearted item.
-        var kept: [ScheduleItem] = []
+    private func originWalk(_ origin: PlanOrigin, _ item: ScheduleItem) -> Int? {
+        if let id = item.locationId, id == origin.locationId { return 0 }
+        guard let from = location(origin.locationId)?.coordinate, let to = location(item.locationId)?.coordinate else { return nil }
+        return Self.walkMinutes(meters: Self.distance(from, to))
+    }
+
+    private static func entryOrder(_ a: PlanEntry, _ b: PlanEntry) -> Bool {
+        a.start != b.start ? a.start < b.start : a.end < b.end
+    }
+
+    private func planDay(
+        _ day: PlanDate,
+        from: Date,
+        frozen: [PlannedItem] = [],
+        frozenMeals: [MealBreak] = [],
+        anchor: Date? = nil
+    ) -> PlanDay? {
+        let frozenItems = frozen.compactMap { itemsById[$0.itemId] }.stableSorted(by: Self.itemOrder)
+        let frozenEntries = (frozen.map(PlanEntry.item) + frozenMeals.map(PlanEntry.meal)).stableSorted(by: Self.entryOrder)
+        guard let bounds = window(day, from: from, anchor: anchor) else {
+            return frozenEntries.isEmpty ? nil : PlanDay(date: day, windowStart: from, windowEnd: from, entries: frozenEntries)
+        }
+        let windowStart = bounds.start, windowEnd = bounds.end
+        // Rule 15: the origin applies on its day when it is newer than every frozen start.
+        let origin = constraints.origin.flatMap { o in
+            PlanDate(o.at, in: calendar) == day && frozenItems.allSatisfy({ startOf($0) < o.at }) ? o : nil
+        }
+        let candidates = candidates(day, windowStart: windowStart, windowEnd: windowEnd, frozen: Set(frozen.map(\.itemId)), origin: origin)
+        if candidates.isEmpty && frozenItems.isEmpty {
+            return PlanDay(date: day, windowStart: windowStart, windowEnd: windowEnd,
+                           entries: frozenMeals.stableSorted { $0.start < $1.start }.map(PlanEntry.meal))
+        }
+
+        // Rules 7 and 16: pinned, then hearted items are must-include unless they clash with a kept one.
+        var kept = frozenItems
         var orInstead: [Int: [Int]] = [:]
-        let hearted = candidates.filter { heartedItems.contains($0.id) }
-            .sorted { a, b in
+        let pinned = candidates.filter { constraints.pinned.contains($0.id) }.stableSorted(by: Self.itemOrder)
+        let hearted = candidates.filter { heartedItems.contains($0.id) && !constraints.pinned.contains($0.id) }
+            .stableSorted { a, b in
                 let sa = score(a), sb = score(b)
                 return sa != sb ? sa > sb : Self.itemOrder(a, b)
             }
-        for item in hearted {
+        for item in pinned + hearted {
             let clashes = kept.filter { !compatible($0, item) }
             if let owner = clashes.min(by: { a, b in
                 let sa = startOf(a), sb = startOf(b)
@@ -663,18 +882,28 @@ final class Planner {
             }
         }
         let leftOut = Set(orInstead.values.flatMap { $0 })
-        let pool = candidates.filter { !leftOut.contains($0.id) }
-        let must = Set(kept.map(\.id))
+        let frozenIds = Set(frozenItems.map(\.id))
+        let pool = candidates.filter { c in !leftOut.contains(c.id) && frozenItems.allSatisfy { compatible($0, c) } }
+        let newKept = kept.filter { !frozenIds.contains($0.id) }
+        let must = Set(newKept.map(\.id))
 
         // Rule 8: pace cap.
-        let spanStart = max(windowStart, candidates.map(startOf).min() ?? windowStart)
-        let spanEnd = min(windowEnd, candidates.map(endOf).max() ?? windowEnd)
-        let span = max(PlanCalendar.minutes(from: spanStart, to: spanEnd), 0)
-        let mustMinutes = kept.reduce(0) { $0 + minutes($1) }
-        let cap = max(span * preferences.pace.bookedPercent / 100, mustMinutes)
-
-        let chosen = choose(pool, must: must, cap: cap)
-        return buildDay(day, windowStart: windowStart, windowEnd: windowEnd, chosen: chosen, orInstead: orInstead, candidates: candidates)
+        var chosen: [ScheduleItem] = []
+        if !candidates.isEmpty {
+            let spanStart = max(windowStart, candidates.map(startOf).min() ?? windowStart)
+            let spanEnd = min(windowEnd, candidates.map(endOf).max() ?? windowEnd)
+            let span = max(PlanCalendar.minutes(from: spanStart, to: spanEnd), 0)
+            let mustMinutes = newKept.reduce(0) { $0 + minutes($1) }
+            let cap = max(span * pace.bookedPercent / 100, mustMinutes)
+            chosen = choose(pool, must: must, cap: cap)
+        }
+        var frozenById: [Int: PlannedItem] = [:]
+        for item in frozen { frozenById[item.itemId] = item }
+        return buildDay(
+            day, windowStart: windowStart, windowEnd: windowEnd,
+            chosen: (frozenItems + chosen).stableSorted(by: Self.itemOrder), orInstead: orInstead, candidates: candidates,
+            frozen: frozenById, frozenMeals: frozenMeals, origin: origin
+        )
     }
 
     private struct Chain {
@@ -756,12 +985,20 @@ final class Planner {
         windowEnd: Date,
         chosen: [ScheduleItem],
         orInstead: [Int: [Int]],
-        candidates: [ScheduleItem]
+        candidates: [ScheduleItem],
+        frozen: [Int: PlannedItem] = [:],
+        frozenMeals: [MealBreak] = [],
+        origin: PlanOrigin? = nil
     ) -> PlanDay {
         let chosenIds = Set(chosen.map(\.id))
         let leftOut = Set(orInstead.values.flatMap { $0 })
+        let firstNew = chosen.first { frozen[$0.id] == nil }?.id
         var entries: [PlanEntry] = []
         for (index, item) in chosen.enumerated() {
+            if let kept = frozen[item.id] {
+                entries.append(.item(kept))
+                continue
+            }
             let previous = index > 0 ? chosen[index - 1] : nil
             let next = index + 1 < chosen.count ? chosen[index + 1] : nil
             let clashing = orInstead[item.id] ?? []
@@ -786,13 +1023,15 @@ final class Planner {
                 start: startOf(item),
                 end: endOf(item),
                 reason: reason(item),
-                walkMinutes: previous.flatMap { walkShown($0, item) },
+                walkMinutes: origin != nil && item.id == firstNew ? originWalk(origin!, item) : previous.flatMap { walkShown($0, item) },
                 alternatives: Array(alternatives.prefix(Self.maxAlternatives)),
                 orInstead: clashing
             )))
         }
+        entries += frozenMeals.map(PlanEntry.meal)
         if preferences.includeMeals, !chosen.isEmpty {
-            for kind in MealKind.allCases {
+            for kind in MealKind.allCases
+            where !constraints.mealsDone.contains(MealSlot(date: day, kind: kind)) && !frozenMeals.contains(where: { $0.kind == kind }) {
                 if let meal = meal(kind, day: day, windowStart: windowStart, windowEnd: windowEnd, chosen: chosen) {
                     entries.append(.meal(meal))
                 }
@@ -811,11 +1050,13 @@ final class Planner {
         let from = max(windowStart, day.at(kind.from, in: calendar))
         let until = min(windowEnd, day.at(kind.until, in: calendar))
         if until.timeIntervalSince(from) < Self.mealLength { return nil }
-        let raw = [from] + chosen.map(endOf).filter { $0 >= from && $0 < until }
+        let noFood = constraints.noFoodUntil
+        let extra = noFood.flatMap { $0 >= from && $0 < until ? [$0] : nil } ?? []
+        let raw = [from] + chosen.map(endOf).filter { $0 >= from && $0 < until } + extra
         let starts = Set(raw.map(roundUpToFiveMinutes)).sorted()
         guard let start = starts.first(where: { s in
             let e = s.addingTimeInterval(Self.mealLength)
-            return e <= until && !chosen.contains { startOf($0) < e && endOf($0) > s }
+            return (noFood.map { s >= $0 } ?? true) && e <= until && !chosen.contains { startOf($0) < e && endOf($0) > s }
         }) else { return nil }
         let before = chosen.filter { endOf($0) <= start }.max { a, b in
             let ea = endOf(a), eb = endOf(b)
@@ -903,6 +1144,7 @@ final class Planner {
 
     /// Rule 6: `b` can come right after `a`.
     private func follows(_ a: ScheduleItem, _ b: ScheduleItem) -> Bool {
+        if let limit = constraints.maxWalkMinutes, let walk = walkShown(a, b), walk > limit { return false }
         let gap = TimeInterval(((walkShown(a, b) ?? 0) + Self.bufferMinutes) * 60)
         return endOf(a).addingTimeInterval(gap) <= startOf(b)
     }
@@ -1030,6 +1272,8 @@ enum PlanCodec {
         var preferences = StoredPreferences()
         var days: [StoredDay] = []
         var fingerprints: [String: String] = [:]
+        var constraints = StoredConstraints()
+        var checkedOff: [Int] = []
 
         init(_ plan: Plan) {
             eventId = plan.eventId
@@ -1038,10 +1282,12 @@ enum PlanCodec {
             preferences = StoredPreferences(plan.preferences)
             days = plan.days.map(StoredDay.init)
             fingerprints = Dictionary(plan.fingerprints.map { (String($0.key), $0.value) }, uniquingKeysWith: { a, _ in a })
+            constraints = StoredConstraints(plan.constraints)
+            checkedOff = plan.checkedOff.sorted()
         }
 
         private enum CodingKeys: String, CodingKey {
-            case eventId, createdAt, request, preferences, days, fingerprints
+            case eventId, createdAt, request, preferences, days, fingerprints, constraints, checkedOff
         }
 
         init(from decoder: Decoder) throws {
@@ -1052,6 +1298,8 @@ enum PlanCodec {
             preferences = c.lenient(StoredPreferences.self, .preferences) ?? StoredPreferences()
             days = c.lossyArray(StoredDay.self, .days)
             fingerprints = c.lenient([String: String].self, .fingerprints) ?? [:]
+            constraints = c.lenient(StoredConstraints.self, .constraints) ?? StoredConstraints()
+            checkedOff = c.lenient([Int].self, .checkedOff) ?? []
         }
 
         var plan: Plan? {
@@ -1066,7 +1314,85 @@ enum PlanCodec {
                 request: request,
                 preferences: preferences.preferences,
                 days: days.compactMap(\.day),
-                fingerprints: prints
+                fingerprints: prints,
+                constraints: constraints.constraints,
+                checkedOff: Set(checkedOff)
+            )
+        }
+    }
+
+    /// `PlanConstraints`; times as ISO instants / "HH:MM", meal slots as "2026-11-14:lunch".
+    private struct StoredConstraints: Codable {
+        var pinned: [Int] = []
+        var excluded: [Int] = []
+        var noFoodUntil: String? = nil
+        var mealsDone: [String] = []
+        var startAt: String? = nil
+        var doneBy: String? = nil
+        var maxWalkMinutes: Int? = nil
+        var pace: String? = nil
+        var originLocationId: Int? = nil
+        var originAt: String? = nil
+        var moreTags: [String] = []
+        var lessTags: [String] = []
+        var groupLikes: [String: Int] = [:]
+
+        init() {}
+
+        init(_ c: PlanConstraints) {
+            pinned = c.pinned.sorted()
+            excluded = c.excluded.sorted()
+            noFoodUntil = c.noFoodUntil.map(ISODate.string(from:))
+            mealsDone = c.mealsDone.map(\.encoded).sorted()
+            startAt = c.startAt?.description
+            doneBy = c.doneBy?.description
+            maxWalkMinutes = c.maxWalkMinutes
+            pace = c.pace?.rawValue
+            originLocationId = c.origin?.locationId
+            originAt = c.origin.map { ISODate.string(from: $0.at) }
+            moreTags = c.moreTags.sorted()
+            lessTags = c.lessTags.sorted()
+            groupLikes = Dictionary(c.groupLikes.map { (String($0.key), $0.value) }, uniquingKeysWith: { a, _ in a })
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case pinned, excluded, noFoodUntil, mealsDone, startAt, doneBy, maxWalkMinutes, pace
+            case originLocationId, originAt, moreTags, lessTags, groupLikes
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            pinned = c.lenient([Int].self, .pinned) ?? []
+            excluded = c.lenient([Int].self, .excluded) ?? []
+            noFoodUntil = c.lenient(String.self, .noFoodUntil)
+            mealsDone = c.lenient([String].self, .mealsDone) ?? []
+            startAt = c.lenient(String.self, .startAt)
+            doneBy = c.lenient(String.self, .doneBy)
+            maxWalkMinutes = c.lenient(Int.self, .maxWalkMinutes)
+            pace = c.lenient(String.self, .pace)
+            originLocationId = c.lenient(Int.self, .originLocationId)
+            originAt = c.lenient(String.self, .originAt)
+            moreTags = c.lenient([String].self, .moreTags) ?? []
+            lessTags = c.lenient([String].self, .lessTags) ?? []
+            groupLikes = c.lenient([String: Int].self, .groupLikes) ?? [:]
+        }
+
+        var constraints: PlanConstraints {
+            var groups: [Int: Int] = [:]
+            for (key, value) in groupLikes { if let id = Int(key) { groups[id] = value } }
+            return PlanConstraints(
+                pinned: Set(pinned),
+                excluded: Set(excluded),
+                noFoodUntil: noFoodUntil.flatMap(ISODate.parse),
+                mealsDone: Set(mealsDone.compactMap(MealSlot.decode)),
+                startAt: startAt.flatMap(PlanClock.parse),
+                doneBy: doneBy.flatMap(PlanClock.parse),
+                maxWalkMinutes: maxWalkMinutes.flatMap { $0 > 0 ? $0 : nil },
+                pace: pace.flatMap { PlanPace(rawValue: $0) },
+                origin: originLocationId.flatMap { id in originAt.flatMap(ISODate.parse).map { PlanOrigin(locationId: id, at: $0) } },
+                moreTags: Set(moreTags),
+                lessTags: Set(lessTags),
+                groupLikes: groups
             )
         }
     }

@@ -86,7 +86,7 @@ final class PlannerTests: XCTestCase {
         let prairie = planned(plan, 101)
         XCTAssertEqual(prairie.orInstead, [114])
         XCTAssertEqual(prairie.alternatives, [114])
-        XCTAssertEqual(prairie.reason, "You hearted this")
+        XCTAssertEqual(prairie.reason, "You liked this")
         XCTAssertEqual(prairie.walkMinutes, 4)
         // The lunch break suggests the food location nearest to where the attendee was.
         XCTAssertEqual(day.meals.count, 1)
@@ -95,7 +95,7 @@ final class PlannerTests: XCTestCase {
         XCTAssertEqual(lunch.locationId, 6)
         XCTAssertEqual(minutes(lunch.start, lunch.end), 45)
         // Reasons and walks.
-        XCTAssertEqual(planned(plan, 103).reason, "Because you hearted The Prairie Lights")
+        XCTAssertEqual(planned(plan, 103).reason, "Because you liked The Prairie Lights")
         XCTAssertEqual(planned(plan, 104).reason, "Because you like live music")
         XCTAssertNil(plan.items[0].walkMinutes) // first item of the day
         XCTAssertNil(plan.items[1].walkMinutes) // Gates open has no location

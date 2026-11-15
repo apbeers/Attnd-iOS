@@ -86,12 +86,13 @@ extension AppState {
     /// The plan's items (the Live Activity follows them; reminders include them).
     var plannedItemIds: Set<Int> { Set(planner.plan?.itemIds ?? []) }
 
-    private func makePlanner(_ bundle: EventBundle, _ preferences: PlanPreferences) -> Planner {
+    private func makePlanner(_ bundle: EventBundle, _ preferences: PlanPreferences, constraints: PlanConstraints = .none) -> Planner {
         Planner(
             bundle: bundle,
             preferences: preferences,
             heartedItems: personal.heartedScheduleItems,
-            heartedLocations: personal.heartedLocations
+            heartedLocations: personal.heartedLocations,
+            constraints: constraints
         )
     }
 
@@ -171,7 +172,7 @@ extension AppState {
     /// Swap: one of the item's alternatives takes its slot (walks, meals and alternatives rebuilt).
     func swapPlanItem(_ oldId: Int, for newId: Int) {
         guard let bundle = currentBundle, let plan = planner.plan,
-              let swapped = makePlanner(bundle, plan.preferences).swap(plan, oldId: oldId, newId: newId) else { return }
+              let swapped = makePlanner(bundle, plan.preferences, constraints: plan.constraints).swap(plan, oldId: oldId, newId: newId) else { return }
         AppLog.info(.planner, "planner.swap", "Swapped a plan item", ["item_id": .int(newId), "replaced": .int(oldId)])
         planner.store(swapped)
     }

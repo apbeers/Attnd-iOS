@@ -5,7 +5,7 @@
 // the venue arrival notification. The rules are in LiveFollowLogic.swift; this runs them.
 //
 // Live Activity (ActivityKit):
-//   - Follows the user's hearted items, else the event's own now / next, one activity per
+//   - Follows the user's plan (spec §6), else hearted items, else the event's own now / next, one activity per
 //     event day (`EventActivityAttributes.dayStart`; ActivityKit ends an activity after 8 h,
 //     so it is restarted each day).
 //   - Starts by itself while the app is in the foreground, on an event day, from 2 h before
@@ -22,8 +22,9 @@
 //   - pushType `.token`: every token from `pushTokenUpdates` goes to `POST devices/` as
 //     `live_activity_token` (API-011), and `null` when the activity ends, so the server can
 //     put urgent announcements on the Lock Screen.
-// Reminders: "Prairie Lights in 15 min · 8 min walk" before each hearted item, only with the
-//   notification opt-in, category `attnd.reminder`, rescheduled when hearts or content change.
+// Reminders: "Prairie Lights in 15 min · 8 min walk" before each hearted or planned item, only
+//   with the notification opt-in, category `attnd.reminder`, rescheduled when hearts, the plan
+//   or content change.
 // Arrival: with "Tell me when I arrive" (Always location), a CLMonitor circle around the venue
 //   sends the "tap to follow" notification once per event day.
 // Background app refresh (`com.arcu.Attnd.refresh`, AttndApp `.backgroundTask`): refreshes the
@@ -141,6 +142,7 @@ final class LiveFollowController {
         let day = LiveActivityPlanner.followDay(
             schedule: bundle.schedule,
             hearted: appState.personal.heartedScheduleItems,
+            planned: appState.plannedItemIds,
             eventStart: bundle.event.startTime,
             now: now,
             timeZone: bundle.event.timeZone
@@ -176,11 +178,13 @@ final class LiveFollowController {
         let timeZone = event.timeZone
         let now = Date.now
         let personal = appState.personal
-        let enabled = personal.followsOnLockScreen && activitiesEnabled && !event.isArchived
+        let planned = appState.plannedItemIds
+        let enabled = appState.followsOnLockScreen && activitiesEnabled && !event.isArchived
         let day = enabled
             ? LiveActivityPlanner.followDay(
                 schedule: bundle.schedule,
                 hearted: personal.heartedScheduleItems,
+                planned: planned,
                 eventStart: event.startTime,
                 now: now,
                 timeZone: timeZone
@@ -219,15 +223,18 @@ final class LiveFollowController {
                     var summary = EventActivityAttributes.ContentState(
                         urgent: activity.content.state.urgent,
                         followsHearts: activity.content.state.followsHearts,
+                        followsPlan: activity.content.state.followsPlan,
                         dayComplete: true
                     )
                     let calendar = EventTimeFormat.calendar(in: timeZone)
                     let dayItems = bundle.schedule.filter { item in
                         item.startTime.map { calendar.isDate($0, inSameDayAs: activity.attributes.dayStart) } ?? false
                     }
-                    let followed = summary.followsHearts == true
-                        ? dayItems.filter { personal.heartedScheduleItems.contains($0.id) }
-                        : dayItems
+                    let followed = summary.followsPlan == true
+                        ? dayItems.filter { planned.contains($0.id) }
+                        : summary.followsHearts == true
+                            ? dayItems.filter { personal.heartedScheduleItems.contains($0.id) }
+                            : dayItems
                     summary.completedCount = followed.filter { ScheduleTiming.hasEnded($0, at: now) }.count
                     await end(activity, final: summary, dismissal: .after(now.addingTimeInterval(LiveActivityPlanner.summaryLinger)))
                 } else {
@@ -498,7 +505,8 @@ final class LiveFollowController {
             planned = ReminderPlanner.reminders(
                 eventId: bundle.event.id,
                 schedule: bundle.schedule,
-                hearted: appState.personal.heartedScheduleItems,
+                // Hearted and planned items (spec §6), like Android.
+                hearted: appState.personal.heartedScheduleItems.union(appState.plannedItemIds),
                 locations: bundle.locations,
                 user: appState.userLocation.location,
                 now: .now,
@@ -622,7 +630,7 @@ final class LiveFollowController {
 
     private func updateVenueMonitor(_ bundle: EventBundle?) {
         var wanted: (key: String, region: VenueRegion)?
-        if let bundle, let appState, appState.personal.notifyOnArrival, appState.personal.followsOnLockScreen,
+        if let bundle, let appState, appState.personal.notifyOnArrival, appState.followsOnLockScreen,
            hasAlwaysLocation, !bundle.event.isArchived,
            (bundle.event.endTime ?? .distantFuture) > .now,
            let region = VenueRegion.make(event: bundle.event.coordinate, locations: bundle.locations) {
@@ -661,7 +669,7 @@ final class LiveFollowController {
         await appState.restoreSavedEventIfNeeded()
         guard let bundle = appState.currentBundle,
               identifier.hasPrefix("venue-\(bundle.event.id)-"),
-              appState.personal.followsOnLockScreen else { return }
+              appState.followsOnLockScreen else { return }
         let event = bundle.event
         let now = Date.now
         let today = EventTimeFormat.calendar(in: event.timeZone).startOfDay(for: now)
@@ -676,6 +684,7 @@ final class LiveFollowController {
         guard let day = LiveActivityPlanner.followDay(
             schedule: bundle.schedule,
             hearted: appState.personal.heartedScheduleItems,
+            planned: appState.plannedItemIds,
             eventStart: event.startTime,
             now: now,
             timeZone: event.timeZone

@@ -45,6 +45,8 @@ struct EventActivityAttributes: ActivityAttributes {
         var opensAt: Date?
         /// True when it follows the user's hearts (false: the event's own now / next).
         var followsHearts: Bool?
+        /// True when it follows the user's plan (spec §6; plan > hearts > the event's own day).
+        var followsPlan: Bool?
         /// Nothing more today: the end-of-day summary.
         var dayComplete: Bool?
         /// How many followed items took place today (end-of-day summary).
@@ -58,6 +60,7 @@ struct EventActivityAttributes: ActivityAttributes {
             urgent: Urgent? = nil,
             opensAt: Date? = nil,
             followsHearts: Bool? = nil,
+            followsPlan: Bool? = nil,
             dayComplete: Bool? = nil,
             completedCount: Int? = nil
         ) {
@@ -68,6 +71,7 @@ struct EventActivityAttributes: ActivityAttributes {
             self.urgent = urgent
             self.opensAt = opensAt
             self.followsHearts = followsHearts
+            self.followsPlan = followsPlan
             self.dayComplete = dayComplete
             self.completedCount = completedCount
         }
@@ -77,6 +81,7 @@ struct EventActivityAttributes: ActivityAttributes {
             case walkMinutesToNext = "walk_minutes_to_next"
             case opensAt = "opens_at"
             case followsHearts = "follows_hearts"
+            case followsPlan = "follows_plan"
             case dayComplete = "day_complete"
             case completedCount = "completed_count"
         }
@@ -91,8 +96,15 @@ struct EventActivityAttributes: ActivityAttributes {
             urgent = try? c.decodeIfPresent(Urgent.self, forKey: .urgent)
             opensAt = try? c.decodeIfPresent(Date.self, forKey: .opensAt)
             followsHearts = try? c.decodeIfPresent(Bool.self, forKey: .followsHearts)
+            followsPlan = try? c.decodeIfPresent(Bool.self, forKey: .followsPlan)
             dayComplete = try? c.decodeIfPresent(Bool.self, forKey: .dayComplete)
             completedCount = try? c.decodeIfPresent(Int.self, forKey: .completedCount)
+        }
+
+        /// The symbol for what it follows: the plan, hearts, or the event's own day.
+        var followSymbol: String {
+            if followsPlan == true { return "list.bullet.clipboard" }
+            return followsHearts == true ? "heart.fill" : "calendar"
         }
     }
 
@@ -200,6 +212,8 @@ enum LiveActivityLink: Hashable, Sendable {
     case updates(notificationId: Int?)
     /// Open the app and start following on the Lock Screen (the "tap to follow" notification).
     case follow
+    /// Schedule → My plan (spec §6), when the activity follows the plan.
+    case plan
 
     static let scheme = "attnd-live"
 
@@ -211,6 +225,7 @@ enum LiveActivityLink: Hashable, Sendable {
         case .updates(let id?):             path = "updates/\(id)"
         case .updates(nil):                 path = "updates"
         case .follow:                       path = "follow"
+        case .plan:                         path = "plan"
         }
         path = "\(Self.scheme)://event/\(eventId)/\(path)"
         // Only digits and fixed words: always a valid URL.
@@ -237,6 +252,9 @@ enum LiveActivityLink: Hashable, Sendable {
         case "follow":
             guard parts.count == 2 else { return nil }
             return (eventId, .follow)
+        case "plan":
+            guard parts.count == 2 else { return nil }
+            return (eventId, .plan)
         default:
             return nil
         }

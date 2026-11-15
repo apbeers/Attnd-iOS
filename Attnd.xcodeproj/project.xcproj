@@ -97,6 +97,10 @@
         { "path": "EventEntities.swift", "target-membership": [ "Attnd/compile-sources" ] },
         { "path": "EventIntents.swift", "target-membership": [ "Attnd/compile-sources" ] },
         { "path": "EventAssistant.swift", "target-membership": [ "Attnd/compile-sources" ] },
+        { "path": "Planner.swift", "target-membership": [ "Attnd/compile-sources" ] },
+        { "path": "PlanRequest.swift", "target-membership": [ "Attnd/compile-sources" ] },
+        { "path": "PlanStore.swift", "target-membership": [ "Attnd/compile-sources" ] },
+        { "path": "PlanView.swift", "target-membership": [ "Attnd/compile-sources" ] },
         {
           "path": "APIClient.swift",
           "target-membership": [
@@ -205,6 +209,9 @@
         { "path": "GlanceTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "LiveFollowTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "ModelDecodingTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
+        { "path": "PlannerFixture.swift", "target-membership": [ "AttndTests/compile-sources" ] },
+        { "path": "PlannerTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
+        { "path": "PlanRequestTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
       ],
     }, {
       "kind": "group",

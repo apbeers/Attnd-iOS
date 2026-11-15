@@ -17,7 +17,9 @@
 // doesn't), and `searchFocused` asks for focus as well.
 //
 // In the full app, a question typed here offers "Ask" when the on-device model is available
-// (Apple Intelligence, EventAssistant.swift): the answer cites the items it used. Without
+// (Apple Intelligence, EventAssistant.swift): the answer cites the items it used. A request
+// that looks like a plan ("Plan my Saturday around live music") makes one instead (the
+// planner, spec §6) and offers "Open My plan". Without
 // the model (or in the App Clip) the plain results are shown, searching the question's
 // keywords when the question as typed finds nothing.
 
@@ -87,6 +89,10 @@ struct EventSearchView: View {
         case thinking(query: String)
         case answered(query: String, answer: EventAssistantAnswer)
         case failed(query: String)
+        /// A plan request (spec §6, full app): planning, the plan made, or why nothing fits.
+        case planning(query: String)
+        case planned(query: String, summary: String, itemIds: [Int])
+        case planFailed(query: String, message: String)
     }
 
     private var query: String {
@@ -228,13 +234,16 @@ struct EventSearchView: View {
         return false
         #else
         guard !query.isEmpty, !ScreenshotMode.isActive, EventAssistant.isAvailable else { return false }
-        // A question already put to the model (e.g. onboarding's "Kid-friendly afternoon").
+        // A question already put to the model (e.g. onboarding's "What's on near me right now?").
         switch assistant {
-        case .thinking(let asked), .answered(let asked, _), .failed(let asked):
+        case .thinking(let asked), .answered(let asked, _), .failed(let asked),
+             .planning(let asked), .planned(let asked, _, _), .planFailed(let asked, _):
             if asked == query { return true }
         case .idle:
             break
         }
+        // Plan requests ("Kid-friendly afternoon") make a plan (spec §6).
+        if AppState.plannerAvailable, PlanRequest.looksLikePlan(query) { return true }
         return EventSearch.looksLikeQuestion(query) || EventSearch.words(query).count >= 4
         #endif
     }
@@ -260,6 +269,28 @@ struct EventSearchView: View {
             case .failed(let asked) where asked == query:
                 Label("Couldn't answer that. Try the results below or rephrase.", systemImage: "exclamationmark.bubble")
                     .foregroundStyle(.secondary)
+            case .planning(let asked) where asked == query:
+                HStack(spacing: 12) {
+                    ProgressView()
+                    Text("Planning on your iPhone…")
+                        .foregroundStyle(.secondary)
+                }
+            case .planned(let asked, let summary, let itemIds) where asked == query:
+                Text("Here's your plan: \(summary). It's in Schedule → My plan.")
+                    .textSelection(.enabled)
+                if appState.tabs.contains(.schedule) {
+                    Button("Open My Plan", systemImage: "list.bullet.clipboard") {
+                        openMyPlan()
+                    }
+                }
+                ForEach(itemIds.compactMap { index.result(for: .scheduleItem($0), now: now) }) { result in
+                    NavigationLink(value: result.target) {
+                        SearchResultRow(result: result)
+                    }
+                }
+            case .planFailed(let asked, let message) where asked == query:
+                Label(message, systemImage: "calendar.badge.exclamationmark")
+                    .foregroundStyle(.secondary)
             default:
                 Button {
                     Task { await ask(query) }
@@ -272,13 +303,25 @@ struct EventSearchView: View {
         } footer: {
             if case .answered(let asked, _) = assistant, asked == query {
                 Text("Answered on this device from the event's info. Tap an item to check the details.")
+            } else if case .planned(let asked, _, _) = assistant, asked == query {
+                Text("Planned on this device from the schedule, your hearts and walking times.")
             }
         }
+    }
+
+    private func openMyPlan() {
+        #if !APP_CLIP
+        appState.showMyPlan()
+        #endif
     }
 
     private func ask(_ question: String) async {
         #if !APP_CLIP
         guard let bundle = appState.currentBundle else { return }
+        if AppState.plannerAvailable, PlanRequest.looksLikePlan(question) {
+            await plan(question)
+            return
+        }
         assistant = .thinking(query: question)
         do {
             let answer = try await EventAssistant.answer(question, bundle: bundle, now: .now)
@@ -290,6 +333,25 @@ struct EventSearchView: View {
         }
         #endif
     }
+
+    #if !APP_CLIP
+    /// A plan request: the planner makes and stores the plan (Schedule → My plan); the answer
+    /// is its summary and items, with "Open My plan".
+    private func plan(_ request: String) async {
+        assistant = .planning(query: request)
+        let plan = await appState.makePlan(request)
+        guard query == request else { return }
+        if let plan, !plan.isEmpty {
+            assistant = .planned(
+                query: request,
+                summary: Planner.summary(plan, timeZone: appState.timeZone),
+                itemIds: plan.itemIds
+            )
+        } else {
+            assistant = .planFailed(query: request, message: appState.planner.error ?? AppState.nothingFitsMessage)
+        }
+    }
+    #endif
 }
 
 // MARK: - Result row

@@ -289,6 +289,8 @@ struct CategoryChips: View {
     var floating = false
     /// The "Hearted" toggle chip, first in the row (nil: not shown).
     var heartedOnly: Binding<Bool>? = nil
+    /// The Schedule tab's "My plan" toggle chip (spec §6), before Hearted (nil: not shown).
+    var myPlan: Binding<Bool>? = nil
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -313,6 +315,12 @@ struct CategoryChips: View {
 
     private var chips: some View {
         HStack(spacing: 8) {
+            if let myPlan {
+                let isOn = myPlan.wrappedValue
+                chip("My plan", systemImage: "list.bullet.clipboard", isSelected: isOn) {
+                    myPlan.wrappedValue.toggle()
+                }
+            }
             if let heartedOnly {
                 let isOn = heartedOnly.wrappedValue
                 chip("Hearted", systemImage: isOn ? "heart.fill" : "heart", isSelected: isOn) {

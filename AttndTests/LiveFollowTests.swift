@@ -2,8 +2,8 @@
 // AttndTests
 //
 // "Follow on Lock Screen" (Live Activity), heart reminders, the venue region, the urgent block
-// (API-011), `live_activity_token`, the activity's links and the onboarding examples
-// (LiveFollowLogic.swift, LiveActivityModel.swift, OnboardingView.swift). Fixed `now`:
+// (API-011), `live_activity_token` and the activity's links (LiveFollowLogic.swift,
+// LiveActivityModel.swift; onboarding's examples are in PlanRequestTests). Fixed `now`:
 // Saturday Nov 14, 2026, 2:00 PM in America/Chicago; locale en_US.
 
 import XCTest
@@ -47,10 +47,11 @@ final class LiveFollowTests: XCTestCase {
 
     private let eventStart = date("2026-11-14T09:00:00-06:00")
 
-    private func day(hearted: Set<Int> = [], at time: Date? = nil, schedule: [ScheduleItem]? = nil) -> FollowDay? {
+    private func day(hearted: Set<Int> = [], planned: Set<Int> = [], at time: Date? = nil, schedule: [ScheduleItem]? = nil) -> FollowDay? {
         LiveActivityPlanner.followDay(
             schedule: schedule ?? self.schedule,
             hearted: hearted,
+            planned: planned,
             eventStart: eventStart,
             now: time ?? now,
             timeZone: chicago
@@ -275,7 +276,7 @@ final class LiveFollowTests: XCTestCase {
     // MARK: - Links
 
     func testLinks_RoundTrip() {
-        let links: [LiveActivityLink] = [.item(12), .map(locationId: 5), .updates(notificationId: 9), .updates(notificationId: nil), .follow]
+        let links: [LiveActivityLink] = [.item(12), .map(locationId: 5), .updates(notificationId: 9), .updates(notificationId: nil), .follow, .plan]
         for link in links {
             let url = link.url(eventId: 42)
             XCTAssertEqual(LiveActivityLink.parse(url)?.eventId, 42, url.absoluteString)
@@ -354,6 +355,33 @@ final class LiveFollowTests: XCTestCase {
         XCTAssertNil(VenueRegion.make(event: nil, locations: [Location(id: 1, name: "Nowhere")]))
     }
 
+    // MARK: - The plan (spec §6): plan > hearts > the event's own day
+
+    func testFollowDay_PlanWinsOverHearts() throws {
+        let planned = try XCTUnwrap(day(hearted: [4], planned: [2, 5]))
+        XCTAssertTrue(planned.followsPlan)
+        XCTAssertFalse(planned.followsHearts)
+        XCTAssertEqual(planned.items.map(\.id), [2, 5])
+        let state = content(planned)
+        XCTAssertEqual(state.followsPlan, true)
+        XCTAssertEqual(state.followSymbol, "list.bullet.clipboard")
+        XCTAssertEqual(state.current?.id, 2)
+        XCTAssertEqual(state.next?.id, 5)
+    }
+
+    func testFollowDay_PlanOverTodayFallsBackToHearts() throws {
+        // Only Morning Yoga (ended) was planned today: hearts take over, then the schedule.
+        let hearts = try XCTUnwrap(day(hearted: [4], planned: [1]))
+        XCTAssertFalse(hearts.followsPlan)
+        XCTAssertTrue(hearts.followsHearts)
+        XCTAssertEqual(hearts.items.map(\.id), [4])
+        XCTAssertNil(content(hearts).followsPlan)
+        let everything = try XCTUnwrap(day(planned: [1]))
+        XCTAssertFalse(everything.followsPlan)
+        XCTAssertFalse(everything.followsHearts)
+        XCTAssertEqual(everything.items.map(\.id), [1, 2, 3, 4, 5])
+    }
+
     // MARK: - Personal state
 
     func testPersonalState_FollowDefaultsAndOldFiles() throws {
@@ -371,40 +399,5 @@ final class LiveFollowTests: XCTestCase {
         let decoded = try JSONDecoder().decode(EventPersonalState.self, from: JSONEncoder().encode(state))
         XCTAssertEqual(decoded, state)
         XCTAssertFalse(decoded.followsOnLockScreen)
-    }
-
-    // MARK: - Onboarding examples
-
-    func testOnboardingExamples() {
-        var items = schedule
-        items[1].tags = ["live music", "country"]
-        items[3].tags = ["live music", "bbq"]
-        var places = locations
-        places[0].tags = ["bbq"]
-        places[1].tags = ["kid-friendly"]
-        let event = Event(id: 1, name: "Prairie Fest", eventCode: "PF", startTime: eventStart,
-                          endTime: date("2026-11-15T18:00:00-06:00"), timeZoneIdentifier: "America/Chicago")
-        let bundle = EventBundle(event: event, locations: places, schedule: items)
-        XCTAssertEqual(OnboardingExamples.prompts(bundle, now: now), [
-            "Plan my Saturday around bbq and live music",
-            "I've got 3 hours, show me the highlights",
-            "Kid-friendly afternoon",
-            "What's on near me right now?",
-        ])
-
-        // One day, no tags: location categories; none at all: the generic examples only.
-        let oneDay = Event(id: 2, name: "Block Party", eventCode: "BP", timeZoneIdentifier: "America/Chicago")
-        let categories = [
-            Location(id: 1, name: "Tacos", category: "Food"),
-            Location(id: 2, name: "Stage", category: "Music"),
-            Location(id: 3, name: "Burgers", category: "Food"),
-        ]
-        let short = [ScheduleItem(id: 1, name: "Band", startTime: now)]
-        XCTAssertEqual(OnboardingExamples.prompts(EventBundle(event: oneDay, locations: categories, schedule: short), now: now).first,
-                       "Plan my day around food and music")
-        XCTAssertEqual(OnboardingExamples.prompts(EventBundle(event: oneDay, schedule: short), now: now), [
-            "I've got 3 hours, show me the highlights",
-            "What's on near me right now?",
-        ])
     }
 }

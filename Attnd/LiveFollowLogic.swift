@@ -6,12 +6,13 @@
 // runtime, UserNotifications or Core Location.
 //
 //   - FollowDay / LiveActivityPlanner.followDay: which day to follow (today while something
-//     is left, else the next event day), what it follows (hearted items, else the event's own
-//     schedule) and when the activity starts (2 h before the first item or the gates opening).
+//     is left, else the next event day), what it follows (the plan's items, else hearted items,
+//     else the event's own schedule) and when the activity starts (2 h before the first item
+//     or the gates opening).
 //   - LiveActivityPlanner.content: current / next / after, walk minutes, urgent block,
 //     "gates open", end-of-day summary; staleDate.
 //   - LiveActivityPlanner.decision: start now, schedule for later, or nothing.
-//   - ReminderPlanner: "Prairie Lights in 15 min · 8 min walk" before hearted items.
+//   - ReminderPlanner: "Prairie Lights in 15 min · 8 min walk" before hearted and planned items.
 //   - FollowPromptText: the "tap to follow on your Lock Screen" notification.
 //   - VenueRegion: the circle around the venue for arrival.
 
@@ -22,7 +23,7 @@ import Foundation
 struct FollowDay: Hashable, Sendable {
     /// Start of the day in the event's time zone.
     var dayStart: Date
-    /// True: the user's hearted items; false: the event's own schedule for that day.
+    /// True: the user's hearted items; false: the plan's or the event's own schedule for that day.
     var followsHearts: Bool
     /// The day's items (by start, then id), including ones already over.
     var items: [ScheduleItem]
@@ -32,6 +33,8 @@ struct FollowDay: Hashable, Sendable {
     var startAt: Date
     /// When the last item ends.
     var endAt: Date
+    /// True: the user's plan (spec §6), which wins over hearts.
+    var followsPlan = false
 }
 
 enum LiveActivityPlanner {
@@ -47,11 +50,13 @@ enum LiveActivityPlanner {
     static let staleGrace: TimeInterval = 60
 
     /// The day to follow: today while one of its items hasn't ended, otherwise the next day
-    /// of the event with items. Hearted items when the user hearted any that day that haven't
-    /// ended (today) / at all (later days), else every item of the day. nil: nothing left.
+    /// of the event with items. The plan's items (`planned`) when some of that day's haven't
+    /// ended, else hearted items when the user hearted any that day that haven't ended, else
+    /// every item of the day (plan > hearts > the event's own day, as Android). nil: nothing left.
     static func followDay(
         schedule: [ScheduleItem],
         hearted: Set<Int>,
+        planned: Set<Int> = [],
         eventStart: Date?,
         now: Date,
         timeZone: TimeZone
@@ -73,9 +78,11 @@ enum LiveActivityPlanner {
             let all = days[day] ?? []
             let open = all.filter { !ScheduleTiming.hasEnded($0, at: now) }
             guard !open.isEmpty else { continue }
-            let heartedOpen = open.filter { hearted.contains($0.id) }
-            let followsHearts = !heartedOpen.isEmpty
-            let items = followsHearts ? all.filter { hearted.contains($0.id) } : all
+            let followsPlan = open.contains { planned.contains($0.id) }
+            let followsHearts = !followsPlan && open.contains { hearted.contains($0.id) }
+            let items = followsPlan
+                ? all.filter { planned.contains($0.id) }
+                : followsHearts ? all.filter { hearted.contains($0.id) } : all
             let gates = eventStart.flatMap { calendar.isDate($0, inSameDayAs: day) ? $0 : nil }
             let first = items.compactMap(\.startTime).min() ?? day
             let startAt = min(first, gates ?? first).addingTimeInterval(-leadTime)
@@ -86,7 +93,8 @@ enum LiveActivityPlanner {
                 items: items,
                 gatesOpen: gates,
                 startAt: startAt,
-                endAt: endAt
+                endAt: endAt,
+                followsPlan: followsPlan
             )
         }
         return nil
@@ -172,6 +180,7 @@ enum LiveActivityPlanner {
             urgent: urgent,
             opensAt: day.gatesOpen.flatMap { $0 > now ? $0 : nil },
             followsHearts: day.followsHearts,
+            followsPlan: day.followsPlan ? true : nil,
             dayComplete: complete ? true : nil,
             completedCount: complete ? completed : nil
         )
@@ -211,7 +220,7 @@ enum LiveActivityPlanner {
     }
 }
 
-// MARK: - Reminders before hearted items
+// MARK: - Reminders before hearted and planned items
 
 struct PlannedReminder: Hashable, Sendable {
     /// Notification request id ("attnd.reminder.<event>.<item>").
@@ -229,7 +238,8 @@ enum ReminderPlanner {
     static let maxReminders = 40
     static let idPrefix = "attnd.reminder."
 
-    /// One reminder per hearted schedule item whose reminder time is still ahead:
+    /// One reminder per hearted schedule item (the controller passes hearted ∪ planned items)
+    /// whose reminder time is still ahead:
     /// "Prairie Lights in 15 min · 8 min walk" (walk from `user` when within walking range and
     /// more than 20 m away), body "Main Stage · 7:30 PM". Soonest first, at most `maxReminders`.
     static func reminders(

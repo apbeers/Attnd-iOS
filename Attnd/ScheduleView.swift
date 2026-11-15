@@ -8,6 +8,9 @@
 // Display config: `schedule_style` (timeline / by_day / by_location / now_next,
 // grouped by ScheduleGrouping) and `enable_search`. All times are shown in the
 // event's time zone. Countdown labels update live via TimelineView.
+//
+// In the Schedule tab (full app), a "My plan" chip shows the planner's plan instead of the
+// schedule (PlanView.swift, spec §6), while the planner is available or a plan exists.
 
 import SwiftUI
 
@@ -19,7 +22,7 @@ struct ScheduleTab: View {
 
     var body: some View {
         NavigationSplitView {
-            ScheduleView(selection: $selection)
+            ScheduleView(selection: $selection, offersPlan: true)
                 .eventStatusBanners()
                 // After the filter menu, in its own glass group.
                 .optionsToolbarItem(separated: true)
@@ -57,6 +60,8 @@ struct ScheduleView: View {
     /// Bound in a split view's sidebar. nil when used inside a plain NavigationStack,
     /// where rows push their own destinations.
     var selection: Binding<ScheduleItem?>? = nil
+    /// The Schedule tab (not the pane beside the map): offers the "My plan" chip.
+    var offersPlan = false
 
     @Environment(AppState.self) private var appState
     @State private var searchText = ""
@@ -93,11 +98,11 @@ struct ScheduleView: View {
             )
             list(sections: sections, now: now)
                 .overlay {
-                    if sections.isEmpty { emptyState }
+                    if sections.isEmpty, !inPlan { emptyState }
                 }
         }
         .navigationTitle(title)
-        .modifier(SearchableIf(enabled: appState.display.enableSearch, text: $searchText, prompt: "Search schedule"))
+        .modifier(SearchableIf(enabled: appState.display.enableSearch && !inPlan, text: $searchText, prompt: "Search schedule"))
         .refreshable { await appState.pullToRefresh() }
         // Walk times to each item's location (no compass needed here).
         .usesUserLocation(heading: false)
@@ -131,17 +136,63 @@ struct ScheduleView: View {
         }
     }
 
-    /// The Hearted chip appears once something is hearted (or while it is on).
-    private var showsHeartedChip: Bool { appState.hasHearts || heartedOnly }
+    /// The Hearted chip appears once something is hearted (or while it is on); not in My plan.
+    private var showsHeartedChip: Bool { !inPlan && (appState.hasHearts || heartedOnly) }
+
+    /// "My plan" (full app, Schedule tab): while the planner is available or a plan exists.
+    private var showsPlanChip: Bool {
+        #if APP_CLIP
+        return false
+        #else
+        return offersPlan && appState.offersMyPlan
+        #endif
+    }
+
+    /// The list shows My plan instead of the schedule.
+    private var inPlan: Bool {
+        #if APP_CLIP
+        return false
+        #else
+        return showsPlanChip && appState.planner.showsMyPlan
+        #endif
+    }
+
+    private var myPlanBinding: Binding<Bool>? {
+        #if APP_CLIP
+        return nil
+        #else
+        guard showsPlanChip else { return nil }
+        let planner = appState.planner
+        return Binding(get: { planner.showsMyPlan }, set: { planner.showsMyPlan = $0 })
+        #endif
+    }
 
     @ViewBuilder
     private func listContent(sections: [ScheduleSection], now: Date) -> some View {
-        if showsHeartedChip {
-            CategoryChips(categories: [], selection: .constant(nil), heartedOnly: $heartedOnly)
-                .listRowInsets(EdgeInsets())
-                .listRowSeparator(.hidden)
-                .listRowBackground(Color.clear)
+        if showsHeartedChip || showsPlanChip {
+            CategoryChips(
+                categories: [],
+                selection: .constant(nil),
+                heartedOnly: showsHeartedChip ? $heartedOnly : nil,
+                myPlan: myPlanBinding
+            )
+            .listRowInsets(EdgeInsets())
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
         }
+        #if !APP_CLIP
+        if inPlan {
+            MyPlanContent(now: now)
+        } else {
+            scheduleSections(sections, now: now)
+        }
+        #else
+        scheduleSections(sections, now: now)
+        #endif
+    }
+
+    @ViewBuilder
+    private func scheduleSections(_ sections: [ScheduleSection], now: Date) -> some View {
         ForEach(sections) { section in
             Section {
                 ForEach(section.items) { item in

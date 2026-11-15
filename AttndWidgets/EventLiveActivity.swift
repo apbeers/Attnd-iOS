@@ -79,12 +79,13 @@ private enum ActivityStyle {
     }
 
     /// The whole activity opens Updates at the urgent announcement, else the item in
-    /// progress, else the next one, else Updates.
+    /// progress, else the next one, else My plan (when it follows the plan), else Updates.
     static func primaryURL(_ context: Context) -> URL {
         let eventId = context.attributes.eventId
         let state = context.state
         if let id = state.urgent?.id { return LiveActivityLink.updates(notificationId: id).url(eventId: eventId) }
         if let id = state.current?.id ?? state.next?.id { return LiveActivityLink.item(id).url(eventId: eventId) }
+        if state.followsPlan == true { return LiveActivityLink.plan.url(eventId: eventId) }
         return LiveActivityLink.updates(notificationId: nil).url(eventId: eventId)
     }
 
@@ -229,7 +230,7 @@ private struct LockScreenActivityView: View {
                 UrgentBlock(urgent: urgent, eventId: attributes.eventId)
             }
             HStack(spacing: 6) {
-                Image(systemName: state.followsHearts == true ? "heart.fill" : "calendar")
+                Image(systemName: state.followSymbol)
                     .foregroundStyle(accent)
                     .accessibilityHidden(true)
                 Text(attributes.eventName)
@@ -388,7 +389,7 @@ private struct CompactLeadingView: View {
                 .foregroundStyle(.red)
                 .accessibilityLabel("Urgent update")
         } else {
-            Image(systemName: context.state.followsHearts == true ? "heart.fill" : "calendar")
+            Image(systemName: context.state.followSymbol)
                 .foregroundStyle(ActivityStyle.accent(context.attributes))
                 .accessibilityLabel(context.attributes.eventName)
         }
@@ -465,7 +466,7 @@ private struct MinimalView: View {
         } else if let current = state.current {
             MinimalProgress(slot: current, tint: ActivityStyle.accent(context.attributes))
         } else {
-            Image(systemName: state.followsHearts == true ? "heart.fill" : "calendar")
+            Image(systemName: state.followSymbol)
                 .foregroundStyle(ActivityStyle.accent(context.attributes))
         }
     }

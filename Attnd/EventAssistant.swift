@@ -8,6 +8,8 @@
 // [s12], the model lists the ids it used, and the answer shows those items so the attendee
 // can jump to them (falling back to the items the tools returned).
 //
+// It also reads plan requests into the planner's preferences (`planPreferences`, spec §6).
+//
 // Used by the search sheet (EventSearchView) and Siri / Shortcuts (AskEventIntent). When the
 // model is unavailable (device not eligible, Apple Intelligence off, model not downloaded)
 // `isAvailable` is false and callers show plain search results instead.
@@ -73,6 +75,91 @@ enum EventAssistant {
         }
         return EventAssistantAnswer(text: reply.text, sources: Array(sources.prefix(6)))
     }
+}
+
+// MARK: - Planner preferences (spec §6)
+
+extension EventAssistant {
+    /// The planner's preferences for `request`, read by the on-device model as structured output
+    /// (`PlanPreferencesReply`) and validated against the bundle (`PlanRequest.validate`: unknown
+    /// tags, categories, ids and days dropped). The scheduling itself is plain code (Planner).
+    /// Throws when the model is unavailable or fails; callers then use `PlanRequest.heuristic`.
+    static func planPreferences(
+        _ request: String,
+        bundle: EventBundle,
+        heartedItems: Set<Int>,
+        now: Date
+    ) async throws -> PlanPreferences {
+        let session = LanguageModelSession {
+            """
+            You read an attendee's request for a plan of the event "\(bundle.event.name)" and fill in \
+            their preferences. Use only tags from TAGS, categories from CATEGORIES, item numbers from \
+            ITEMS and dates from DAYS. Leave a field empty when the request doesn't say.
+            """
+        }
+        var options = GenerationOptions()
+        options.temperature = 0
+        let prompt = PlanRequest.prompt(bundle, request: request, heartedItems: heartedItems, now: now)
+        let response = try await session.respond(generating: PlanPreferencesReply.self, options: options) {
+            prompt
+        }
+        let reply = response.content
+        var raw = PlanModelReply()
+        raw.likedTags = reply.likedTags
+        raw.dislikedTags = reply.dislikedTags
+        raw.likedCategories = reply.likedCategories
+        raw.dislikedCategories = reply.dislikedCategories
+        raw.similarTo = reply.similarTo.map(String.init)
+        raw.days = reply.days
+        raw.earliest = reply.earliest
+        raw.latest = reply.latest
+        raw.hours = reply.hours
+        raw.pace = reply.pace
+        raw.includeMeals = reply.includeMeals
+        raw.kidFriendly = reply.kidFriendly
+        return PlanRequest.validate(raw, bundle: bundle, now: now)
+    }
+}
+
+/// What the attendee wants from a plan, as the model reads the request (the fields of the
+/// prompt's JSON form). Empty strings / 0 mean "not said".
+@Generable(description: "An attendee's preferences for a plan of the event.")
+struct PlanPreferencesReply {
+    @Guide(description: "liked_tags: tags from TAGS the request asks for, lower case.")
+    var likedTags: [String]
+
+    @Guide(description: "disliked_tags: tags from TAGS the request wants to avoid, lower case.")
+    var dislikedTags: [String]
+
+    @Guide(description: "liked_categories: categories from CATEGORIES the request asks for.")
+    var likedCategories: [String]
+
+    @Guide(description: "disliked_categories: categories from CATEGORIES the request wants to avoid.")
+    var dislikedCategories: [String]
+
+    @Guide(description: "similar_to: the numbers of ITEMS the request names or wants more of.")
+    var similarTo: [Int]
+
+    @Guide(description: "days: dates from DAYS the request asks for, as YYYY-MM-DD; empty when it names none.")
+    var days: [String]
+
+    @Guide(description: "earliest: the earliest time as HH:MM (24-hour), or an empty string.")
+    var earliest: String
+
+    @Guide(description: "latest: the latest time as HH:MM (24-hour), or an empty string.")
+    var latest: String
+
+    @Guide(description: "hours: how many hours the attendee has, or 0 when the request doesn't say.")
+    var hours: Double
+
+    @Guide(description: "pace: relaxed, balanced or packed.")
+    var pace: String
+
+    @Guide(description: "include_meals: true when the request mentions lunch, dinner or food breaks.")
+    var includeMeals: Bool
+
+    @Guide(description: "kid_friendly: true for kids or family.")
+    var kidFriendly: Bool
 }
 
 // MARK: - Structured reply

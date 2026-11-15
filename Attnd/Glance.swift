@@ -594,7 +594,7 @@ struct EventPersonalState: Codable, Hashable, Sendable {
     }
 
     /// Whether the Live Activity follows this event: the user's choice, else on once
-    /// something is hearted (spec §8; later also with a plan).
+    /// something is hearted (spec §8; `AppState.followsOnLockScreen` also counts a plan).
     var followsOnLockScreen: Bool { followOnLockScreen ?? hasHearts }
 
     var hasHearts: Bool { !heartedLocations.isEmpty || !heartedScheduleItems.isEmpty }

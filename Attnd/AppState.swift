@@ -104,7 +104,7 @@ final class AppState {
     var searchText = ""
 
     /// A question to put to the on-device model as soon as the search sheet shows it
-    /// (onboarding's "Plan your day" examples); consumed by EventSearchView.
+    /// (onboarding's "What's on near me right now?"); consumed by EventSearchView.
     var autoAskQuery: String?
 
     /// The onboarding cards are due (first join); ContentView presents them once it is on screen.
@@ -129,6 +129,12 @@ final class AppState {
     /// Hearts and the Updates "seen" mark for the current event (UserDefaults, per event).
     private(set) var personal = EventPersonalState()
     @ObservationIgnored private var personalEventId: Int?
+
+    #if !APP_CLIP
+    /// "My plan" (spec §6): the current event's plan and the planner's progress (PlanStore.swift;
+    /// the full app only, offered while Apple Intelligence's on-device model is available).
+    let planner = PlanStore()
+    #endif
 
     // MARK: - Device
 
@@ -704,7 +710,7 @@ final class AppState {
     }
 
     /// Opens the search sheet with `query` (Siri / Shortcuts). `ask`: also put it to the
-    /// on-device model right away (onboarding's "Plan your day" examples).
+    /// on-device model right away (onboarding's question example; its plan examples plan).
     func showSearch(_ query: String, ask: Bool = false) {
         guard currentEvent != nil else { return }
         searchPath = NavigationPath()
@@ -714,8 +720,8 @@ final class AppState {
     }
 
     /// Whether "Ask" (Apple Intelligence's on-device model) can answer: never in the App Clip
-    /// or screenshot mode. Onboarding's "Plan your day" card (and later the planner, spec §6)
-    /// appears only when this is true.
+    /// or screenshot mode. Onboarding's "Plan your day" card and the planner (spec §6, "My plan")
+    /// are offered only when this is true.
     static var assistantAvailable: Bool {
         #if APP_CLIP
         return false
@@ -894,9 +900,17 @@ final class AppState {
               let data = UserDefaults.standard.data(forKey: Keys.personal(eventId)),
               let saved = try? JSONDecoder().decode(EventPersonalState.self, from: data) else {
             personal = EventPersonalState()
+            loadPlan(for: eventId)
             return
         }
         personal = saved
+        loadPlan(for: eventId)
+    }
+
+    private func loadPlan(for eventId: Int?) {
+        #if !APP_CLIP
+        planner.load(eventId: eventId)
+        #endif
     }
 
     private func savePersonalState() {
@@ -981,8 +995,14 @@ final class AppState {
 
     // MARK: - Follow on Lock Screen (Live Activity), reminders, onboarding
 
-    /// "Follow on Lock Screen" for this event (default: on once something is hearted).
-    var followsOnLockScreen: Bool { personal.followsOnLockScreen }
+    /// "Follow on Lock Screen" for this event (default: on once something is hearted or planned).
+    var followsOnLockScreen: Bool {
+        #if APP_CLIP
+        return personal.followsOnLockScreen
+        #else
+        return personal.followOnLockScreen ?? (personal.hasHearts || planner.hasPlan)
+        #endif
+    }
 
     func setFollowOnLockScreen(_ on: Bool) {
         guard currentEvent != nil, personal.followOnLockScreen != on else { return }
@@ -1063,6 +1083,8 @@ final class AppState {
             }
         case .follow:
             LiveFollowController.shared.followNow()
+        case .plan:
+            showMyPlan()
         }
     }
     #endif

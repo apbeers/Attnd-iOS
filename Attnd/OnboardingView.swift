@@ -9,77 +9,12 @@
 //   2. Location: walk times, the compass arrow, what's nearby → the permission prompt.
 //   3. Notifications (full app): set-time changes and reminders for hearts → the prompt.
 //   4. "Plan your day", only when Apple Intelligence's on-device model is available
-//      (`AppState.assistantAvailable`): example requests built from this event's tags and
-//      categories (`OnboardingExamples`). For now each chip opens Ask with that text; the
-//      planner (spec §6) will take them over.
+//      (`AppState.plannerAvailable`; never in the App Clip): example requests built from this
+//      event's tags (`PlanRequest.examples`, the same as Android's). A plan chip makes the plan
+//      and opens Schedule → My plan (spec §6); the question chip opens Ask with it.
 
 import CoreLocation
 import SwiftUI
-
-// MARK: - Example requests (pure, unit tested)
-
-enum OnboardingExamples {
-    /// Up to four example requests for this event: "Plan my Saturday around live music and
-    /// bbq" (its two most used tags, else location categories; the weekday of the first event
-    /// day still ahead when the event lasts more than one day, otherwise "day"), "I've got 3
-    /// hours, show me the highlights", "Kid-friendly afternoon" (only when a tag or category
-    /// mentions kids or family) and "What's on near me right now?".
-    static func prompts(_ bundle: EventBundle, now: Date, locale: Locale = Locale(identifier: "en_US")) -> [String] {
-        var prompts: [String] = []
-        let topics = topTopics(bundle, limit: 2)
-        if !topics.isEmpty {
-            let day = planDay(bundle, now: now, locale: locale)
-            prompts.append("Plan my \(day) around \(topics.joined(separator: " and "))")
-        }
-        prompts.append("I've got 3 hours, show me the highlights")
-        let words = allTopics(bundle).keys
-        if words.contains(where: { $0.contains("kid") || $0.contains("family") || $0.contains("children") }) {
-            prompts.append("Kid-friendly afternoon")
-        }
-        prompts.append("What's on near me right now?")
-        return prompts
-    }
-
-    /// Tags of schedule items and locations by use (lower case, as sent); location categories
-    /// only when there are no tags at all.
-    static func allTopics(_ bundle: EventBundle) -> [String: Int] {
-        var counts: [String: Int] = [:]
-        for tag in bundle.schedule.flatMap(\.tags) + bundle.locations.flatMap(\.tags) {
-            let key = tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            if !key.isEmpty { counts[key, default: 0] += 1 }
-        }
-        if counts.isEmpty {
-            for category in bundle.locations.compactMap(\.category) {
-                let key = category.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                if !key.isEmpty { counts[key, default: 0] += 1 }
-            }
-        }
-        return counts
-    }
-
-    /// The most used topics: by count, then alphabetically.
-    static func topTopics(_ bundle: EventBundle, limit: Int) -> [String] {
-        allTopics(bundle)
-            .sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }
-            .prefix(limit)
-            .map(\.key)
-    }
-
-    /// "Saturday" (the first event day from today on) for a multi-day event, else "day".
-    static func planDay(_ bundle: EventBundle, now: Date, locale: Locale) -> String {
-        let event = bundle.event
-        let calendar = EventTimeFormat.calendar(in: event.timeZone)
-        let starts = bundle.schedule.compactMap(\.startTime) + [event.startTime, event.endTime].compactMap { $0 }
-        let days = Set(starts.map { calendar.startOfDay(for: $0) })
-        guard days.count > 1 else { return "day" }
-        let today = calendar.startOfDay(for: now)
-        guard let day = days.filter({ $0 >= today }).min() ?? days.max() else { return "day" }
-        var style = Date.FormatStyle.dateTime.weekday(.wide)
-        style.timeZone = event.timeZone
-        style.locale = locale
-        return day.formatted(style)
-    }
-}
 
 // MARK: - Cards
 
@@ -100,13 +35,23 @@ struct OnboardingView: View {
     private var cards: [Card] {
         var cards: [Card] = [.intro, .location]
         if !AppState.isAppClip { cards.append(.notifications) }
-        if AppState.assistantAvailable, !examples.isEmpty { cards.append(.plan) }
+        if hasPlanCard { cards.append(.plan) }
         return cards
     }
 
-    private var examples: [String] {
-        appState.currentBundle.map { OnboardingExamples.prompts($0, now: .now) } ?? []
+    private var hasPlanCard: Bool {
+        #if APP_CLIP
+        return false
+        #else
+        return AppState.plannerAvailable && !examples.isEmpty
+        #endif
     }
+
+    #if !APP_CLIP
+    private var examples: [PlanExample] {
+        appState.currentBundle.map { PlanRequest.examples($0, now: .now) } ?? []
+    }
+    #endif
 
     var body: some View {
         let cards = self.cards
@@ -213,22 +158,29 @@ struct OnboardingView: View {
                 }
             }
         case .plan:
-            CardLayout(systemImage: "wand.and.stars", title: "Plan your day") {
-                Text("Ask in your own words. Apple Intelligence answers on your iPhone from the event's own schedule.")
-                    .foregroundStyle(.secondary)
-                ForEach(examples, id: \.self) { example in
-                    Button {
-                        // Opens Ask with the example (the search sheet replaces this one).
-                        appState.showSearch(example, ask: true)
-                    } label: {
-                        Label(example, systemImage: "sparkles")
-                            .multilineTextAlignment(.leading)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .buttonStyle(.bordered)
+            planCard
+        }
+    }
+
+    @ViewBuilder
+    private var planCard: some View {
+        #if !APP_CLIP
+        CardLayout(systemImage: "wand.and.stars", title: "Plan your day") {
+            Text("Say what you'd like in your own words. Apple Intelligence builds a plan on your iPhone from the event's schedule, your hearts and walking times.")
+                .foregroundStyle(.secondary)
+            ForEach(examples) { example in
+                Button {
+                    // A plan opens Schedule → My plan, the question opens Ask (either replaces this sheet).
+                    appState.useExample(example)
+                } label: {
+                    Label(example.text, systemImage: example.isPlan ? "sparkles" : "bubble.left")
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .buttonStyle(.bordered)
             }
         }
+        #endif
     }
 
     private static var hasLocationPermission: Bool {

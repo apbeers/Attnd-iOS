@@ -205,8 +205,17 @@ struct ContentView: View {
                 switch sheet {
                 case .search:
                     // Focus the field unless Siri / Spotlight opened the sheet on an item or
-                    // an onboarding example is being asked.
+                    // an onboarding example is being asked. The full app shows the assistant
+                    // (search, Ask and plan changes in one screen; not in screenshot mode).
+                    #if APP_CLIP
                     EventSearchSheet(focusesSearchField: appState.searchPath.isEmpty && appState.autoAskQuery == nil)
+                    #else
+                    if AppState.assistantEnabled {
+                        AssistantSheet(focusesInput: appState.searchPath.isEmpty)
+                    } else {
+                        EventSearchSheet(focusesSearchField: appState.searchPath.isEmpty && appState.autoAskQuery == nil)
+                    }
+                    #endif
                 case .options:
                     OptionsSheet()
                 case .tour:

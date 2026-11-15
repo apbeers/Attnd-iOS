@@ -166,6 +166,11 @@
         { "path": "WhyNot.swift", "target-membership": [ "Attnd/compile-sources" ] },
         { "path": "PlanShare.swift", "target-membership": [ "Attnd/compile-sources" ] },
         { "path": "CalendarEntries.swift", "target-membership": [ "Attnd/compile-sources" ] },
+        { "path": "AssistantFlow.swift", "target-membership": [ "Attnd/compile-sources" ] },
+        { "path": "AssistantController.swift", "target-membership": [ "Attnd/compile-sources" ] },
+        { "path": "AssistantView.swift", "target-membership": [ "Attnd/compile-sources" ] },
+        { "path": "AssistantBlockView.swift", "target-membership": [ "Attnd/compile-sources" ] },
+        { "path": "DayRouteProvider.swift", "target-membership": [ "Attnd/compile-sources" ] },
         {
           "path": "APIClient.swift",
           "target-membership": [
@@ -283,6 +288,7 @@
         { "path": "AssistantBlocksTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "PlanEditingTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "AssistantExtrasTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
+        { "path": "AssistantFlowTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
       ],
     }, {
       "kind": "group",

@@ -65,6 +65,14 @@ struct MyPlanContent: View {
                 NavigationLink(value: item) {
                     PlanItemRow(entry: entry, item: item, now: now)
                 }
+                // Check-off by tap (assistant spec §6; also automatic near the stage).
+                .swipeActions(edge: .leading) {
+                    let checked = appState.planner.plan?.checkedOff.contains(entry.itemId) == true
+                    Button(checked ? "Not Seen" : "Seen", systemImage: checked ? "circle" : "checkmark.circle") {
+                        appState.assistant.toggleCheckOff(entry.itemId)
+                    }
+                    .tint(.green)
+                }
             } else {
                 PlanItemRow(entry: entry, item: nil, now: now)
             }
@@ -187,18 +195,11 @@ private struct PlanHeader: View {
             Text(Planner.summary(plan, timeZone: appState.timeZone))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            HStack(spacing: 8) {
-                Button("Re-plan from Now", systemImage: "arrow.clockwise") {
-                    appState.replanFromNow()
-                }
-                .buttonStyle(.bordered)
-                if AppState.plannerAvailable {
-                    Button("New Plan", systemImage: "square.and.pencil") {
-                        appState.clearPlan()
-                    }
-                    .buttonStyle(.bordered)
-                }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { buttons }
+                VStack(alignment: .leading, spacing: 8) { buttons }
             }
+            .buttonStyle(.bordered)
             .font(.subheadline)
             if let error = appState.planner.error {
                 Text(error)
@@ -207,6 +208,24 @@ private struct PlanHeader: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private var buttons: some View {
+        Button("Re-plan from Now", systemImage: "arrow.clockwise") {
+            appState.replanFromNow()
+        }
+        if AppState.plannerAvailable {
+            Button("New Plan", systemImage: "square.and.pencil") {
+                appState.clearPlan()
+            }
+        }
+        // The same plan in the assistant: edits by text, walking map, share, calendar (spec §8).
+        if AppState.assistantEnabled {
+            Button("Open in Assistant", systemImage: "sparkles") {
+                appState.openSearch()
+            }
+        }
     }
 }
 
@@ -271,6 +290,11 @@ private struct PlanItemRow: View {
                     .foregroundStyle(.tint)
             }
             Spacer(minLength: 0)
+            if appState.planner.plan?.checkedOff.contains(entry.itemId) == true {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                    .accessibilityLabel("Seen")
+            }
             if let item {
                 HeartButton(target: .scheduleItem(item.id), font: .subheadline)
             }

@@ -171,6 +171,10 @@ final class AppState {
     /// "My plan" (spec §6): the current event's plan and the planner's progress (PlanStore.swift;
     /// the full app only, offered while Apple Intelligence's on-device model is available).
     let planner = PlanStore()
+
+    /// The event assistant (AssistantController.swift, spec §1–8): the conversation, its actions
+    /// and live hints. The floating button opens it (the search sheet in screenshot mode).
+    let assistant = AssistantController()
     #endif
 
     // MARK: - Device
@@ -307,6 +311,9 @@ final class AppState {
         NotificationCenter.default.addObserver(forName: .attndUpdateRequired, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in await self?.handleUpdateRequired() }
         }
+        #if !APP_CLIP
+        assistant.appState = self
+        #endif
     }
 
     // MARK: - App updates
@@ -757,6 +764,9 @@ final class AppState {
         if isFirstApply, !ScreenshotMode.isActive, !UserDefaults.standard.bool(forKey: Keys.onboardingSeen) {
             pendingTour = true
         }
+        #if !APP_CLIP
+        assistant.refreshLive()
+        #endif
         liveFollowNeedsUpdate()
     }
 
@@ -808,6 +818,14 @@ final class AppState {
         searchPath = NavigationPath()
         searchText = query
         autoAskQuery = ask && Self.assistantAvailable ? query : nil
+        #if !APP_CLIP
+        // The assistant is the search sheet's place in the full app: the text goes into its
+        // input bar, or runs at once when it was to be asked.
+        if Self.assistantEnabled {
+            autoAskQuery = nil
+            assistant.request(query, send: ask)
+        }
+        #endif
         presentedSheet = .search
     }
 
@@ -822,9 +840,9 @@ final class AppState {
         #endif
     }
 
-    /// "Ask About This" on a location, schedule item or update detail (assistant spec §8). For
-    /// now it opens the search sheet with the item's name; the assistant phase repoints it to
-    /// the assistant with the item as context ("Tell me about X").
+    /// "Ask About This" on a location, schedule item or update detail (assistant spec §8): the
+    /// assistant with the item as context ("Tell me about X": the model's answer, else the
+    /// item's card and chips). The App Clip opens its search sheet with the item's name.
     func askAbout(_ target: SearchTarget) {
         guard currentEvent != nil, !ScreenshotMode.isActive else { return }
         let name: String?
@@ -836,6 +854,25 @@ final class AppState {
         }
         guard let name, !name.isEmpty else { return }
         AppLog.debug(.ui, "ui.action", "Ask about this", ["name": "ask_about", "id": .string(target.reference)])
+        #if !APP_CLIP
+        if Self.assistantEnabled {
+            let ref: EntityRef?
+            switch target {
+            case .location(let id):     ref = EntityRef(kind: .location, id: id)
+            case .scheduleItem(let id): ref = EntityRef(kind: .schedule, id: id)
+            case .notification(let id): ref = EntityRef(kind: .update, id: id)
+            case .event:                ref = nil
+            }
+            searchPath = NavigationPath()
+            presentedSheet = .search
+            if let ref {
+                assistant.askAbout(ref)
+            } else {
+                assistant.submit("Tell me about \(name)")
+            }
+            return
+        }
+        #endif
         showSearch(name)
     }
 
@@ -875,6 +912,11 @@ final class AppState {
             #if !APP_CLIP
             if let payload = shared.payload {
                 pendingSharedPlan = PendingSharedPlan(eventCode: shared.eventCode, payload: payload, receivedAt: .now)
+                // The assistant shows it read-only ("Use this plan" / "Merge with mine").
+                if Self.assistantEnabled {
+                    searchPath = NavigationPath()
+                    presentedSheet = .search
+                }
             }
             #endif
             return
@@ -1087,6 +1129,7 @@ final class AppState {
     private func loadPlan(for eventId: Int?) {
         #if !APP_CLIP
         planner.load(eventId: eventId)
+        assistant.load(eventId: eventId)
         #endif
     }
 
@@ -1214,6 +1257,10 @@ final class AppState {
 
     /// The user's position changed (walk minutes in the Live Activity).
     func userLocationDidChange() {
+        #if !APP_CLIP
+        // Position samples for auto check-off and running late (only while already tracked).
+        assistant.onLocation(userLocation.isAuthorized ? userLocation.location : nil)
+        #endif
         liveFollowNeedsUpdate()
     }
 

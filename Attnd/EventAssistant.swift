@@ -98,6 +98,88 @@ enum EventAssistant {
     }
 }
 
+// MARK: - Assistant turns (assistant spec §3)
+
+extension EventAssistant {
+    /// One event-assistant turn: the model reads `prompt` (`AssistantModel.prompt`: event facts,
+    /// plan, likes, conversation, ≤ 12 retrieved items) and writes the block JSON
+    /// (`{"blocks":[…],"actions":[…]}`), which `AssistantModel.parse` validates. It may look up
+    /// more items with the `lookup` tool (lines in the prompt's ITEMS format). `onPartial` gets
+    /// the text so far while it streams (the screen renders the blocks that are complete).
+    /// Throws when the model is unavailable or fails; the caller then answers with the router.
+    static func assistantTurn(
+        _ prompt: String,
+        bundle: EventBundle,
+        now: Date,
+        onPartial: @escaping @MainActor @Sendable (String) -> Void
+    ) async throws -> (raw: String, toolCalls: Int) {
+        let counter = ToolCallCounter()
+        let session = LanguageModelSession(tools: [AssistantLookupTool(bundle: bundle, now: now, counter: counter)]) {
+            """
+            You are the on-device assistant of the Attnd event app. You only choose how to answer: \
+            reply with exactly one JSON object in the format the prompt describes, no other text. \
+            Use only ids from ITEMS or from the lookup tool, never invent ids, times or facts. \
+            Keep text short and friendly.
+            """
+        }
+        var options = GenerationOptions()
+        options.temperature = 0.2
+        let started = ContinuousClock.now
+        var raw = ""
+        let stream = session.streamResponse(to: prompt, options: options)
+        for try await snapshot in stream {
+            try Task.checkCancellation()
+            raw = snapshot.content
+            await onPartial(raw)
+        }
+        let calls = await counter.count
+        AppLog.debug(.assistant, "assistant.answer", "Assistant turn written in \((ContinuousClock.now - started).wholeMilliseconds) ms", [
+            "ms": .int((ContinuousClock.now - started).wholeMilliseconds), "citations": 0, "tool_calls": .int(calls), "fallback": false,
+        ])
+        return (raw, calls)
+    }
+}
+
+/// Counts the assistant's tool calls (`assistant.turn` `tool_calls`).
+actor ToolCallCounter {
+    private(set) var count = 0
+    func add() { count += 1 }
+}
+
+/// The assistant's one tool: searches the event and returns lines like the prompt's ITEMS
+/// ("[s12] Name — Sat 7:00–8:30 PM · Main Stage"), ids the block JSON may use.
+struct AssistantLookupTool: Tool {
+    let name = "lookup"
+    let description = """
+        Searches the event's schedule items, places and organizer updates by keywords. Time words \
+        filter the schedule: now, next, tonight, tomorrow, a weekday or a time like 7pm.
+        """
+
+    @Generable
+    struct Arguments {
+        @Guide(description: "A few keywords, for example \"tacos\", \"main stage\" or \"music tonight\".")
+        var query: String
+    }
+
+    let bundle: EventBundle
+    let now: Date
+    let counter: ToolCallCounter
+
+    func call(arguments: Arguments) async throws -> String {
+        await counter.add()
+        var results = AssistantSearch.search(bundle, arguments.query, now: now, limit: 8)
+        if results.isEmpty {
+            results = AssistantSearch.search(bundle, AssistantSearch.keywords(arguments.query), now: now, mode: .anyToken, limit: 8)
+        }
+        let lines = results.compactMap { result -> String? in
+            guard let ref = EntityRef.of(result) else { return nil }
+            let detail = AssistantSearch.detail(result, bundle, locale: .current)
+            return "[\(ref.code)] \(result.title)" + (detail.isEmpty ? "" : " — \(detail)")
+        }
+        return lines.isEmpty ? "Nothing in the event matches \"\(arguments.query)\"." : lines.joined(separator: "\n")
+    }
+}
+
 // MARK: - Planner preferences (spec §6)
 
 extension EventAssistant {

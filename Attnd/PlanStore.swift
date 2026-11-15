@@ -31,11 +31,19 @@ final class PlanStore {
     /// The Schedule tab shows My plan (its chip; "Open My plan" and onboarding turn it on).
     var showsMyPlan = false
 
-    @ObservationIgnored private var eventId: Int?
+    /// The plan's undo stack (≤ 20 earlier versions, `PlanHistory`), stored next to the plan.
+    fileprivate(set) var history = PlanHistory()
+
+    @ObservationIgnored private(set) var eventId: Int?
 
     var hasPlan: Bool { plan?.isEmpty == false }
+    var canUndo: Bool { history.canUndo }
 
     private static func key(_ eventId: Int) -> String { "pref.plan.\(eventId)" }
+    private static func historyKey(_ eventId: Int) -> String { "pref.planHistory.\(eventId)" }
+    private static func transcriptKey(_ eventId: Int) -> String { "pref.assistant.\(eventId)" }
+    private static func conversationKey(_ eventId: Int) -> String { "pref.assistantConversation.\(eventId)" }
+    private static func sharedKey(_ eventId: Int) -> String { "pref.sharedPlans.\(eventId)" }
 
     /// The plan saved for `eventId` (AppState, with the event's hearts).
     func load(eventId: Int?) {
@@ -46,9 +54,78 @@ final class PlanStore {
         isPlanning = false
         guard let eventId, !ScreenshotMode.isActive else {
             plan = nil
+            history = PlanHistory()
             return
         }
         plan = PlanCodec.decode(UserDefaults.standard.data(forKey: Self.key(eventId))).flatMap { $0.eventId == eventId ? $0 : nil }
+        history = PlanHistory.decode(UserDefaults.standard.string(forKey: Self.historyKey(eventId)))
+    }
+
+    /// Stores `plan` as a new version: the plan it replaces goes onto the undo stack (assistant
+    /// spec §4; every plan change: edits, versions, new plans, swaps, re-plans, shared plans).
+    func apply(_ plan: Plan?) {
+        if let previous = self.plan, !previous.isEmpty, previous != plan {
+            setHistory(history.push(previous))
+        }
+        store(plan)
+    }
+
+    /// `plan_undo`: the previous version back (nil when there is nothing to undo).
+    @discardableResult
+    func undo() -> Plan? {
+        guard let popped = history.pop() else { return nil }
+        setHistory(popped.rest)
+        store(popped.plan)
+        return popped.plan
+    }
+
+    /// Changes the plan in place, without a new version (check-offs).
+    func update(_ plan: Plan) {
+        store(plan)
+    }
+
+    private func setHistory(_ history: PlanHistory) {
+        self.history = history
+        guard let eventId, !ScreenshotMode.isActive else { return }
+        if history.canUndo {
+            UserDefaults.standard.set(history.encode(), forKey: Self.historyKey(eventId))
+        } else {
+            UserDefaults.standard.removeObject(forKey: Self.historyKey(eventId))
+        }
+    }
+
+    // MARK: Assistant storage (per event, on the device, kept after leaving like the plan)
+
+    func transcript(_ eventId: Int) -> [StoredTurn] {
+        AssistantTranscript.decode(UserDefaults.standard.string(forKey: Self.transcriptKey(eventId)))
+    }
+
+    func setTranscript(_ turns: [StoredTurn], eventId: Int) {
+        guard !ScreenshotMode.isActive else { return }
+        if turns.isEmpty {
+            UserDefaults.standard.removeObject(forKey: Self.transcriptKey(eventId))
+        } else {
+            UserDefaults.standard.set(AssistantTranscript.encode(turns), forKey: Self.transcriptKey(eventId))
+        }
+    }
+
+    func conversation(_ eventId: Int) -> AssistantConversation {
+        AssistantConversation.decode(UserDefaults.standard.string(forKey: Self.conversationKey(eventId)))
+    }
+
+    func setConversation(_ conversation: AssistantConversation, eventId: Int) {
+        guard !ScreenshotMode.isActive else { return }
+        UserDefaults.standard.set(conversation.encode(), forKey: Self.conversationKey(eventId))
+    }
+
+    /// Shared plans received for the event (for "Merge with mine").
+    func sharedPlans(_ eventId: Int) -> [[Int]] {
+        SharedPlans.decode(UserDefaults.standard.string(forKey: Self.sharedKey(eventId)))
+    }
+
+    func addSharedPlan(_ ids: [Int], eventId: Int) {
+        guard !ScreenshotMode.isActive else { return }
+        UserDefaults.standard.set(SharedPlans.encode(SharedPlans.adding(ids, to: sharedPlans(eventId))), forKey: Self.sharedKey(eventId))
     }
 
     fileprivate func store(_ plan: Plan?) {
@@ -141,7 +218,7 @@ extension AppState {
         if plan.isEmpty {
             planner.error = Self.nothingFitsMessage
         } else {
-            planner.store(plan)
+            planner.apply(plan)
         }
         PerfMetrics.shared.record(.perfPlannerMs, detail: PerfBucket.planner(ms: ms))
         AppLog.info(.planner, "planner.run", "Plan with \(plan.itemIds.count) items in \(ms) ms", [
@@ -165,7 +242,7 @@ extension AppState {
             planner.error = "Nothing left on the schedule fits this plan."
         } else {
             planner.error = nil
-            planner.store(replanned)
+            planner.apply(replanned)
         }
     }
 
@@ -174,7 +251,7 @@ extension AppState {
         guard let bundle = currentBundle, let plan = planner.plan,
               let swapped = makePlanner(bundle, plan.preferences, constraints: plan.constraints).swap(plan, oldId: oldId, newId: newId) else { return }
         AppLog.info(.planner, "planner.swap", "Swapped a plan item", ["item_id": .int(newId), "replaced": .int(oldId)])
-        planner.store(swapped)
+        planner.apply(swapped)
     }
 
     /// "Keep as is" after a content change: removed items leave the plan, changed ones are
@@ -196,13 +273,13 @@ extension AppState {
             if let current = schedule.first(where: { $0.id == item.itemId }) { prints[item.itemId] = Planner.fingerprint(current) }
         }
         kept.fingerprints = prints
-        planner.store(kept)
+        planner.apply(kept)
     }
 
     /// "New plan": back to the request card.
     func clearPlan() {
         planner.error = nil
-        planner.store(nil)
+        planner.apply(nil)
     }
 
     /// Opens Schedule → My plan (after planning from Ask or onboarding), closing any sheet.

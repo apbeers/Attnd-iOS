@@ -22,12 +22,15 @@ import SwiftUI
 // MARK: - Mini map
 
 /// A small, non-interactive map (`map` block): pins for `pins` (≤ 12, only those with
-/// coordinates), `route` drawn as numbered stops joined in the accent colour (straight legs
-/// for now; the walking-map phase upgrades them to real routes), and the user's dot when
-/// location is allowed. Tapping it opens the full Map tab on the first stop or pin.
+/// coordinates), `route` drawn as numbered stops joined in the accent colour (straight legs,
+/// or `routeLines`: the day route's walking legs from MKDirections, one polyline per leg), and
+/// the user's dot when location is allowed. Tapping it opens the full Map tab on the first stop
+/// or pin.
 struct MiniMap: View {
     let pins: [Location]
     var route: [Location] = []
+    /// Walking legs in route order (each ≥ 2 points); empty = straight lines between the stops.
+    var routeLines: [[Coordinate]] = []
     var showsUser = true
     var height: CGFloat = 180
     /// nil = the Map tab at the first stop / pin (`AppState.showOnMap`), or that place's
@@ -77,9 +80,13 @@ struct MiniMap: View {
     // Separate builder: inline, this map content was too much for the type checker.
     @MapContentBuilder
     private func mapContent(stops: [Location], others: [Location]) -> some MapContent {
-        if stops.count > 1 {
+        if stops.count > 1 && routeLines.isEmpty {
             let line: [CLLocationCoordinate2D] = stops.compactMap { $0.coordinate?.clCoordinate }
             MapPolyline(coordinates: line)
+                .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
+        }
+        ForEach(Array(routeLines.enumerated()), id: \.offset) { (_: Int, leg: [Coordinate]) in
+            MapPolyline(coordinates: leg.map(\.clCoordinate))
                 .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
         }
         ForEach(Array(stops.enumerated()), id: \.element.id) { (index: Int, stop: Location) in

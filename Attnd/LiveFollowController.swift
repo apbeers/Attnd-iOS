@@ -205,6 +205,20 @@ final class LiveFollowController {
         let foreground = UIApplication.shared.applicationState == .active
 
         func state(at date: Date, existing: EventActivityAttributes.Urgent?, for day: FollowDay) -> EventActivityAttributes.ContentState {
+            var content = baseState(at: date, existing: existing, for: day)
+            // Running late for the next planned item (assistant spec §6): "Leave now".
+            if day.followsPlan, let plan = appState.planner.plan, !plan.isEmpty,
+               let late = LiveAssist.runningLate(plan, bundle, now: date, user: appState.userLocation.location,
+                                                 skipped: personal.skippedItems),
+               content.next?.id == late.itemId {
+                content.leaveBy = late.leaveBy
+                content.lateState = late.state == .leaveNow ? "leave_now" : "cant_make_it"
+                content.walkMinutesToNext = late.walkMinutes
+            }
+            return content
+        }
+
+        func baseState(at date: Date, existing: EventActivityAttributes.Urgent?, for day: FollowDay) -> EventActivityAttributes.ContentState {
             LiveActivityPlanner.content(
                 day: day,
                 locations: bundle.locations,

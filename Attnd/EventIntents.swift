@@ -339,6 +339,71 @@ struct HeartedItemsIntent: AppIntent {
     }
 }
 
+// MARK: - My plan (assistant spec §6)
+
+/// "What's next on my plan in Attnd": the next planned item, its time and the walk there.
+struct PlanNextIntent: AppIntent {
+    static let title: LocalizedStringResource = "What's Next on My Plan"
+    static let supportedModes: IntentModes = .background
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ProvidesDialog & ShowsSnippetView {
+        let started = ContinuousClock.now
+        defer { IntentLog.finished("PlanNextIntent", started: started) }
+        guard let bundle = await IntentBridge.bundle(), let appState = IntentBridge.appState else {
+            return .result(dialog: IntentAnswers.noEvent, view: EmptyView())
+        }
+        guard appState.planner.hasPlan else {
+            return .result(dialog: "You don't have a plan for \(bundle.event.name) yet.", view: EmptyView())
+        }
+        let now = Date.now
+        guard let next = appState.assistant.nextPlanned(now: now), let start = next.startTime else {
+            return .result(dialog: "Nothing else is in your plan.", view: EmptyView())
+        }
+        let when = AssistantText.relativeStart(start, end: ScheduleTiming.effectiveEnd(of: next), now: now,
+                                               zone: bundle.event.timeZone, locale: .current)
+        let place = bundle.location(next.locationId)?.name
+        let rows = EventSearchIndex(bundle).result(for: .scheduleItem(next.id), now: now).map { [$0] } ?? []
+        let text = "Next in your plan: \(next.name)" + (place.map { " at \($0)" } ?? "") + ", \(when)."
+        return .result(
+            dialog: "\(text)",
+            view: EventResultsSnippet(title: bundle.event.name, results: rows)
+        )
+    }
+}
+
+/// "Swap my next thing in Attnd": the next planned item for its best alternative (Undo in the app).
+struct SwapNextPlanItemIntent: AppIntent {
+    static let title: LocalizedStringResource = "Swap My Next Thing"
+    static let supportedModes: IntentModes = .background
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let started = ContinuousClock.now
+        defer { IntentLog.finished("SwapNextPlanItemIntent", started: started) }
+        guard await IntentBridge.bundle() != nil, let appState = IntentBridge.appState else {
+            return .result(dialog: IntentAnswers.noEvent)
+        }
+        return .result(dialog: "\(appState.assistant.swapNext())")
+    }
+}
+
+/// "I already ate in Attnd": no food stops for 3 hours, the next meal break dropped.
+struct AlreadyAteIntent: AppIntent {
+    static let title: LocalizedStringResource = "I Already Ate"
+    static let supportedModes: IntentModes = .background
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let started = ContinuousClock.now
+        defer { IntentLog.finished("AlreadyAteIntent", started: started) }
+        guard await IntentBridge.bundle() != nil, let appState = IntentBridge.appState else {
+            return .result(dialog: IntentAnswers.noEvent)
+        }
+        return .result(dialog: "\(appState.assistant.alreadyAte())")
+    }
+}
+
 // MARK: - Answer wording
 
 enum IntentAnswers {
@@ -468,6 +533,24 @@ struct AttndShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Liked",
             systemImageName: "heart.fill"
+        )
+        AppShortcut(
+            intent: PlanNextIntent(),
+            phrases: [
+                "What's next on my plan in \(.applicationName)",
+                "What's my next thing in \(.applicationName)",
+            ],
+            shortTitle: "Next in My Plan",
+            systemImageName: "list.bullet.clipboard"
+        )
+        AppShortcut(
+            intent: AlreadyAteIntent(),
+            phrases: [
+                "I already ate in \(.applicationName)",
+                "Tell \(.applicationName) I already ate",
+            ],
+            shortTitle: "I Already Ate",
+            systemImageName: "fork.knife"
         )
         AppShortcut(
             intent: SearchEventIntent(),

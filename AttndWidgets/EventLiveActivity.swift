@@ -274,7 +274,7 @@ private struct LockScreenActivityView: View {
                     }
                 }
                 if let next = state.next {
-                    NextRow(next: next, walkMinutes: state.walkMinutesToNext, attributes: attributes)
+                    NextRow(next: next, walkMinutes: state.walkMinutesToNext, late: state.lateText, attributes: attributes)
                 } else if let opens = state.opensAt {
                     HStack {
                         Text("Gates open in")
@@ -299,14 +299,22 @@ private struct LockScreenActivityView: View {
 private struct NextRow: View {
     let next: EventActivityAttributes.Slot
     let walkMinutes: Int?
+    /// "Leave now" / "Running late" (assistant spec §6), nil when on time.
+    var late: String? = nil
     let attributes: EventActivityAttributes
 
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Up next")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.secondary)
+                if let late {
+                    Label(late, systemImage: "figure.walk.motion")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.orange)
+                } else {
+                    Text("Up next")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.secondary)
+                }
                 Text(next.name ?? "")
                     .font(.headline)
                     .lineLimit(1)

@@ -1,7 +1,9 @@
 // EventSearchView.swift
 // Attnd
 //
-// The search sheet (opened by the floating search button on every tab, ContentView): one
+// The search sheet of the App Clip and of screenshot mode (the full app's floating button opens
+// the event assistant instead, AssistantView.swift, which reuses this file's result rows and
+// destinations): one
 // local search across the joined event — schedule, locations, organizer updates and the
 // event itself (EventSearch). Works offline; the query never leaves the device (only the
 // fact of a search is counted, API-005).

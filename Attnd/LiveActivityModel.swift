@@ -51,6 +51,16 @@ struct EventActivityAttributes: ActivityAttributes {
         var dayComplete: Bool?
         /// How many followed items took place today (end-of-day summary).
         var completedCount: Int?
+        /// Running late for the next planned item (assistant spec §6): when to have left.
+        var leaveBy: Date?
+        /// "leave_now" (still makes it when leaving now) or "cant_make_it".
+        var lateState: String?
+
+        /// The next item's "Leave now" / "Running late" line, nil when on time.
+        var lateText: String? {
+            guard leaveBy != nil else { return nil }
+            return lateState == "cant_make_it" ? "Running late" : "Leave now"
+        }
 
         init(
             current: Slot? = nil,
@@ -62,7 +72,9 @@ struct EventActivityAttributes: ActivityAttributes {
             followsHearts: Bool? = nil,
             followsPlan: Bool? = nil,
             dayComplete: Bool? = nil,
-            completedCount: Int? = nil
+            completedCount: Int? = nil,
+            leaveBy: Date? = nil,
+            lateState: String? = nil
         ) {
             self.current = current
             self.next = next
@@ -74,6 +86,8 @@ struct EventActivityAttributes: ActivityAttributes {
             self.followsPlan = followsPlan
             self.dayComplete = dayComplete
             self.completedCount = completedCount
+            self.leaveBy = leaveBy
+            self.lateState = lateState
         }
 
         private enum CodingKeys: String, CodingKey {
@@ -84,6 +98,8 @@ struct EventActivityAttributes: ActivityAttributes {
             case followsPlan = "follows_plan"
             case dayComplete = "day_complete"
             case completedCount = "completed_count"
+            case leaveBy = "leave_by"
+            case lateState = "late_state"
         }
 
         /// Lenient: a missing, null or mistyped field is nil, never a decoding failure.
@@ -99,6 +115,8 @@ struct EventActivityAttributes: ActivityAttributes {
             followsPlan = try? c.decodeIfPresent(Bool.self, forKey: .followsPlan)
             dayComplete = try? c.decodeIfPresent(Bool.self, forKey: .dayComplete)
             completedCount = try? c.decodeIfPresent(Int.self, forKey: .completedCount)
+            leaveBy = try? c.decodeIfPresent(Date.self, forKey: .leaveBy)
+            lateState = try? c.decodeIfPresent(String.self, forKey: .lateState)
         }
 
         /// The symbol for what it follows: the plan, hearts, or the event's own day.

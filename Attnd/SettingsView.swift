@@ -1,8 +1,31 @@
-// SettingsView.swift  (Options tab)
+// SettingsView.swift  (Options)
 // Attnd
+//
+// Options for the joined event, shown as a sheet (`OptionsSheet`) from the "Options" item
+// in the navigation bar of every tab's root screen (ContentView `optionsToolbarItem`).
 
 import SwiftUI
 import UIKit
+
+/// Options in its own navigation stack, with a Close button. Leaving the event dismisses it
+/// with the event screens.
+struct OptionsSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            SettingsView()
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close", systemImage: "xmark", role: .close) {
+                            dismiss()
+                        }
+                    }
+                }
+        }
+        .presentationDetents([.large])
+    }
+}
 
 struct SettingsView: View {
 

@@ -235,7 +235,8 @@ extension AppNotification: Decodable {
 
 // MARK: - Display (server-driven layout)
 
-/// A tab the server can show. The app's own Options tab is not part of this.
+/// A tab the server can show. These are the only tabs in the tab bar: Options and search
+/// are sheets (ContentView), never tabs.
 enum EventTab: String, CaseIterable, Identifiable, Hashable, Sendable {
     case map, locations, schedule, flyer, notifications
 
@@ -254,7 +255,9 @@ enum EventTab: String, CaseIterable, Identifiable, Hashable, Sendable {
     var systemImage: String {
         switch self {
         case .map:           return "map"
-        case .locations:     return "mappin.and.ellipse"
+        // A list, not a pin: Map and Locations must not look alike in the tab bar
+        // (Android uses a list icon for Locations too).
+        case .locations:     return "list.bullet"
         case .schedule:      return "calendar"
         case .flyer:         return "doc.richtext"
         case .notifications: return "bell"
@@ -298,9 +301,14 @@ struct DisplayConfig: Hashable, Sendable {
 
     static let `default` = DisplayConfig()
 
-    /// Visible tabs in order. Default: map, locations, schedule, (flyer), notifications.
+    /// The most tabs the tab bar shows. With more, iPhone tab bars add a "More" tab, which the
+    /// app never shows; there are only five event tabs today, so this only guards the future.
+    static let maxTabs = 5
+
+    /// Visible tabs in order (at most `maxTabs`, the server's order kept).
+    /// Default: map, locations, schedule, (flyer), notifications.
     func resolvedTabs(hasFlyer: Bool) -> [EventTab] {
-        if let tabs, !tabs.isEmpty { return tabs }
+        if let tabs, !tabs.isEmpty { return Array(tabs.prefix(Self.maxTabs)) }
         var result: [EventTab] = [.map, .locations, .schedule]
         if hasFlyer { result.append(.flyer) }
         result.append(.notifications)

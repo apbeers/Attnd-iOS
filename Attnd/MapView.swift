@@ -7,7 +7,9 @@
 //
 // Floating overlays (category chips, map buttons, the selected-location card) are
 // laid out with ReservedRegionAvoiding so they stay clear of the fold and camera
-// housings on foldables.
+// housings on foldables. They sit above the tab's floating search button
+// (ContentView `floatingSearchButton()` adds its height to the bottom safe area), so the
+// map buttons and the search button form one trailing column and the card never covers it.
 
 import SwiftUI
 import MapKit

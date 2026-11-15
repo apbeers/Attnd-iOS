@@ -45,6 +45,7 @@ struct MapTab: View {
         NavigationStack {
             MapView(cameraPosition: $cameraPosition, hasPositioned: $hasPositioned)
                 .eventStatusBanners()
+                .optionsToolbarItem()
         }
     }
 }

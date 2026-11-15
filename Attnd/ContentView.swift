@@ -3,7 +3,9 @@
 //
 // AppRootView switches between the launch flow and the joined event.
 // ContentView is the tab container for a joined event: the tabs, their order and
-// the initial tab come from the server's `display` config; Options is always last.
+// the initial tab come from the server's `display` config (at most five, so never a
+// "More" tab). Search is a floating Liquid Glass button on every tab and Options a
+// toolbar item on each tab's root screen; both open sheets (`AppState.presentedSheet`).
 // It also drives bundle refreshes (on becoming active, plus a slow poll while
 // active: every 60 s without a push token, e.g. the App Clip; a 5-minute safety
 // poll when silent `content_updated` pushes can arrive; 15 s after a failure) and
@@ -153,13 +155,13 @@ struct ContentView: View {
     /// Re-tapping the selected Map tab re-centres the map.
     /// (assumeIsolated: the closures always run on the main actor, whether or not
     /// the SDK declares Binding's closures @Sendable.)
-    private var tabSelection: Binding<MainTab> {
+    private var tabSelection: Binding<EventTab> {
         let state = self.appState
         return Binding(
             get: { MainActor.assumeIsolated { state.selectedTab } },
             set: { newTab in
                 MainActor.assumeIsolated {
-                    if newTab == .event(.map), state.selectedTab == .event(.map) {
+                    if newTab == .map, state.selectedTab == .map {
                         state.mapCenterToken += 1
                     }
                     state.selectedTab = newTab
@@ -169,27 +171,33 @@ struct ContentView: View {
     }
 
     var body: some View {
+        @Bindable var state = appState
+        // Only the event's own tabs (`display.tabs`, at most DisplayConfig.maxTabs), so the
+        // tab bar never grows a "More" tab. Search is the floating button on every tab and
+        // Options a toolbar item on every tab's root screen; both open sheets.
         TabView(selection: tabSelection) {
             ForEach(appState.tabs) { tab in
-                Tab(tab.title, systemImage: tab.systemImage, value: MainTab.event(tab)) {
+                Tab(tab.title, systemImage: tab.systemImage, value: tab) {
                     tabContent(tab)
+                        .floatingSearchButton()
                 }
-            }
-            Tab("Options", systemImage: "gearshape", value: MainTab.options) {
-                NavigationStack {
-                    SettingsView()
-                }
-            }
-            // The system search tab: set apart at the trailing end of the tab bar and
-            // expanding into the search field (Liquid Glass). Searches the whole event,
-            // including tabs the organizer hid.
-            Tab("Search", systemImage: "magnifyingglass", value: MainTab.search, role: .search) {
-                EventSearchTab()
             }
         }
-        // The tab bar shrinks while lists scroll down and comes back on scroll up.
-        .tabBarMinimizeBehavior(.onScrollDown)
+        // The tab bar stays visible (no minimize on scroll).
         .tint(accentColor ?? Color.accentColor)
+        .sheet(item: $state.presentedSheet) { sheet in
+            Group {
+                switch sheet {
+                case .search:
+                    // Focus the field unless Siri / Spotlight opened the sheet on an item.
+                    EventSearchSheet(focusesSearchField: appState.searchPath.isEmpty)
+                case .options:
+                    OptionsSheet()
+                }
+            }
+            .environment(appState)
+            .tint(accentColor ?? Color.accentColor)
+        }
         // Foreground: refetch (cheap — the ETag makes it a 304 when nothing changed).
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
@@ -232,10 +240,12 @@ struct ContentView: View {
             NavigationStack {
                 FlyerView(flyerUrl: appState.currentEvent?.flyerUrl)
                     .eventStatusBanners()
+                    .optionsToolbarItem()
             }
         case .notifications:
             NavigationStack {
                 NotificationsView()
+                    .optionsToolbarItem()
             }
         }
     }
@@ -243,6 +253,114 @@ struct ContentView: View {
     /// The event's own accent; nil → the asset AccentColor (brand purple #431F86).
     private var accentColor: Color? {
         HexColor.components(appState.accentHex).map { Color(red: $0.red, green: $0.green, blue: $0.blue) }
+    }
+}
+
+// MARK: - Floating search button
+
+extension View {
+    /// The floating Liquid Glass search button in the bottom-trailing corner of a tab, above
+    /// its content and the tab bar; it opens the search sheet. The tab's content gets that
+    /// much more bottom safe area, so lists scroll clear of it and the map's own floating
+    /// column (buttons, selected-location card) sits directly above it. On iPhone Duo it
+    /// stays clear of the fold and camera housings (ReservedRegionAvoiding).
+    func floatingSearchButton() -> some View {
+        modifier(FloatingSearchButtonModifier())
+    }
+}
+
+enum FloatingSearchButtonMetrics {
+    /// The button's diameter.
+    static let size: CGFloat = 48
+    /// Gap between the button and the bottom of the safe area (the tab bar).
+    static let bottomPadding: CGFloat = 8
+    /// Centres the button under the map's 44 pt buttons (16 pt from the edge), one column.
+    static let trailingPadding: CGFloat = 14
+    /// Extra bottom safe area for the tab's content.
+    static var reservedHeight: CGFloat { size + bottomPadding }
+}
+
+private struct FloatingSearchButtonModifier: ViewModifier {
+    @Environment(AppState.self) private var appState
+
+    func body(content: Content) -> some View {
+        // Siblings in a ZStack, not an overlay: the extra safe area applies to the content
+        // only, so the button itself sits right above the tab bar.
+        ZStack {
+            content
+                .safeAreaPadding(.bottom, FloatingSearchButtonMetrics.reservedHeight)
+            ReservedRegionAvoiding {
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    HStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        FloatingSearchButton {
+                            appState.openSearch()
+                        }
+                        .padding(.trailing, FloatingSearchButtonMetrics.trailingPadding)
+                        .padding(.bottom, FloatingSearchButtonMetrics.bottomPadding)
+                    }
+                }
+            }
+            // Stays put (under the keyboard) while a tab's own search field is typing.
+            .ignoresSafeArea(.keyboard)
+        }
+    }
+}
+
+/// A Liquid Glass circle with a magnifying glass ("Search" for VoiceOver).
+struct FloatingSearchButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label("Search", systemImage: "magnifyingglass")
+                .labelStyle(.iconOnly)
+                .font(.title3.weight(.semibold))
+                .frame(width: FloatingSearchButtonMetrics.size, height: FloatingSearchButtonMetrics.size)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.tint)
+        // Interactive glass like the map's own buttons (it reacts to touch).
+        .glassEffect(.regular.interactive(), in: .circle)
+        .accessibilityLabel("Search")
+        .accessibilityHint("Searches the schedule, places and updates.")
+        .keyboardShortcut("f", modifiers: .command)
+    }
+}
+
+// MARK: - Options toolbar item
+
+extension View {
+    /// "Options" (gear) in the navigation bar of a tab's root screen, pinned trailing (iPhone
+    /// Duo: never moved to the overflow menu); it opens Options as a sheet. `separated` adds a
+    /// fixed spacer when the screen already has a trailing item (Schedule's filter menu), so
+    /// the two unrelated controls get their own glass groups.
+    func optionsToolbarItem(separated: Bool = false) -> some View {
+        modifier(OptionsToolbarItem(separated: separated))
+    }
+}
+
+private struct OptionsToolbarItem: ViewModifier {
+    let separated: Bool
+
+    @Environment(AppState.self) private var appState
+
+    func body(content: Content) -> some View {
+        content.toolbar {
+            if separated {
+                ToolbarSpacer(.fixed, placement: .pinnedTrailing)
+            }
+            ToolbarItem(placement: .pinnedTrailing) {
+                Button {
+                    appState.presentedSheet = .options
+                } label: {
+                    // Icon and title: bars show the icon, vertical bars and accessibility use the title.
+                    Label("Options", systemImage: "gearshape")
+                }
+            }
+        }
     }
 }
 

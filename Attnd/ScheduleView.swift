@@ -21,6 +21,8 @@ struct ScheduleTab: View {
         NavigationSplitView {
             ScheduleView(selection: $selection)
                 .eventStatusBanners()
+                // After the filter menu, in its own glass group.
+                .optionsToolbarItem(separated: true)
         } detail: {
             NavigationStack {
                 Group {

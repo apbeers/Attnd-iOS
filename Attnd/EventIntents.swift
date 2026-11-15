@@ -72,7 +72,7 @@ struct OpenEventIntent: OpenIntent {
     }
 }
 
-/// "Search Attnd for tacos": opens the search tab with the query.
+/// "Search Attnd for tacos": opens the search sheet with the query.
 struct SearchEventIntent: AppIntent {
     static let title: LocalizedStringResource = "Search Event"
     static let supportedModes: IntentModes = .foreground
@@ -279,7 +279,7 @@ enum IntentAnswers {
 
 // MARK: - Snippet
 
-/// The items behind a Siri answer: the same rows as the search tab.
+/// The items behind a Siri answer: the same rows as the search sheet.
 struct EventResultsSnippet: View {
     let title: String
     let results: [EventSearchResult]

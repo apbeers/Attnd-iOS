@@ -1,13 +1,20 @@
 // EventSearchView.swift
 // Attnd
 //
-// The search tab (`Tab(role: .search)` in ContentView): one local search across the joined
-// event — schedule, locations, organizer updates and the event itself (EventSearch). Works
-// offline; the query never leaves the device (only the fact of a search is counted, API-005).
+// The search sheet (opened by the floating search button on every tab, ContentView): one
+// local search across the joined event — schedule, locations, organizer updates and the
+// event itself (EventSearch). Works offline; the query never leaves the device (only the
+// fact of a search is counted, API-005).
 //
-// Tapping a result pushes its detail onto this tab's stack, so Back returns to the results
-// and items in tabs the organizer hid (`display.tabs`) open too. Siri, Spotlight and other
-// jumps use `AppState.navigate(to:)`, which prefers the item's own tab.
+// The sheet has its own navigation stack (`AppState.searchPath`): tapping a result pushes
+// its detail, so Back returns to the results and items in tabs the organizer hid
+// (`display.tabs`) open too. Siri, Spotlight and other jumps use `AppState.navigate(to:)`,
+// which prefers the item's own tab and otherwise opens this sheet with the item pushed.
+//
+// The search field is focused (keyboard up) when the sheet opens: the field sits in the
+// navigation bar drawer, where activating it with `searchable(isPresented:)` reliably
+// brings up the keyboard on iOS 26 (programmatic focus of the bottom-bar search field
+// doesn't), and `searchFocused` asks for focus as well.
 //
 // In the full app, a question typed here offers "Ask" when the on-device model is available
 // (Apple Intelligence, EventAssistant.swift): the answer cites the items it used. Without
@@ -20,15 +27,24 @@ import SwiftUI
 import AppIntents
 #endif
 
-// MARK: - Tab
+// MARK: - Sheet
 
-struct EventSearchTab: View {
+struct EventSearchSheet: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.dismiss) private var dismiss
+
+    /// Focus the field once the results screen first appears. False when Siri / Spotlight
+    /// opened the sheet on an item (Back from it then shows the results without the keyboard).
+    @State private var pendingFocus: Bool
+
+    init(focusesSearchField: Bool) {
+        _pendingFocus = State(initialValue: focusesSearchField)
+    }
 
     var body: some View {
         @Bindable var state = appState
         NavigationStack(path: $state.searchPath) {
-            EventSearchView()
+            EventSearchView(pendingFocus: $pendingFocus)
                 .navigationDestination(for: SearchTarget.self) { target in
                     SearchDestinationView(target: target)
                 }
@@ -36,17 +52,31 @@ struct EventSearchTab: View {
                 .navigationDestination(for: Location.self) { location in
                     LocationDetailView(location: location)
                 }
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close", systemImage: "xmark", role: .close) {
+                            dismiss()
+                        }
+                    }
+                }
         }
+        .presentationDetents([.large])
     }
 }
 
 // MARK: - Search screen
 
 struct EventSearchView: View {
+    /// Set by the sheet: activate and focus the search field when this screen appears.
+    @Binding var pendingFocus: Bool
+
     @Environment(AppState.self) private var appState
 
     /// The assistant's answer for `answeredQuery`, or its progress.
     @State private var assistant: AssistantPhase = .idle
+    /// Whether the search field is active (`searchable(isPresented:)`).
+    @State private var isSearchPresented = false
+    @FocusState private var isSearchFocused: Bool
 
     private enum AssistantPhase: Equatable {
         case idle
@@ -65,11 +95,31 @@ struct EventSearchView: View {
             content(now: context.date)
         }
         .navigationTitle("Search")
-        .searchable(text: $state.searchText, prompt: Text("Schedule, places, updates"))
+        .navigationBarTitleDisplayMode(.inline)
+        // Always shown in the navigation bar drawer: there, activating it (isPresented) brings
+        // up the keyboard reliably, also inside a sheet that is still animating in.
+        .searchable(
+            text: $state.searchText,
+            isPresented: $isSearchPresented,
+            placement: .navigationBarDrawer(displayMode: .always),
+            prompt: Text("Schedule, places, updates")
+        )
+        .searchFocused($isSearchFocused)
         .modifier(SearchUsageCounting(text: appState.searchText))
         .onChange(of: appState.searchText) {
             if case .idle = assistant { return }
             assistant = .idle
+        }
+        .task {
+            guard pendingFocus else { return }
+            pendingFocus = false
+            isSearchPresented = true
+            isSearchFocused = true
+            // The sheet may still be animating in; ask again once it has settled.
+            try? await Task.sleep(for: .milliseconds(450))
+            guard !Task.isCancelled, !isSearchFocused else { return }
+            isSearchPresented = true
+            isSearchFocused = true
         }
     }
 
@@ -273,7 +323,7 @@ struct SearchResultRow: View {
 
 // MARK: - Destinations
 
-/// The detail for a result, pushed on the search tab's stack.
+/// The detail for a result, pushed on the search sheet's stack.
 struct SearchDestinationView: View {
     let target: SearchTarget
 
@@ -310,7 +360,7 @@ struct SearchDestinationView: View {
 }
 
 /// The event's own details (a search result for the event, or Siri's "open the event" when
-/// pushed). The Options tab shows the same header.
+/// pushed). Options shows the same header.
 struct EventInfoView: View {
     @Environment(AppState.self) private var appState
 

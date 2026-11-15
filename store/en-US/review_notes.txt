@@ -6,6 +6,6 @@ To see a fully populated event:
 2. The demo event is always happening now, so the map, schedule (now / next), locations and updates are all filled in.
 
 Location permission is optional: the first screen asks for it to list nearby events, and it is used to show your position (blue dot) on the event map. Declining it does not limit anything else.
-Notifications are optional: they can be turned on in the Options tab and deliver announcements from the event's organizer.
+Notifications are optional: they can be turned on in Options (the gear button at the top of each event screen) and deliver announcements from the event's organizer.
 
-To switch events, use Options > Leave Event.
+To switch events, use Options (gear button) > Leave Event.

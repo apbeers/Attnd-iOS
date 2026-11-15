@@ -6,7 +6,7 @@
 // event itself. Everything comes from the bundle already on the device (no server calls).
 //
 //   - Queries resolve ids from the current bundle and string queries with the app's own local
-//     search (EventSearch), so "when is the mariachi" matches the same way the search tab does.
+//     search (EventSearch), so "when is the mariachi" matches the same way the search sheet does.
 //   - IndexedEntity: `EventEntityIndex` re-indexes Core Spotlight after every applied bundle
 //     and removes everything when the event is left (AppState.apply / resetContent).
 //   - Views annotate what they show with `.onScreenEntity(_:)` (EventSearchView.swift) so Siri
@@ -34,7 +34,7 @@ enum IntentBridge {
         return appState.currentBundle
     }
 
-    /// Opens an item in the app (its tab, or the search tab when that tab is hidden).
+    /// Opens an item in the app (its tab, or the search sheet when that tab is hidden).
     static func navigate(to target: SearchTarget) async {
         guard let appState else { return }
         await appState.restoreSavedEventIfNeeded()

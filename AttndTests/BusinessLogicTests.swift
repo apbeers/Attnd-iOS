@@ -230,11 +230,11 @@ final class BusinessLogicTests: XCTestCase {
         XCTAssertEqual(UsageMetric.allCases.map(\.rawValue), [
             "app_open", "tab_view", "location_view", "schedule_item_view", "notification_open", "search", "refresh",
         ])
-        XCTAssertEqual(MainTab.event(.notifications).usageDetail, "notifications")
-        XCTAssertEqual(MainTab.event(.map).usageDetail, "map")
-        XCTAssertEqual(MainTab.options.usageDetail, "options")
-        // The search tab has no tab_view detail (the server only accepts the event tabs and options).
-        XCTAssertNil(MainTab.search.usageDetail)
+        // tab_view details: the event tabs' raw values, and "options" for the Options sheet.
+        XCTAssertEqual(EventTab.allCases.map(\.rawValue), ["map", "locations", "schedule", "flyer", "notifications"])
+        XCTAssertEqual(EventSheet.options.usageDetail, "options")
+        // The search sheet has no tab_view detail (the server only accepts the event tabs and options).
+        XCTAssertNil(EventSheet.search.usageDetail)
     }
 
     // MARK: - Support info (API-004)

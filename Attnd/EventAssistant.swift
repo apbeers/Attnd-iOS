@@ -8,7 +8,7 @@
 // [s12], the model lists the ids it used, and the answer shows those items so the attendee
 // can jump to them (falling back to the items the tools returned).
 //
-// Used by the search tab (EventSearchView) and Siri / Shortcuts (AskEventIntent). When the
+// Used by the search sheet (EventSearchView) and Siri / Shortcuts (AskEventIntent). When the
 // model is unavailable (device not eligible, Apple Intelligence off, model not downloaded)
 // `isAvailable` is false and callers show plain search results instead.
 //

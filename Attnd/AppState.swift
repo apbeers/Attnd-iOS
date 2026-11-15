@@ -24,20 +24,24 @@ import SwiftUI
 import UIKit
 import UserNotifications
 
-/// The app's tabs: the server-driven event tabs plus the app's own Options and Search tabs.
-enum MainTab: Hashable, Sendable {
-    case event(EventTab)
-    case options
-    /// The system search tab (`Tab(role: .search)`): local search across the event.
+/// What the event screens present over the tabs. The tab bar holds only the event's own
+/// tabs (`display.tabs`, at most `DisplayConfig.maxTabs`, so there is never a "More" tab);
+/// search and Options are sheets opened from the floating search button and the Options
+/// toolbar item (ContentView).
+enum EventSheet: String, Identifiable, Hashable, Sendable {
+    /// Local search across the event (EventSearchView), with its own navigation stack.
     case search
+    /// SettingsView.
+    case options
 
-    /// `tab_view` detail (API-005): map, locations, schedule, flyer, notifications or options.
-    /// nil for the search tab, which has no `tab_view` detail (searches count as `search`).
+    var id: String { rawValue }
+
+    /// `tab_view` detail (API-005) counted when the sheet opens: "options" (the server
+    /// accepts the event tabs and options). nil for search, which counts as `search`.
     var usageDetail: String? {
         switch self {
-        case .event(let tab): return tab.rawValue
-        case .options:        return "options"
-        case .search:         return nil
+        case .options: return "options"
+        case .search:  return nil
         }
     }
 }
@@ -66,10 +70,20 @@ final class AppState {
 
     // MARK: - Navigation
 
-    var selectedTab: MainTab = .event(.map) {
+    var selectedTab: EventTab = .map {
         didSet {
             // The first tab is counted in `apply` once the bundle has chosen it.
-            if hasAppliedDefaultTab, oldValue != selectedTab, let detail = selectedTab.usageDetail {
+            if hasAppliedDefaultTab, oldValue != selectedTab {
+                track(.tabView, detail: selectedTab.rawValue)
+            }
+        }
+    }
+
+    /// The search or Options sheet over the tabs (nil: none). Opening Options counts a
+    /// `tab_view` "options", as the Options tab did.
+    var presentedSheet: EventSheet? {
+        didSet {
+            if oldValue != presentedSheet, let detail = presentedSheet?.usageDetail {
                 track(.tabView, detail: detail)
             }
         }
@@ -83,10 +97,10 @@ final class AppState {
 
     // MARK: - Search and jumps
 
-    /// The search tab's query (Siri's "search in Attnd" can fill it). Never sent anywhere.
+    /// The search sheet's query (Siri's "search in Attnd" can fill it). Never sent anywhere.
     var searchText = ""
 
-    /// The search tab's navigation stack: result details (`SearchTarget`), the locations they
+    /// The search sheet's navigation stack: result details (`SearchTarget`), the locations they
     /// link to, and anything whose tab is hidden.
     var searchPath = NavigationPath()
 
@@ -504,6 +518,7 @@ final class AppState {
         searchText = ""
         searchPath = NavigationPath()
         focusRequest = nil
+        presentedSheet = nil
         searchIndex = nil
         #if !APP_CLIP
         EventEntityIndex.shared.update(with: nil)
@@ -582,19 +597,19 @@ final class AppState {
         notifications = bundle.notifications
 
         if pendingNotificationsEventId == bundle.event.id, tabs.contains(.notifications) {
-            selectedTab = .event(.notifications)
+            selectedTab = .notifications
             hasAppliedDefaultTab = true
         } else if !hasAppliedDefaultTab {
-            selectedTab = .event(defaultTab)
+            selectedTab = defaultTab
             hasAppliedDefaultTab = true
-        } else if case .event(let tab) = selectedTab, !tabs.contains(tab) {
+        } else if !tabs.contains(selectedTab) {
             // The organizer hid the tab we were on.
-            selectedTab = .event(defaultTab)
+            selectedTab = defaultTab
         }
         pendingNotificationsEventId = nil
-        if isFirstApply, hasAppliedDefaultTab, let detail = selectedTab.usageDetail {
+        if isFirstApply, hasAppliedDefaultTab {
             // The tab the event opens on (later changes are counted in selectedTab's didSet).
-            track(.tabView, detail: detail)
+            track(.tabView, detail: selectedTab.rawValue)
         }
         // New images download first; files the new content no longer uses are deleted after.
         scheduleImageSync()
@@ -622,8 +637,9 @@ final class AppState {
     // MARK: - Jumps (search results, Siri, Spotlight)
 
     /// Shows one item: in its own tab when that tab is visible (Locations / Schedule select
-    /// it, Updates scrolls to and highlights it, the event opens Options); otherwise on the
-    /// search tab's stack, so hidden tabs (`display.tabs`) work too.
+    /// it, Updates scrolls to and highlights it; the event opens Options), closing any sheet;
+    /// otherwise in the search sheet with the item pushed on its stack, so hidden tabs
+    /// (`display.tabs`) work too (Back returns to the search results).
     func navigate(to target: SearchTarget) {
         guard currentEvent != nil else { return }
         let tab: EventTab
@@ -632,24 +648,41 @@ final class AppState {
         case .scheduleItem: tab = .schedule
         case .notification: tab = .notifications
         case .event:
-            selectedTab = .options
+            presentedSheet = .options
             return
         }
         if tabs.contains(tab) {
+            presentedSheet = nil
             focusRequest = target
-            selectedTab = .event(tab)
+            selectedTab = tab
         } else {
             searchPath = NavigationPath([target])
-            selectedTab = .search
+            presentedSheet = .search
         }
     }
 
-    /// Opens the search tab with `query` (Siri / Shortcuts).
+    /// Opens the search sheet with `query` (Siri / Shortcuts).
     func showSearch(_ query: String) {
         guard currentEvent != nil else { return }
         searchPath = NavigationPath()
         searchText = query
-        selectedTab = .search
+        presentedSheet = .search
+    }
+
+    /// The floating search button: opens the search sheet on its results (the last query
+    /// stays, like the old search tab), with the field focused.
+    func openSearch() {
+        guard currentEvent != nil else { return }
+        searchPath = NavigationPath()
+        presentedSheet = .search
+    }
+
+    /// "Show on Map" in a location's detail: the Map tab, focused on that pin (any sheet closes).
+    func showOnMap(locationId: Int) {
+        guard tabs.contains(.map) else { return }
+        mapFocusLocationId = locationId
+        presentedSheet = nil
+        selectedTab = .map
     }
 
     /// Pull to refresh: counted, then a normal bundle refresh.
@@ -755,7 +788,8 @@ final class AppState {
         }
         guard current.id == eventId else { return false }
         if opened, tabs.contains(.notifications) {
-            selectedTab = .event(.notifications)
+            presentedSheet = nil
+            selectedTab = .notifications
         }
         if payload.kind == .contentUpdated, !opened {
             guard ContentUpdatePolicy.shouldRefresh(pushedVersion: payload.contentVersion, currentVersion: contentVersion) else {

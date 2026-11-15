@@ -18,13 +18,14 @@ Test each posture **upright and rotated 90° both ways**. Change posture **while
 ## Per screen
 
 - [ ] **Launch**: content extends under the status bar / camera; the QR (leading) and Join (pinned trailing) toolbar items keep icon + title; search field works in every posture.
-- [ ] **Map**: chips, the re-centre / my-location buttons and the selected-location card avoid the fold and camera housings; clusters split when zooming in; camera position survives fold/unfold; re-tapping the Map tab re-centres.
+- [ ] **Map**: chips, the re-centre / my-location buttons, the search button below them (one trailing column) and the selected-location card avoid the fold and camera housings and never overlap; clusters split when zooming in; camera position survives fold/unfold; re-tapping the Map tab re-centres.
 - [ ] **Map + secondary pane** (wide): pane matches `secondary_pane`; tapping a location in the pane focuses its pin; switching back to compact keeps the map where it was.
 - [ ] **Locations**: list → detail split on wide, push on compact; selection survives fold/unfold; hero image extends under the bars (`backgroundExtensionEffect`); search and chips work.
 - [ ] **Schedule**: style follows `schedule_style`; times in the event's time zone; filter menu (icon + title) opens as a menu, not a clipped popover; split view on wide.
 - [ ] **Flyer**: doesn't reload on every fold/unfold or rotation.
 - [ ] **Updates**: pull to refresh; tapping a push opens this tab.
-- [ ] **Options**: toggles work; leave-event confirmation dialog is presented correctly in each posture.
+- [ ] **Search button**: the floating glass magnifying glass sits bottom-trailing above the tab bar on every tab, clear of the fold and camera housings; it opens the search sheet with the field focused and the keyboard up; results push details, Back returns to the results.
+- [ ] **Options**: the gear item (icon + title, pinned trailing) is on every tab's root screen and opens Options as a sheet; toggles work; leave-event confirmation dialog is presented correctly in each posture.
 - [ ] **Banners**: Demo / ended banners stay below the navigation bar in every posture.
 
 ## Sheets and popovers

@@ -22,12 +22,13 @@ struct LocationsTab: View {
         NavigationSplitView {
             LocationsView(selection: $selection)
                 .eventStatusBanners()
+                .optionsToolbarItem()
         } detail: {
             NavigationStack {
                 if let selection, let location = appState.location(id: selection.id) {
                     LocationDetailView(location: location)
                 } else {
-                    ContentUnavailableView("Select a Location", systemImage: "mappin.and.ellipse")
+                    ContentUnavailableView("Select a Location", systemImage: "list.bullet")
                 }
             }
         }
@@ -142,7 +143,8 @@ private struct LocationsListStyle: ViewModifier {
 
 // MARK: - Search
 
-/// `.searchable` only when the display config enables search; searches are counted by
+/// `.searchable` only when the display config enables search (this tab's own list filter;
+/// the floating search button searches the whole event); searches are counted by
 /// `SearchUsageCounting`.
 struct SearchableIf: ViewModifier {
     let enabled: Bool
@@ -153,7 +155,9 @@ struct SearchableIf: ViewModifier {
     func body(content: Content) -> some View {
         if enabled {
             content
-                .searchable(text: $text, prompt: Text(prompt))
+                // Under the navigation bar, never in the bottom toolbar: the bottom-trailing
+                // corner belongs to the floating search button (ContentView).
+                .searchable(text: $text, placement: .navigationBarDrawer, prompt: Text(prompt))
                 .modifier(SearchUsageCounting(text: text))
         } else {
             content
@@ -162,7 +166,7 @@ struct SearchableIf: ViewModifier {
 }
 
 /// Counts a `search` (API-005, no detail) when a search is submitted or once a non-empty
-/// query has settled for 1.5 s. Shared by the per-tab search fields and the search tab.
+/// query has settled for 1.5 s. Shared by the per-tab search fields and the search sheet.
 /// Only the fact of a search is counted, never the text.
 struct SearchUsageCounting: ViewModifier {
     let text: String
@@ -444,8 +448,8 @@ struct LocationDetailView: View {
             if location.coordinate != nil, appState.tabs.contains(.map) {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        appState.mapFocusLocationId = location.id
-                        appState.selectedTab = .event(.map)
+                        // Also closes the search sheet when the detail was opened from search.
+                        appState.showOnMap(locationId: location.id)
                     } label: {
                         // Icon and title: bars show the icon, vertical bars and accessibility use the title.
                         Label("Show on Map", systemImage: "map")

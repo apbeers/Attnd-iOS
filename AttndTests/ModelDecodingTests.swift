@@ -214,6 +214,17 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertEqual(d.resolvedTabs(hasFlyer: false), [.map, .locations, .schedule, .notifications])
     }
 
+    func testDisplay_Tabs_AtMostFiveInListedOrder_NeverAMoreTab() throws {
+        let d = try decode(
+            DisplayConfig.self,
+            #"{"tabs":["notifications","flyer","tickets","schedule","map","locations","map","schedule"]}"#
+        )
+        // Unknown values and duplicates dropped, the server's order kept, never more than five.
+        XCTAssertEqual(d.resolvedTabs(hasFlyer: true), [.notifications, .flyer, .schedule, .map, .locations])
+        XCTAssertLessThanOrEqual(d.resolvedTabs(hasFlyer: true).count, DisplayConfig.maxTabs)
+        XCTAssertEqual(DisplayConfig.maxTabs, 5)
+    }
+
     // MARK: - Bundle
 
     func testBundle_Full() throws {

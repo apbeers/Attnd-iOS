@@ -524,6 +524,26 @@ enum UpdatesInbox {
         return newest
     }
 
+    /// Urgent announcements (API-011) stay front and centre this long after they were sent.
+    static let urgentWindow: TimeInterval = 12 * 3600
+
+    /// The newest urgent announcement sent within the last 12 h that wasn't dismissed (seen or
+    /// not): the prominent red banner above the tabs and the Live Activity's urgent block. A
+    /// send time slightly in the future (clock skew) still counts.
+    static func urgent(_ notifications: [AppNotification], dismissed: Set<Int>, now: Date) -> AppNotification? {
+        notifications
+            .filter { notification in
+                guard notification.isUrgent, !dismissed.contains(notification.id),
+                      let sent = notification.sendTime else { return false }
+                let age = now.timeIntervalSince(sent)
+                return age < urgentWindow && age > -5 * 60
+            }
+            .max { a, b in
+                let sa = a.sendTime ?? .distantPast, sb = b.sendTime ?? .distantPast
+                return sa != sb ? sa < sb : a.id < b.id
+            }
+    }
+
     /// What to store as "seen" when the Updates tab is shown: now, or the newest send time if
     /// the server's clock is ahead of the device's.
     static func seenMark(_ notifications: [AppNotification], now: Date) -> Date {
@@ -542,11 +562,22 @@ struct EventPersonalState: Codable, Hashable, Sendable {
     var heartedScheduleItems: Set<Int> = []
     var updatesSeenAt: Date? = nil
     var dismissedUpdateBannerId: Int? = nil
+    /// Urgent announcements (API-011) the user dismissed (banner or Live Activity).
+    var dismissedUrgentIds: Set<Int> = []
+    /// "Follow on Lock Screen" (Live Activity): nil = the default (on once something is hearted).
+    var followOnLockScreen: Bool? = nil
+    /// "Tell me when I arrive" (venue region): off unless turned on.
+    var notifyOnArrival: Bool = false
+    /// Schedule items skipped in the Live Activity ("Skip").
+    var skippedItems: Set<Int> = []
+    /// Start of the event day (event time zone) the arrival notification was last sent for.
+    var arrivalPromptDay: Date? = nil
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
         case heartedLocations, heartedScheduleItems, updatesSeenAt, dismissedUpdateBannerId
+        case dismissedUrgentIds, followOnLockScreen, notifyOnArrival, skippedItems, arrivalPromptDay
     }
 
     init(from decoder: Decoder) throws {
@@ -555,7 +586,16 @@ struct EventPersonalState: Codable, Hashable, Sendable {
         heartedScheduleItems = c.lenient(Set<Int>.self, .heartedScheduleItems) ?? []
         updatesSeenAt = c.lenient(Date.self, .updatesSeenAt)
         dismissedUpdateBannerId = c.lenient(Int.self, .dismissedUpdateBannerId)
+        dismissedUrgentIds = c.lenient(Set<Int>.self, .dismissedUrgentIds) ?? []
+        followOnLockScreen = c.lenient(Bool.self, .followOnLockScreen)
+        notifyOnArrival = c.lenient(Bool.self, .notifyOnArrival) ?? false
+        skippedItems = c.lenient(Set<Int>.self, .skippedItems) ?? []
+        arrivalPromptDay = c.lenient(Date.self, .arrivalPromptDay)
     }
+
+    /// Whether the Live Activity follows this event: the user's choice, else on once
+    /// something is hearted (spec §8; later also with a plan).
+    var followsOnLockScreen: Bool { followOnLockScreen ?? hasHearts }
 
     var hasHearts: Bool { !heartedLocations.isEmpty || !heartedScheduleItems.isEmpty }
 

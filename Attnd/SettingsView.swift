@@ -74,7 +74,25 @@ struct SettingsView: View {
             } footer: {
                 if notificationPermissionDenied {
                     Text("Notification permission was denied. Enable it in Settings → Attnd.")
+                } else if !AppState.isAppClip {
+                    Text("Organizer updates, and a reminder 15 minutes before anything you've hearted.")
                 }
+            }
+
+            #if !APP_CLIP
+            // MARK: - Follow on Lock Screen (Live Activity) + arrival
+            LiveFollowSection()
+            #endif
+
+            // MARK: - Tour (onboarding)
+            Section {
+                Button {
+                    appState.showTour()
+                } label: {
+                    Label("Tour", systemImage: "sparkles.rectangle.stack")
+                }
+            } footer: {
+                Text("What Attnd can do at this event.")
             }
 
             // MARK: - About & support (API-004)
@@ -191,6 +209,73 @@ struct SettingsView: View {
         isUpdatingNotifications = false
     }
 }
+
+#if !APP_CLIP
+// MARK: - Follow on Lock Screen
+
+/// "Follow on Lock Screen" (the event's Live Activity) for this event, "Start Now" before it
+/// starts by itself, and "Tell me when I arrive" (Always location, venue region).
+private struct LiveFollowSection: View {
+    @Environment(AppState.self) private var appState
+    @Environment(\.scenePhase) private var scenePhase
+    /// Re-read on appear / activation (ActivityKit and Core Location aren't observable).
+    @State private var refreshToken = 0
+
+    var body: some View {
+        let controller = LiveFollowController.shared
+        let _ = refreshToken
+        Section {
+            Toggle("Follow on Lock Screen", isOn: Binding(
+                get: { appState.followsOnLockScreen },
+                set: { appState.setFollowOnLockScreen($0) }
+            ))
+            if appState.followsOnLockScreen {
+                if !controller.activitiesEnabled {
+                    Label("Live Activities are off for Attnd. Turn them on in Settings → Attnd.", systemImage: "exclamationmark.circle")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else if controller.isFollowing {
+                    Label("On your Lock Screen", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                } else {
+                    if let start = controller.nextStart() {
+                        LabeledContent("Starts by itself", value: EventTimeFormat.shortDayTime(start, in: appState.timeZone))
+                    }
+                    Button {
+                        controller.followNow()
+                        Task {
+                            try? await Task.sleep(for: .seconds(1))
+                            refreshToken += 1
+                        }
+                    } label: {
+                        Label("Start Now", systemImage: "play.circle")
+                    }
+                }
+                Toggle("Tell Me When I Arrive", isOn: Binding(
+                    get: { appState.notifiesOnArrival },
+                    set: { on in
+                        appState.setNotifyOnArrival(on)
+                        if on, !controller.hasAlwaysLocation { controller.requestAlwaysLocation() }
+                    }
+                ))
+                if appState.notifiesOnArrival, !controller.hasAlwaysLocation {
+                    Text("Needs location access “Always” (Settings → Attnd → Location).")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        } header: {
+            Text("Lock Screen")
+        } footer: {
+            Text("Shows what's on now and next from your hearts (or the whole schedule) on the Lock Screen and in the Dynamic Island, from 2 hours before your first item.")
+        }
+        .onAppear { refreshToken += 1 }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { refreshToken += 1 }
+        }
+    }
+}
+#endif
 
 // MARK: - Internal test build warning
 

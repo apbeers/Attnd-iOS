@@ -161,10 +161,25 @@ final class APIClient: Sendable {
         try await post("events/\(eventId)/leave/", body: LeaveRequest(deviceId: deviceId))
     }
 
-    /// POST devices/ — registration, push token and notification preference.
+    /// POST devices/ — registration, push token, notification preference and (API-011) the
+    /// Live Activity push token.
     @discardableResult
-    func registerDevice(deviceId: String, pushToken: String?, subscribed: Bool?) async throws -> StatusResponse {
-        let body = DeviceRequest(deviceId: deviceId, pushToken: Self.nonEmpty(pushToken), appVersion: appVersion, subscribed: subscribed)
+    func registerDevice(
+        deviceId: String,
+        pushToken: String?,
+        subscribed: Bool?,
+        liveActivityToken: LiveActivityTokenChange = .unchanged
+    ) async throws -> StatusResponse {
+        var token = liveActivityToken
+        // An empty token means none: send null rather than "".
+        if case .set(let hex) = token, Self.nonEmpty(hex) == nil { token = .clear }
+        let body = DeviceRequest(
+            deviceId: deviceId,
+            pushToken: Self.nonEmpty(pushToken),
+            appVersion: appVersion,
+            subscribed: subscribed,
+            liveActivityToken: token
+        )
         return try await post("devices/", body: body)
     }
 

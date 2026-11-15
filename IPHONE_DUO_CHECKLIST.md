@@ -31,6 +31,9 @@ Test each posture **upright and rotated 90° both ways**. Change posture **while
 - [ ] **Map glance**: the "now playing" strip sits under the chips (both clear of the fold and camera housings, below the status badges); pin badges (live dot / "Next 7:30") stay attached to their pins after fold/unfold; the selected-location card shows distance, arrow and walk without overlapping the map buttons or the search button; the walking route line survives fold/unfold.
 - [ ] **Compass arrows**: with the phone held in each posture and rotation, arrows point the right way (iOS 27 `headingBody` follows the active display); they stop updating when the app goes to the background.
 - [ ] **Peek**: long-press previews on Locations and Schedule rows present correctly in each posture.
+- [ ] **Urgent banner**: the red-tinted glass card (urgent announcement) above non-Updates tabs wraps its text, stays clear of the fold and camera housings, opens Updates at the item and dismisses in every posture.
+- [ ] **Onboarding (Tour)**: the cards page horizontally in every posture and rotation, Next / Done stays above the home indicator and off the fold, Skip (icon + title) closes them; permission prompts appear on the active display; reopen from Options → Tour.
+- [ ] **Live Activity**: with an item hearted, the activity starts while the app is open (Options → Lock Screen → Start Now otherwise). Check the Lock Screen on the **cover display (folded) and the inner display (unfolded)**, StandBy, and the Dynamic Island compact / minimal / expanded (long press) on both displays and in landscape (iOS 27 narrows the island: an icon instead of the countdown). Countdown and progress tick; Heart / Skip / Map buttons work from the Lock Screen and the expanded island; tapping a region opens the item, the map (with the walking route) or Updates on the display in use; an urgent announcement shows first and its alert lights the screen.
 
 ## Sheets and popovers
 

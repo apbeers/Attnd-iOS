@@ -475,6 +475,68 @@ struct LatestUpdateBanner: View {
     }
 }
 
+// MARK: - Urgent announcement banner (API-011)
+
+/// An organizer's urgent announcement (a cancellation, a weather hold) above every tab except
+/// Updates for 12 h or until dismissed: red-tinted glass, the whole text. Tap opens it in Updates.
+struct UrgentUpdateBanner: View {
+    let notification: AppNotification
+
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Button {
+                appState.navigate(to: .notification(notification.id))
+            } label: {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.title3)
+                        .foregroundStyle(.red)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Urgent")
+                            .font(.caption.weight(.bold))
+                            .textCase(.uppercase)
+                            .foregroundStyle(.red)
+                        Text(notification.title)
+                            .font(.headline)
+                            .lineLimit(2)
+                        if !notification.body.isEmpty {
+                            Text(notification.body)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(4)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Urgent: \(notification.title). \(notification.body)")
+            .accessibilityHint("Opens the update.")
+            Button {
+                appState.dismissUrgent(notification.id)
+            } label: {
+                Label("Dismiss", systemImage: "xmark")
+                    .labelStyle(.iconOnly)
+                    .frame(minWidth: 32, minHeight: 32)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        // Liquid Glass, tinted red so it stands apart from the ordinary update banner.
+        .glassEffect(.regular.tint(.red.opacity(0.25)).interactive(), in: .rect(cornerRadius: 22))
+        .frame(maxWidth: 560)
+        .padding(.horizontal, 12)
+        .padding(.top, 4)
+    }
+}
+
 // MARK: - Now playing (map)
 
 /// Chips for what is on right now ("Main Stage · Prairie Lights"); tap selects the pin.

@@ -33,15 +33,18 @@ enum EventSheet: String, Identifiable, Hashable, Sendable {
     case search
     /// SettingsView.
     case options
+    /// The onboarding cards (OnboardingView): after the first join, and Options → Tour.
+    case tour
 
     var id: String { rawValue }
 
     /// `tab_view` detail (API-005) counted when the sheet opens: "options" (the server
-    /// accepts the event tabs and options). nil for search, which counts as `search`.
+    /// accepts the event tabs and options). nil for search, which counts as `search`, and
+    /// for the tour.
     var usageDetail: String? {
         switch self {
-        case .options: return "options"
-        case .search:  return nil
+        case .options:       return "options"
+        case .search, .tour: return nil
         }
     }
 }
@@ -100,6 +103,13 @@ final class AppState {
     /// The search sheet's query (Siri's "search in Attnd" can fill it). Never sent anywhere.
     var searchText = ""
 
+    /// A question to put to the on-device model as soon as the search sheet shows it
+    /// (onboarding's "Plan your day" examples); consumed by EventSearchView.
+    var autoAskQuery: String?
+
+    /// The onboarding cards are due (first join); ContentView presents them once it is on screen.
+    var pendingTour = false
+
     /// The search sheet's navigation stack: result details (`SearchTarget`), the locations they
     /// link to, and anything whose tab is hidden.
     var searchPath = NavigationPath()
@@ -132,6 +142,12 @@ final class AppState {
     /// APNs registration failed this launch (simulator, no entitlement, no network);
     /// the live poll then runs every 60 s instead of relying on silent pushes.
     private(set) var pushRegistrationFailed = false
+
+    /// The running Live Activity's ActivityKit push token (hex, API-011); nil when none runs.
+    /// Sent with `POST devices/` as `live_activity_token` (`null` once it ends).
+    @ObservationIgnored private var liveActivityToken: String?
+    /// False while `liveActivityToken` hasn't reached the server yet.
+    @ObservationIgnored private var liveActivityTokenSynced = true
 
     /// The App Clip can't receive pushes; it always uses the 60 s poll.
     static let isAppClip = Bundle.main.bundleIdentifier?.hasSuffix(".clip") ?? false
@@ -218,6 +234,8 @@ final class AppState {
         static let notificationsEnabled = "pref.notificationsEnabled"
         static let pushToken = "pref.pushToken"
         static let dismissedUpdateVersion = "pref.dismissedUpdateVersion"
+        /// The onboarding cards were shown (or skipped) once on this device.
+        static let onboardingSeen = "pref.onboardingSeen"
         /// `EventPersonalState` JSON (hearts, Updates seen) for one event.
         static func personal(_ eventId: Int) -> String { "pref.event.\(eventId)" }
     }
@@ -533,10 +551,14 @@ final class AppState {
         focusRequest = nil
         presentedSheet = nil
         searchIndex = nil
+        autoAskQuery = nil
+        pendingTour = false
         loadPersonalState(for: nil)
         #if !APP_CLIP
         EventEntityIndex.shared.update(with: nil)
         #endif
+        // Ends the Live Activity and removes reminders (the server clears the token on leave).
+        liveFollowNeedsUpdate()
     }
 
     // MARK: - Bundle
@@ -633,6 +655,11 @@ final class AppState {
         // Spotlight / Siri (App Intents): the app's entities follow the shown content.
         EventEntityIndex.shared.update(with: currentBundle)
         #endif
+        // The onboarding cards after the first join on this device (never in screenshot mode).
+        if isFirstApply, !ScreenshotMode.isActive, !UserDefaults.standard.bool(forKey: Keys.onboardingSeen) {
+            pendingTour = true
+        }
+        liveFollowNeedsUpdate()
     }
 
     /// The content shown, as one bundle (nil outside an event). For search, Siri and Spotlight.
@@ -676,12 +703,25 @@ final class AppState {
         }
     }
 
-    /// Opens the search sheet with `query` (Siri / Shortcuts).
-    func showSearch(_ query: String) {
+    /// Opens the search sheet with `query` (Siri / Shortcuts). `ask`: also put it to the
+    /// on-device model right away (onboarding's "Plan your day" examples).
+    func showSearch(_ query: String, ask: Bool = false) {
         guard currentEvent != nil else { return }
         searchPath = NavigationPath()
         searchText = query
+        autoAskQuery = ask && Self.assistantAvailable ? query : nil
         presentedSheet = .search
+    }
+
+    /// Whether "Ask" (Apple Intelligence's on-device model) can answer: never in the App Clip
+    /// or screenshot mode. Onboarding's "Plan your day" card (and later the planner, spec §6)
+    /// appears only when this is true.
+    static var assistantAvailable: Bool {
+        #if APP_CLIP
+        return false
+        #else
+        return !ScreenshotMode.isActive && EventAssistant.isAvailable
+        #endif
     }
 
     /// The floating search button: opens the search sheet on its results (the last query
@@ -739,12 +779,15 @@ final class AppState {
     func setNotificationsEnabled(_ enabled: Bool) async -> Bool {
         guard enabled else {
             notificationsEnabled = false
+            liveFollowNeedsUpdate()
             await syncDevice()
             return true
         }
         let granted = await Self.requestNotificationAuthorization()
         notificationsEnabled = granted
         registerForRemoteNotifications()
+        // Reminders before hearted items follow the opt-in.
+        liveFollowNeedsUpdate()
         await syncDevice()
         return granted
     }
@@ -771,13 +814,32 @@ final class AppState {
 
     /// `POST devices/` with the current token (omitted while there is none) and the alert
     /// preference as `subscribed`. The server keeps the token even when `subscribed` is false.
+    /// Also carries the Live Activity's push token (`live_activity_token`, API-011) until the
+    /// server has it: the hex token, or `null` once the activity ended.
     func syncDevice() async {
         guard !ScreenshotMode.isActive else { return }
-        _ = try? await APIClient.shared.registerDevice(
-            deviceId: deviceId,
-            pushToken: pushToken,
-            subscribed: notificationsEnabled
-        )
+        let token = liveActivityToken
+        let change: LiveActivityTokenChange = liveActivityTokenSynced ? .unchanged : (token.map { LiveActivityTokenChange.set($0) } ?? .clear)
+        do {
+            _ = try await APIClient.shared.registerDevice(
+                deviceId: deviceId,
+                pushToken: pushToken,
+                subscribed: notificationsEnabled,
+                liveActivityToken: change
+            )
+            if change != .unchanged, liveActivityToken == token { liveActivityTokenSynced = true }
+        } catch {
+            // Retried with the next registration (launch, token change, Live Activity update).
+        }
+    }
+
+    /// A new Live Activity push token (hex), or nil when the activity ended: sent to the server.
+    func setLiveActivityToken(_ hex: String?) {
+        let token = APIClient.nonEmpty(hex)
+        guard token != liveActivityToken || !liveActivityTokenSynced else { return }
+        liveActivityToken = token
+        liveActivityTokenSynced = false
+        Task { await syncDevice() }
     }
 
     /// A push arrived. `content_updated` refetches the bundle (after a random 0–10 s delay)
@@ -852,6 +914,8 @@ final class AppState {
     func setHeart(_ hearted: Bool, for target: SearchTarget) {
         guard currentEvent != nil, let metric = personal.setHeart(hearted, for: target) else { return }
         savePersonalState()
+        // The Live Activity follows hearts; reminders are for hearted items.
+        liveFollowNeedsUpdate()
         switch target {
         case .location(let id), .scheduleItem(let id):
             track(metric, id: id)
@@ -895,6 +959,119 @@ final class AppState {
     func dismissLatestUpdate(_ notificationId: Int) {
         personal.dismissedUpdateBannerId = notificationId
         savePersonalState()
+    }
+
+    // MARK: - Urgent announcements (API-011)
+
+    /// The newest urgent announcement (≤ 12 h old, not dismissed) for the prominent banner above
+    /// the tabs and the Live Activity.
+    func urgentBanner(now: Date = .now) -> AppNotification? {
+        guard !ScreenshotMode.isActive, currentEvent != nil else { return nil }
+        return UpdatesInbox.urgent(notifications, dismissed: personal.dismissedUrgentIds, now: now)
+    }
+
+    /// Dismisses an urgent announcement everywhere (banner, Live Activity, newest-update banner).
+    func dismissUrgent(_ notificationId: Int) {
+        guard currentEvent != nil else { return }
+        personal.dismissedUrgentIds.insert(notificationId)
+        personal.dismissedUpdateBannerId = notificationId
+        savePersonalState()
+        liveFollowNeedsUpdate()
+    }
+
+    // MARK: - Follow on Lock Screen (Live Activity), reminders, onboarding
+
+    /// "Follow on Lock Screen" for this event (default: on once something is hearted).
+    var followsOnLockScreen: Bool { personal.followsOnLockScreen }
+
+    func setFollowOnLockScreen(_ on: Bool) {
+        guard currentEvent != nil, personal.followOnLockScreen != on else { return }
+        personal.followOnLockScreen = on
+        savePersonalState()
+        liveFollowNeedsUpdate()
+    }
+
+    /// "Tell me when I arrive" (needs Always location; LiveFollowController asks).
+    var notifiesOnArrival: Bool { personal.notifyOnArrival }
+
+    func setNotifyOnArrival(_ on: Bool) {
+        guard currentEvent != nil, personal.notifyOnArrival != on else { return }
+        personal.notifyOnArrival = on
+        savePersonalState()
+        liveFollowNeedsUpdate()
+    }
+
+    /// "Skip" in the Live Activity: it moves on to the item after this one.
+    func skipActivityItem(_ itemId: Int) {
+        guard currentEvent != nil, personal.skippedItems.insert(itemId).inserted else { return }
+        savePersonalState()
+        liveFollowNeedsUpdate()
+    }
+
+    /// The venue arrival notification was sent for this event day.
+    func markArrivalPrompted(_ day: Date) {
+        personal.arrivalPromptDay = day
+        savePersonalState()
+    }
+
+    /// The user's position changed (walk minutes in the Live Activity).
+    func userLocationDidChange() {
+        liveFollowNeedsUpdate()
+    }
+
+    /// The scene became active: the Live Activity can start now (foreground only).
+    func sceneDidBecomeActive() {
+        liveFollowNeedsUpdate()
+    }
+
+    /// Shows the onboarding cards (first join, or Options → Tour).
+    func showTour() {
+        guard currentEvent != nil, !ScreenshotMode.isActive else { return }
+        pendingTour = false
+        presentedSheet = .tour
+    }
+
+    /// The onboarding cards were shown: not again automatically.
+    func markTourSeen() {
+        pendingTour = false
+        UserDefaults.standard.set(true, forKey: Keys.onboardingSeen)
+    }
+
+    #if !APP_CLIP
+    /// Links from the Live Activity and the app's notifications (`attnd-live://…`): an item's
+    /// detail, the map at a location (with the walking route), Updates at a notification, or
+    /// "follow" (start the Live Activity). Links for another event are ignored.
+    func openLiveActivityLink(_ url: URL) async {
+        guard let parsed = LiveActivityLink.parse(url) else { return }
+        await restoreSavedEventIfNeeded()
+        guard currentEvent?.id == parsed.eventId else { return }
+        switch parsed.link {
+        case .item(let id):
+            navigate(to: .scheduleItem(id))
+        case .map(let locationId):
+            if tabs.contains(.map) {
+                showOnMap(locationId: locationId)
+            } else {
+                navigate(to: .location(locationId))
+            }
+        case .updates(let id?):
+            navigate(to: .notification(id))
+        case .updates(nil):
+            if tabs.contains(.notifications) {
+                presentedSheet = nil
+                selectedTab = .notifications
+            }
+        case .follow:
+            LiveFollowController.shared.followNow()
+        }
+    }
+    #endif
+
+    /// Live Activity, reminders and the venue monitor follow the content (full app only).
+    private func liveFollowNeedsUpdate() {
+        #if !APP_CLIP
+        LiveFollowController.shared.setNeedsUpdate()
+        #endif
     }
 
     // MARK: - Usage (API-005)

@@ -116,6 +116,13 @@ struct EventSearchView: View {
             if case .idle = assistant { return }
             assistant = .idle
         }
+        // Onboarding's "Plan your day" examples ask straight away.
+        .task(id: appState.autoAskQuery) {
+            guard let question = appState.autoAskQuery else { return }
+            appState.autoAskQuery = nil
+            guard question == query else { return }
+            await ask(question)
+        }
         .task {
             guard pendingFocus else { return }
             pendingFocus = false
@@ -221,6 +228,13 @@ struct EventSearchView: View {
         return false
         #else
         guard !query.isEmpty, !ScreenshotMode.isActive, EventAssistant.isAvailable else { return false }
+        // A question already put to the model (e.g. onboarding's "Kid-friendly afternoon").
+        switch assistant {
+        case .thinking(let asked), .answered(let asked, _), .failed(let asked):
+            if asked == query { return true }
+        case .idle:
+            break
+        }
         return EventSearch.looksLikeQuestion(query) || EventSearch.words(query).count >= 4
         #endif
     }

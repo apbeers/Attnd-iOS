@@ -24,6 +24,15 @@ struct AttndApp: App {
                     guard let url = userActivity.webpageURL else { return }
                     Task { await appDelegate.appState.handleDeepLink(url) }
                 }
+                // Live Activity regions and buttons that open the app (attnd-live://…).
+                .onOpenURL { url in
+                    Task { await appDelegate.appState.openLiveActivityLink(url) }
+                }
+        }
+        // Background app refresh while following on the Lock Screen or reminders are pending
+        // (LiveFollowController schedules it; identifier in Info.plist).
+        .backgroundTask(.appRefresh(LiveFollowKeys.refreshTaskIdentifier)) {
+            await LiveFollowController.performBackgroundRefresh()
         }
     }
 }

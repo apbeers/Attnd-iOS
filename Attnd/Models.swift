@@ -484,18 +484,46 @@ struct LeaveRequest: Encodable, Sendable {
     }
 }
 
+/// What `POST devices/` says about the Live Activity push token (API-011).
+enum LiveActivityTokenChange: Hashable, Sendable {
+    /// The key is left out: the server keeps what it has.
+    case unchanged
+    /// `"live_activity_token": "<hex>"`.
+    case set(String)
+    /// `"live_activity_token": null`: the activity ended.
+    case clear
+}
+
 struct DeviceRequest: Encodable, Sendable {
     var deviceId: String
     var platform = "ios"
     var pushToken: String?
     var appVersion: String?
     var subscribed: Bool?
+    var liveActivityToken: LiveActivityTokenChange = .unchanged
 
     enum CodingKeys: String, CodingKey {
         case platform, subscribed
         case deviceId = "device_id"
         case pushToken = "push_token"
         case appVersion = "app_version"
+        case liveActivityToken = "live_activity_token"
+    }
+
+    /// Missing values are left out (never `"push_token": ""`, API-007), except a cleared
+    /// Live Activity token, which is an explicit `null`.
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(deviceId, forKey: .deviceId)
+        try c.encode(platform, forKey: .platform)
+        try c.encodeIfPresent(pushToken, forKey: .pushToken)
+        try c.encodeIfPresent(appVersion, forKey: .appVersion)
+        try c.encodeIfPresent(subscribed, forKey: .subscribed)
+        switch liveActivityToken {
+        case .unchanged:        break
+        case .set(let token):   try c.encode(token, forKey: .liveActivityToken)
+        case .clear:            try c.encodeNil(forKey: .liveActivityToken)
+        }
     }
 }
 

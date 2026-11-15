@@ -13,6 +13,10 @@
 //
 // The app registers with APNs at every launch, whatever the notification opt-in:
 // silent pushes need no permission. The opt-in only controls alerts (`subscribed`).
+//
+// The app's own local notifications (reminders before hearted items, "tap to follow on your
+// Lock Screen"; LiveFollowController) carry `attnd_local` instead of `type`: a tap opens the
+// item (and starts following), and they never trigger a bundle refresh.
 
 import SwiftUI
 import UIKit
@@ -30,6 +34,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         UNUserNotificationCenter.current().delegate = self
         // Siri, Shortcuts and Spotlight intents (EventIntents.swift) read the joined event from here.
         IntentBridge.appState = appState
+        // Live Activity, reminders, venue arrival; also handles Live Activity buttons, which
+        // may launch the app in the background.
+        LiveFollowController.shared.install(appState: appState)
         appState.registerForRemoteNotifications()
         return true
     }
@@ -75,7 +82,10 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        let payload = PushPayload(userInfo: notification.request.content.userInfo)
+        let userInfo = notification.request.content.userInfo
+        // A reminder or "tap to follow" while the app is open: just show it.
+        guard LocalNotificationInfo(userInfo: userInfo) == nil else { return [.banner, .list, .sound] }
+        let payload = PushPayload(userInfo: userInfo)
         Task { @MainActor in
             await self.appState.handlePush(payload, opened: false)
         }
@@ -87,7 +97,14 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
-        let payload = PushPayload(userInfo: response.notification.request.content.userInfo)
+        let userInfo = response.notification.request.content.userInfo
+        if let local = LocalNotificationInfo(userInfo: userInfo) {
+            Task { @MainActor in
+                _ = await LiveFollowController.shared.handleNotificationTap(local)
+            }
+            return
+        }
+        let payload = PushPayload(userInfo: userInfo)
         Task { @MainActor in
             await self.appState.handlePush(payload, opened: true)
         }

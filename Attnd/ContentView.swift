@@ -194,10 +194,13 @@ struct ContentView: View {
             Group {
                 switch sheet {
                 case .search:
-                    // Focus the field unless Siri / Spotlight opened the sheet on an item.
-                    EventSearchSheet(focusesSearchField: appState.searchPath.isEmpty)
+                    // Focus the field unless Siri / Spotlight opened the sheet on an item or
+                    // an onboarding example is being asked.
+                    EventSearchSheet(focusesSearchField: appState.searchPath.isEmpty && appState.autoAskQuery == nil)
                 case .options:
                     OptionsSheet()
+                case .tour:
+                    OnboardingView()
                 }
             }
             .environment(appState)
@@ -207,8 +210,21 @@ struct ContentView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 appState.track(.appOpen)
+                // The Live Activity can only start while the app is in the foreground.
+                appState.sceneDidBecomeActive()
                 Task { await appState.refreshBundle() }
             }
+        }
+        // Walk minutes in the Live Activity follow the user's position.
+        .onChange(of: appState.userLocation.location) {
+            appState.userLocationDidChange()
+        }
+        // The onboarding cards after the first join, once the tabs are on screen.
+        .task(id: appState.pendingTour) {
+            guard appState.pendingTour else { return }
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled, appState.pendingTour, appState.presentedSheet == nil else { return }
+            appState.showTour()
         }
         // Fallback poll while the scene is active and an event is joined (ContentView
         // only exists then); silent `content_updated` pushes do the real work (API-007).
@@ -278,14 +294,21 @@ private struct LatestUpdateBannerModifier: ViewModifier {
     @Environment(AppState.self) private var appState
 
     func body(content: Content) -> some View {
-        let notification = enabled ? appState.latestUpdateBanner() : nil
+        // An urgent announcement (API-011, ≤ 12 h, not dismissed) takes the banner's place,
+        // prominently; otherwise the newest unread update.
+        let urgent = enabled ? appState.urgentBanner() : nil
+        let notification = enabled && urgent == nil ? appState.latestUpdateBanner() : nil
         content
             .safeAreaInset(edge: .top, spacing: 0) {
-                if let notification {
+                if let urgent {
+                    UrgentUpdateBanner(notification: urgent)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                } else if let notification {
                     LatestUpdateBanner(notification: notification)
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
+            .animation(.easeInOut, value: urgent?.id)
             .animation(.easeInOut, value: notification?.id)
     }
 }

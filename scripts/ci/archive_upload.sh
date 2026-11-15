@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Archive the app (with its App Clip) and upload it to App Store Connect.
-# Signing is automatic using an App Store Connect API key: profiles are managed by Xcode and the upload
-# is signed with a cloud-managed distribution certificate. The archive step needs an Apple Development
+# Archive the app (with its App Clip and the AttndWidgets Live Activity extension) and upload it to App
+# Store Connect. Signing is automatic using an App Store Connect API key: profiles are managed by Xcode
+# (-allowProvisioningUpdates also registers new App IDs and capabilities, e.g. com.arcu.Attnd.widgets and
+# Time Sensitive Notifications) and the upload is signed with a cloud-managed distribution certificate. The archive step needs an Apple Development
 # certificate; one stored certificate (IOS_DEV_CERT_P12_BASE64 + IOS_DEV_CERT_PASSWORD secrets) is
 # imported into a throwaway keychain so Xcode reuses it. Without it, every fresh runner would mint a new
 # "Created via API" development certificate, and Apple's per-account limit fills up after a few dozen runs.

@@ -50,22 +50,7 @@ struct MiniMap: View {
                 open(first: stops.first ?? others.first)
             } label: {
                 Map(initialPosition: .automatic, interactionModes: []) {
-                    if stops.count > 1 {
-                        MapPolyline(coordinates: stops.compactMap { $0.coordinate?.clCoordinate })
-                            .stroke(.tint, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
-                    }
-                    ForEach(Array(stops.enumerated()), id: \.element.id) { index, stop in
-                        Annotation(stop.name, coordinate: stop.coordinate!.clCoordinate) {
-                            NumberedPin(number: index + 1)
-                        }
-                    }
-                    ForEach(others) { location in
-                        Marker(location.name, coordinate: location.coordinate!.clCoordinate)
-                            .tint(.accentColor)
-                    }
-                    if showsUser, appState.userLocation.isAuthorized, !ScreenshotMode.isActive {
-                        UserAnnotation()
-                    }
+                    mapContent(stops: stops, others: others)
                 }
                 .mapStyle(.standard(pointsOfInterest: .excludingAll))
                 .allowsHitTesting(false)
@@ -86,6 +71,28 @@ struct MiniMap: View {
             .buttonStyle(.plain)
             .accessibilityLabel(accessibilityText(stops: stops, others: others))
             .accessibilityHint("Opens the map.")
+        }
+    }
+
+    // Separate builder: inline, this map content was too much for the type checker.
+    @MapContentBuilder
+    private func mapContent(stops: [Location], others: [Location]) -> some MapContent {
+        if stops.count > 1 {
+            let line: [CLLocationCoordinate2D] = stops.compactMap { $0.coordinate?.clCoordinate }
+            MapPolyline(coordinates: line)
+                .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
+        }
+        ForEach(Array(stops.enumerated()), id: \.element.id) { (index: Int, stop: Location) in
+            Annotation(stop.name, coordinate: stop.coordinate!.clCoordinate) {
+                NumberedPin(number: index + 1)
+            }
+        }
+        ForEach(others) { (location: Location) in
+            Marker(location.name, coordinate: location.coordinate!.clCoordinate)
+                .tint(Color.accentColor)
+        }
+        if showsUser, appState.userLocation.isAuthorized, !ScreenshotMode.isActive {
+            UserAnnotation()
         }
     }
 

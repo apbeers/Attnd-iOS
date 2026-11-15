@@ -42,7 +42,7 @@ jobs:
         env:
           # Static key: only valid on the dev server, which has the always-live DEMO event.
           ATTND_API_KEY: ${{ secrets.ATTND_API_KEY }}
-          ATTND_SERVER: ${{ vars.SCREENSHOT_SERVER || 'attnd-dev-7ab893f37020.herokuapp.com' }}
+          ATTND_SERVER: ${{ vars.SCREENSHOT_SERVER || 'dev.attnd.app' }}
           DUO_REQUIRED: ${{ vars.DUO_SCREENSHOTS_REQUIRED == 'true' && '1' || '0' }}
         run: bash scripts/ci/screenshots.sh
       - name: Compose store frames

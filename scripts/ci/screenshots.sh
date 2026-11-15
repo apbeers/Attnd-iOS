@@ -25,14 +25,14 @@
 #               The folded set is checked the same way (window < 600 pt wide, portrait) and has its own
 #               probe; if it fails only the folded set is skipped.
 # Env: ATTND_API_KEY (required: static key for the dev server)
-#      ATTND_SERVER (default attnd-dev-7ab893f37020.herokuapp.com; the static key only works there)
+#      ATTND_SERVER (default dev.attnd.app; the static key only works there)
 #      SCREENSHOT_DEVICES (default "iphone-69 iphone-63 iphone-duo")
 #      SCREENSHOT_EVENT_CODE (default DEMO), SETTLE_SECONDS (default 5), DUO_REQUIRED (default 0)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 : "${ATTND_API_KEY:?ATTND_API_KEY (static key for the dev server) is required}"
-server="${ATTND_SERVER:-attnd-dev-7ab893f37020.herokuapp.com}"
+server="${ATTND_SERVER:-dev.attnd.app}"
 devices="${SCREENSHOT_DEVICES:-iphone-69 iphone-63 iphone-duo}"
 event_code="${SCREENSHOT_EVENT_CODE:-DEMO}"
 settle="${SETTLE_SECONDS:-5}"

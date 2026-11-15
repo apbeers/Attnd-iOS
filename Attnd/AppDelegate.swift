@@ -28,6 +28,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        // Siri, Shortcuts and Spotlight intents (EventIntents.swift) read the joined event from here.
+        IntentBridge.appState = appState
         appState.registerForRemoteNotifications()
         return true
     }

@@ -233,6 +233,8 @@ final class BusinessLogicTests: XCTestCase {
         XCTAssertEqual(MainTab.event(.notifications).usageDetail, "notifications")
         XCTAssertEqual(MainTab.event(.map).usageDetail, "map")
         XCTAssertEqual(MainTab.options.usageDetail, "options")
+        // The search tab has no tab_view detail (the server only accepts the event tabs and options).
+        XCTAssertNil(MainTab.search.usageDetail)
     }
 
     // MARK: - Support info (API-004)

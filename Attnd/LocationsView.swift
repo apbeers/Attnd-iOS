@@ -37,6 +37,12 @@ struct LocationsTab: View {
             selectScreenshotLocationIfNeeded()
         }
         .onAppear(perform: selectScreenshotLocationIfNeeded)
+        // A jump from search, Siri or Spotlight (AppState.navigate).
+        .onChange(of: appState.focusRequest, initial: true) {
+            guard case .location(let id)? = appState.focusRequest, let location = appState.location(id: id) else { return }
+            appState.focusRequest = nil
+            selection = location
+        }
     }
 
     /// The `location` App Store screenshot opens one location's detail (ScreenshotMode).
@@ -83,6 +89,8 @@ struct LocationsView: View {
             }
         }
         .modifier(LocationsListStyle(isCards: display.locationsStyle == .cards))
+        // Siri on-screen awareness: the rows are LocationEntity values.
+        .onScreenEntities(forSelectionType: Location.self) { .location($0.id) }
         .navigationTitle("Locations")
         .modifier(SearchableIf(enabled: display.enableSearch, text: $searchText, prompt: "Search locations"))
         .refreshable { await appState.pullToRefresh() }
@@ -134,13 +142,30 @@ private struct LocationsListStyle: ViewModifier {
 
 // MARK: - Search
 
-/// `.searchable` only when the display config enables search.
-/// Counts a `search` (API-005) when one is submitted or, since filtering is live, once
-/// the query has settled for 1.5 s. Only the fact of a search is counted, never the text.
+/// `.searchable` only when the display config enables search; searches are counted by
+/// `SearchUsageCounting`.
 struct SearchableIf: ViewModifier {
     let enabled: Bool
     @Binding var text: String
     let prompt: String
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if enabled {
+            content
+                .searchable(text: $text, prompt: Text(prompt))
+                .modifier(SearchUsageCounting(text: text))
+        } else {
+            content
+        }
+    }
+}
+
+/// Counts a `search` (API-005, no detail) when a search is submitted or once a non-empty
+/// query has settled for 1.5 s. Shared by the per-tab search fields and the search tab.
+/// Only the fact of a search is counted, never the text.
+struct SearchUsageCounting: ViewModifier {
+    let text: String
 
     @Environment(AppState.self) private var appState
     /// The query last counted (kept on device only), so a submit and the settle timer count it once.
@@ -148,24 +173,18 @@ struct SearchableIf: ViewModifier {
 
     private static let settleDelay: Duration = .milliseconds(1500)
 
-    @ViewBuilder
     func body(content: Content) -> some View {
-        if enabled {
-            content
-                .searchable(text: $text, prompt: Text(prompt))
-                .onSubmit(of: .search) { countSearch() }
-                .task(id: text) {
-                    guard !normalizedQuery.isEmpty else {
-                        countedQuery = ""
-                        return
-                    }
-                    try? await Task.sleep(for: Self.settleDelay)
-                    guard !Task.isCancelled else { return }
-                    countSearch()
+        content
+            .onSubmit(of: .search) { countSearch() }
+            .task(id: text) {
+                guard !normalizedQuery.isEmpty else {
+                    countedQuery = ""
+                    return
                 }
-        } else {
-            content
-        }
+                try? await Task.sleep(for: Self.settleDelay)
+                guard !Task.isCancelled else { return }
+                countSearch()
+            }
     }
 
     private var normalizedQuery: String {
@@ -182,39 +201,61 @@ struct SearchableIf: ViewModifier {
 
 // MARK: - Category chips
 
+/// Category filter chips. Floating over the map they are Liquid Glass buttons (the
+/// selected one tinted, `.glassProminent`); inside a list (content layer) they are
+/// ordinary bordered capsules, since glass belongs to the controls layer.
 struct CategoryChips: View {
     let categories: [String]
     @Binding var selection: String?
+    /// True over the map; false inside the Locations list.
+    var floating = false
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                chip("All", isSelected: selection == nil) { selection = nil }
-                ForEach(categories, id: \.self) { category in
-                    chip(category, isSelected: selection == category) {
-                        selection = selection == category ? nil : category
-                    }
-                }
-            }
-            .padding(.horizontal)
-            .padding(.vertical, 6)
+            chipRow
+                .padding(.horizontal)
+                .padding(.vertical, 6)
         }
+        .scrollClipDisabled()
         .accessibilityLabel("Filter by category")
     }
 
+    @ViewBuilder
+    private var chipRow: some View {
+        if floating {
+            GlassEffectContainer(spacing: 8) {
+                chips
+            }
+        } else {
+            chips
+        }
+    }
+
+    private var chips: some View {
+        HStack(spacing: 8) {
+            chip("All", isSelected: selection == nil) { selection = nil }
+            ForEach(categories, id: \.self) { category in
+                chip(category, isSelected: selection == category) {
+                    selection = selection == category ? nil : category
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
     private func chip(_ title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        let button = Button(action: action) {
             Text(title)
                 .font(.subheadline.weight(isSelected ? .semibold : .regular))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(isSelected ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
-        .background {
-            Capsule().fill(isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(.regularMaterial))
-        }
+        .buttonBorderShape(.capsule)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+        switch (floating, isSelected) {
+        case (true, true):   button.buttonStyle(.glassProminent)
+        case (true, false):  button.buttonStyle(.glass)
+        case (false, true):  button.buttonStyle(.borderedProminent)
+        case (false, false): button.buttonStyle(.bordered)
+        }
     }
 }
 
@@ -399,6 +440,21 @@ struct LocationDetailView: View {
         }
         .navigationTitle(location.name)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if location.coordinate != nil, appState.tabs.contains(.map) {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        appState.mapFocusLocationId = location.id
+                        appState.selectedTab = .event(.map)
+                    } label: {
+                        // Icon and title: bars show the icon, vertical bars and accessibility use the title.
+                        Label("Show on Map", systemImage: "map")
+                    }
+                }
+            }
+        }
+        // Siri on-screen awareness ("when does this open?", "share this").
+        .onScreenEntity(.location(location.id))
         // Counted for every route here: the list, a map pin, a schedule item (API-005).
         .task(id: location.id) { appState.track(.locationView, id: location.id) }
     }
@@ -440,7 +496,7 @@ struct LocationDetailView: View {
                             Label("Get Walking Directions", systemImage: "figure.walk")
                                 .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.glassProminent)
                         .controlSize(.large)
                     }
 

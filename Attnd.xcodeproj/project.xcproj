@@ -35,6 +35,18 @@
             "AttndAppClip/compile-sources",
           ],
         }, {
+          "path": "EventSearch.swift",
+          "target-membership": [
+            "Attnd/compile-sources",
+            "AttndAppClip/compile-sources",
+          ],
+        }, {
+          "path": "EventSearchView.swift",
+          "target-membership": [
+            "Attnd/compile-sources",
+            "AttndAppClip/compile-sources",
+          ],
+        }, {
           "path": "FoldableLayout.swift",
           "target-membership": [
             "Attnd/compile-sources",
@@ -48,6 +60,9 @@
           ],
         },
         { "path": "AppDelegate.swift", "target-membership": [ "Attnd/compile-sources" ] },
+        { "path": "EventEntities.swift", "target-membership": [ "Attnd/compile-sources" ] },
+        { "path": "EventIntents.swift", "target-membership": [ "Attnd/compile-sources" ] },
+        { "path": "EventAssistant.swift", "target-membership": [ "Attnd/compile-sources" ] },
         {
           "path": "APIClient.swift",
           "target-membership": [
@@ -152,6 +167,7 @@
         { "path": "BusinessLogicTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "APIClientIntegrationTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "DisplayLogicTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
+        { "path": "EventSearchTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "ModelDecodingTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
       ],
     }, {
@@ -256,6 +272,7 @@
         "CURRENT_PROJECT_VERSION": "44",
         "GENERATE_INFOPLIST_FILE": "YES",
         "IPHONEOS_DEPLOYMENT_TARGET": "26.0",
+        "LM_SKIP_METADATA_EXTRACTION": "YES",
         "MARKETING_VERSION": "1.0",
         "PRODUCT_BUNDLE_IDENTIFIER": "com.arcu.AttndTests",
         "PRODUCT_NAME": "$(TARGET_NAME)",
@@ -304,6 +321,7 @@
           "$(inherited)",
           "@executable_path/Frameworks",
         ],
+        "LM_SKIP_METADATA_EXTRACTION": "YES",
         "LOCALIZATION_PREFERS_STRING_CATALOGS": "YES",
         "MARKETING_VERSION": "1.0.44",
         "PRODUCT_BUNDLE_IDENTIFIER": "com.arcu.Attnd.clip",
@@ -313,7 +331,8 @@
         "SUPPORTS_MACCATALYST": "NO",
         "SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD": "NO",
         "SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD": "NO",
-        "SWIFT_ACTIVE_COMPILATION_CONDITIONS[config=Debug]": "DEBUG $(inherited)",
+        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "APP_CLIP $(inherited)",
+        "SWIFT_ACTIVE_COMPILATION_CONDITIONS[config=Debug]": "DEBUG APP_CLIP $(inherited)",
         "SWIFT_EMIT_LOC_STRINGS": "YES",
         "SWIFT_VERSION": "6.0",
         "TARGETED_DEVICE_FAMILY": "1",
@@ -376,7 +395,6 @@
     "GCC_WARN_UNUSED_FUNCTION": "YES",
     "GCC_WARN_UNUSED_VARIABLE": "YES",
     "IPHONEOS_DEPLOYMENT_TARGET": "26.0",
-    "LM_SKIP_METADATA_EXTRACTION": "YES",
     "MTL_ENABLE_DEBUG_INFO[config=Debug]": "INCLUDE_SOURCE",
     "MTL_ENABLE_DEBUG_INFO[config=Release]": "NO",
     "MTL_FAST_MATH": "YES",

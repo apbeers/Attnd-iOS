@@ -20,19 +20,24 @@
 
 import Foundation
 import Observation
+import SwiftUI
 import UIKit
 import UserNotifications
 
-/// The app's tabs: the server-driven event tabs plus the app's own Options tab.
+/// The app's tabs: the server-driven event tabs plus the app's own Options and Search tabs.
 enum MainTab: Hashable, Sendable {
     case event(EventTab)
     case options
+    /// The system search tab (`Tab(role: .search)`): local search across the event.
+    case search
 
     /// `tab_view` detail (API-005): map, locations, schedule, flyer, notifications or options.
-    var usageDetail: String {
+    /// nil for the search tab, which has no `tab_view` detail (searches count as `search`).
+    var usageDetail: String? {
         switch self {
         case .event(let tab): return tab.rawValue
         case .options:        return "options"
+        case .search:         return nil
         }
     }
 }
@@ -64,8 +69,8 @@ final class AppState {
     var selectedTab: MainTab = .event(.map) {
         didSet {
             // The first tab is counted in `apply` once the bundle has chosen it.
-            if hasAppliedDefaultTab, oldValue != selectedTab {
-                track(.tabView, detail: selectedTab.usageDetail)
+            if hasAppliedDefaultTab, oldValue != selectedTab, let detail = selectedTab.usageDetail {
+                track(.tabView, detail: detail)
             }
         }
     }
@@ -75,6 +80,21 @@ final class AppState {
 
     /// Set by the map's secondary pane to focus a pin; MapView consumes it.
     var mapFocusLocationId: Int?
+
+    // MARK: - Search and jumps
+
+    /// The search tab's query (Siri's "search in Attnd" can fill it). Never sent anywhere.
+    var searchText = ""
+
+    /// The search tab's navigation stack: result details (`SearchTarget`), the locations they
+    /// link to, and anything whose tab is hidden.
+    var searchPath = NavigationPath()
+
+    /// An item to show, consumed by the tab that shows it (Locations, Schedule, Updates).
+    var focusRequest: SearchTarget?
+
+    /// The joined event prepared for local search; rebuilt with every applied bundle.
+    private(set) var searchIndex: EventSearchIndex?
 
     // MARK: - Device
 
@@ -481,6 +501,13 @@ final class AppState {
         lastRefreshed = nil
         hasAppliedDefaultTab = false
         mapFocusLocationId = nil
+        searchText = ""
+        searchPath = NavigationPath()
+        focusRequest = nil
+        searchIndex = nil
+        #if !APP_CLIP
+        EventEntityIndex.shared.update(with: nil)
+        #endif
     }
 
     // MARK: - Bundle
@@ -565,12 +592,64 @@ final class AppState {
             selectedTab = .event(defaultTab)
         }
         pendingNotificationsEventId = nil
-        if isFirstApply, hasAppliedDefaultTab {
+        if isFirstApply, hasAppliedDefaultTab, let detail = selectedTab.usageDetail {
             // The tab the event opens on (later changes are counted in selectedTab's didSet).
-            track(.tabView, detail: selectedTab.usageDetail)
+            track(.tabView, detail: detail)
         }
         // New images download first; files the new content no longer uses are deleted after.
         scheduleImageSync()
+        searchIndex = EventSearchIndex(bundle)
+        #if !APP_CLIP
+        // Spotlight / Siri (App Intents): the app's entities follow the shown content.
+        EventEntityIndex.shared.update(with: currentBundle)
+        #endif
+    }
+
+    /// The content shown, as one bundle (nil outside an event). For search, Siri and Spotlight.
+    var currentBundle: EventBundle? {
+        guard let event = currentEvent, hasAppliedDefaultTab else { return nil }
+        return EventBundle(
+            contentVersion: contentVersion ?? event.contentVersion,
+            event: event,
+            display: display,
+            categories: categories,
+            locations: locations,
+            schedule: schedule,
+            notifications: notifications
+        )
+    }
+
+    // MARK: - Jumps (search results, Siri, Spotlight)
+
+    /// Shows one item: in its own tab when that tab is visible (Locations / Schedule select
+    /// it, Updates scrolls to and highlights it, the event opens Options); otherwise on the
+    /// search tab's stack, so hidden tabs (`display.tabs`) work too.
+    func navigate(to target: SearchTarget) {
+        guard currentEvent != nil else { return }
+        let tab: EventTab
+        switch target {
+        case .location:     tab = .locations
+        case .scheduleItem: tab = .schedule
+        case .notification: tab = .notifications
+        case .event:
+            selectedTab = .options
+            return
+        }
+        if tabs.contains(tab) {
+            focusRequest = target
+            selectedTab = .event(tab)
+        } else {
+            searchPath = NavigationPath([target])
+            selectedTab = .search
+        }
+    }
+
+    /// Opens the search tab with `query` (Siri / Shortcuts).
+    func showSearch(_ query: String) {
+        guard currentEvent != nil else { return }
+        searchPath = NavigationPath()
+        searchText = query
+        selectedTab = .search
     }
 
     /// Pull to refresh: counted, then a normal bundle refresh.

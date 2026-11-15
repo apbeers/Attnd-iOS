@@ -8,7 +8,7 @@
 // repos together.
 //
 // Configuration (environment of the test process; nothing is compiled in):
-//   ATTND_IT_SERVER  host, e.g. attnd-dev-7ab893f37020.herokuapp.com or attnd.app
+//   ATTND_IT_SERVER  host, e.g. dev.attnd.app or attnd.app
 //   ATTND_IT_KEY     static bearer key the server accepts (dev: its API_KEY; prod: the CI key,
 //                    which only works for the DEMO event)
 //   ATTND_IT_RUN_ID  optional, used in device ids (CI passes the workflow run id)
@@ -17,7 +17,7 @@
 //
 // xcodebuild only forwards variables prefixed with TEST_RUNNER_ to the test process (prefix
 // stripped), so pass them like this (scripts/ci/test.sh integration does):
-//   TEST_RUNNER_ATTND_IT_SERVER=attnd-dev-7ab893f37020.herokuapp.com TEST_RUNNER_ATTND_IT_KEY=… \
+//   TEST_RUNNER_ATTND_IT_SERVER=dev.attnd.app TEST_RUNNER_ATTND_IT_KEY=… \
 //     xcodebuild test … -only-testing:AttndTests/APIClientIntegrationTests
 // In Xcode, add ATTND_IT_SERVER / ATTND_IT_KEY to the scheme's Test action environment instead
 // (locally only; never commit a key).

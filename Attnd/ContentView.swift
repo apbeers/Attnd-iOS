@@ -106,7 +106,7 @@ struct UpdateRequiredView: View {
                 Label("Update", systemImage: "arrow.up.forward.app")
                     .frame(minWidth: 160)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.glassProminent)
             .controlSize(.large)
         }
     }
@@ -136,7 +136,10 @@ struct UpdateAvailableBanner: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background(.bar)
+        // Liquid Glass: a floating card above the content instead of an opaque custom bar.
+        .glassEffect(.regular, in: .rect(cornerRadius: 22))
+        .padding(.horizontal, 12)
+        .padding(.top, 4)
     }
 }
 
@@ -177,7 +180,15 @@ struct ContentView: View {
                     SettingsView()
                 }
             }
+            // The system search tab: set apart at the trailing end of the tab bar and
+            // expanding into the search field (Liquid Glass). Searches the whole event,
+            // including tabs the organizer hid.
+            Tab("Search", systemImage: "magnifyingglass", value: MainTab.search, role: .search) {
+                EventSearchTab()
+            }
         }
+        // The tab bar shrinks while lists scroll down and comes back on scroll up.
+        .tabBarMinimizeBehavior(.onScrollDown)
         .tint(accentColor ?? Color.accentColor)
         // Foreground: refetch (cheap — the ETag makes it a 304 when nothing changed).
         .onChange(of: scenePhase) { _, phase in
@@ -238,7 +249,7 @@ struct ContentView: View {
 // MARK: - Event status badge
 
 extension View {
-    /// Floats small capsules at the top of the content (below the navigation bar,
+    /// Floats small Liquid Glass capsules at the top of the content (below the navigation bar,
     /// so clear of the status bar and Dynamic Island): "Demo event" / "Event ended",
     /// and "Offline · Updated 3:41 PM" while refreshes fail (saved content stays on
     /// screen). Content scrolls underneath; they never take layout space and pass
@@ -320,14 +331,17 @@ private struct EventStatusBadgeModifier: ViewModifier {
             let kinds = EventStatusBadgeKind.all(appState)
             if !kinds.isEmpty {
                 ReservedRegionAvoiding {
-                    VStack(spacing: 0) {
-                        ForEach(kinds, id: \.title) { kind in
-                            EventStatusBadge(kind: kind)
-                                .padding(.top, 6)
+                    // One container so stacked capsules share their glass and blend.
+                    GlassEffectContainer(spacing: 6) {
+                        VStack(spacing: 0) {
+                            ForEach(kinds, id: \.title) { kind in
+                                EventStatusBadge(kind: kind)
+                                    .padding(.top, 6)
+                            }
+                            Spacer(minLength: 0)
                         }
-                        Spacer(minLength: 0)
+                        .frame(maxWidth: .infinity)
                     }
-                    .frame(maxWidth: .infinity)
                 }
                 .allowsHitTesting(false)
                 .transition(.opacity)
@@ -346,9 +360,8 @@ private struct EventStatusBadge: View {
             .lineLimit(1)
             .padding(.horizontal, 12)
             .frame(height: 28)
-            .background(.regularMaterial, in: Capsule())
-            .overlay(Capsule().strokeBorder(.separator, lineWidth: 0.5))
-            .shadow(color: .black.opacity(0.12), radius: 4, y: 1)
+            // Liquid Glass capsule (not interactive: touches pass through the badges).
+            .glassEffect(.regular, in: .capsule)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(kind.accessibilityText)
             .accessibilityAddTraits(.isStaticText)

@@ -36,6 +36,13 @@ struct ScheduleTab: View {
                 }
             }
         }
+        // A jump from search, Siri or Spotlight (AppState.navigate).
+        .onChange(of: appState.focusRequest, initial: true) {
+            guard case .scheduleItem(let id)? = appState.focusRequest,
+                  let item = appState.schedule.first(where: { $0.id == id }) else { return }
+            appState.focusRequest = nil
+            selection = item
+        }
     }
 }
 
@@ -102,6 +109,8 @@ struct ScheduleView: View {
             List(selection: selection) {
                 listContent(sections: sections, now: now)
             }
+            // Siri on-screen awareness: the rows are ScheduleItemEntity values.
+            .onScreenEntities(forSelectionType: ScheduleItem.self) { .scheduleItem($0.id) }
         } else {
             List {
                 listContent(sections: sections, now: now)
@@ -272,6 +281,8 @@ struct ScheduleItemDetailView: View {
         }
         .navigationTitle(item.name)
         .navigationBarTitleDisplayMode(.inline)
+        // Siri on-screen awareness ("where is this?", "remind me about this").
+        .onScreenEntity(.scheduleItem(item.id))
         .task(id: item.id) { appState.track(.scheduleItemView, id: item.id) }
     }
 

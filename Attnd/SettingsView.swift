@@ -32,6 +32,8 @@ struct SettingsView: View {
             if let event = appState.currentEvent {
                 Section {
                     EventHeader(event: event, logoUrl: appState.logoUrl)
+                        // Siri on-screen awareness: "share this event", "where is it?".
+                        .onScreenEntity(.event(event.id))
                 }
             }
 
@@ -194,7 +196,7 @@ private struct InternalBuildWarning: View {
 // MARK: - Event header
 
 /// Logo (from `display.logo_url`), name, dates and address of the joined event.
-private struct EventHeader: View {
+struct EventHeader: View {
     let event: Event
     let logoUrl: URL?
 

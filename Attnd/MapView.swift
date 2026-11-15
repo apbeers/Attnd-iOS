@@ -75,7 +75,8 @@ struct MapView: View {
         .onAppear(perform: positionInitiallyIfNeeded)
         .onChange(of: appState.locations) { positionInitiallyIfNeeded() }
         .onChange(of: appState.mapCenterToken) { recenter() }
-        .onChange(of: appState.mapFocusLocationId) { _, id in
+        // initial: a "Show on Map" from another tab may arrive before this view exists.
+        .onChange(of: appState.mapFocusLocationId, initial: true) { _, id in
             guard let id else { return }
             focus(on: id)
             appState.mapFocusLocationId = nil
@@ -107,7 +108,7 @@ struct MapView: View {
     private var overlayContent: some View {
         VStack(spacing: 0) {
             if !appState.filterCategories.isEmpty {
-                CategoryChips(categories: appState.filterCategories, selection: $selectedCategory)
+                CategoryChips(categories: appState.filterCategories, selection: $selectedCategory, floating: true)
                     // Clear the floating demo / ended / offline badges (eventStatusBanners).
                     .padding(.top, 8 + EventStatusBadgeKind.reservedTopHeight(appState))
             }
@@ -161,6 +162,8 @@ struct MapView: View {
             selectedCategory = nil
         }
         selectedLocationId = locationId
+        // A focus that arrives as the map appears wins over the initial framing.
+        hasPositioned = true
         withAnimation { cameraPosition = .region(MapRegionMath.streetLevel(coordinate).mkRegion) }
     }
 
@@ -229,31 +232,33 @@ private struct ClusterBadge: View {
 
 // MARK: - Map buttons
 
-/// Floating buttons: re-centre on the event and show my location.
+/// Floating buttons: re-centre on the event and show my location. Interactive Liquid
+/// Glass (it reacts to touch) in one container, so the two circles blend like the system's
+/// map controls.
 private struct MapButtonStack: View {
     let onCenter: () -> Void
     let onLocation: () -> Void
 
     var body: some View {
-        GlassEffectContainer {
+        GlassEffectContainer(spacing: 8) {
             VStack(spacing: 8) {
-                Button(action: onCenter) {
-                    Image(systemName: "scope")
-                        .frame(width: 44, height: 44)
-                        .contentShape(Circle())
-                }
-                .glassEffect(in: Circle())
-                .accessibilityLabel("Show the whole event")
-
-                Button(action: onLocation) {
-                    Image(systemName: "location.fill")
-                        .frame(width: 44, height: 44)
-                        .contentShape(Circle())
-                }
-                .glassEffect(in: Circle())
-                .accessibilityLabel("Show my location")
+                button("Show the whole event", systemImage: "scope", action: onCenter)
+                button("Show my location", systemImage: "location.fill", action: onLocation)
             }
         }
+    }
+
+    private func button(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .labelStyle(.iconOnly)
+                .font(.body.weight(.medium))
+                .frame(width: 44, height: 44)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.tint)
+        .glassEffect(.regular.interactive(), in: .circle)
     }
 }
 
@@ -283,11 +288,11 @@ private struct LocationInfoCard: View {
                     .foregroundStyle(.secondary)
             }
             .padding()
-            .background {
-                RoundedRectangle(cornerRadius: 14).glassEffect()
-            }
+            .contentShape(.rect(cornerRadius: 22))
         }
         .buttonStyle(.plain)
+        // Interactive Liquid Glass card (was a glass capsule drawn behind a rounded rectangle).
+        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 22))
     }
 }
 

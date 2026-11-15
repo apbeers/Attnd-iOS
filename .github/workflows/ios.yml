@@ -128,7 +128,7 @@ jobs:
         run: bash scripts/ci/select_xcode.sh
       - name: Live API tests (dev server)
         env:
-          ATTND_IT_SERVER: attnd-dev-7ab893f37020.herokuapp.com
+          ATTND_IT_SERVER: dev.attnd.app
           ATTND_IT_KEY: ${{ secrets.ATTND_API_KEY }}
         run: bash scripts/ci/test.sh integration "Integration · dev"
       - name: Keep test results

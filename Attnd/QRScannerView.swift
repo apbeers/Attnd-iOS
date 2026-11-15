@@ -36,10 +36,10 @@ struct QRScannerSheet: View {
                     .overlay(alignment: .bottom) {
                         Text("Point your camera at the event QR code")
                             .font(.subheadline)
-                            .foregroundStyle(.white)
                             .padding(.horizontal, 24)
                             .padding(.vertical, 12)
-                            .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 12))
+                            // Liquid Glass keeps the hint legible over any camera image.
+                            .glassEffect(.regular, in: .capsule)
                             .padding(.bottom, 32)
                     }
                 } else {

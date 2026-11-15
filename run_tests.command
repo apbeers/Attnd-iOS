@@ -6,7 +6,7 @@ LOG="$(dirname "$0")/test_results_ios.txt"
 KEY_ARGS=()
 [ -n "$ATTND_API_KEY" ] && KEY_ARGS=(ATTND_API_KEY="$ATTND_API_KEY")
 # Live API tests (APIClientIntegrationTests) run only when both are exported, e.g.
-#   ATTND_IT_SERVER=attnd-dev-7ab893f37020.herokuapp.com ATTND_IT_KEY=<dev key> ./run_tests.command
+#   ATTND_IT_SERVER=dev.attnd.app ATTND_IT_KEY=<dev key> ./run_tests.command
 # xcodebuild forwards only TEST_RUNNER_-prefixed variables to the tests; otherwise they are skipped.
 export TEST_RUNNER_ATTND_IT_SERVER="$ATTND_IT_SERVER" TEST_RUNNER_ATTND_IT_KEY="$ATTND_IT_KEY"
 echo "Running iOS tests..." | tee "$LOG"

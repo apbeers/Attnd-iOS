@@ -28,9 +28,11 @@ attnd-web is the coordinating repo. The API contract ([`API_V2.md`](https://gith
 - **APNs** (`UserNotifications`) — organizer notifications and silent `content_updated` pushes
 - **DataScannerViewController** (VisionKit) — QR code scanning
 - **MapKit** — map view
+- **App Intents** + **Core Spotlight** — Siri, Shortcuts, Spotlight and on-screen awareness for the event's items (app only)
+- **Foundation Models** — "Ask about this event" with Apple Intelligence's on-device model and tool calling (app only, when available)
 - **Xcode project**: `Attnd.xcodeproj` in Xcode 27.2's JSON format (`project.xcproj`, converted on Nov 14, 2026 with `xcodebuild -convert-project "Xcode Project"` on Xcode 27.2; JSON with trailing commas — edit carefully or in Xcode; `-convert-project pbxproj` converts back). **Xcode 27.2** (build 27B52) is required: the JSON project format needs 27.2 and the iPhone Duo APIs need 27.1. CI pins it with `XCODE_VERSION` (repo variable, default `27.2`) on the `xcode-27` runner; bump it when a newer release lands on the image. Xcode Cloud is not used (it would number builds independently and collide with CI's).
 - **Targets**: `Attnd` (iPhone only, including iPhone Duo; all orientations; no iPad), `AttndAppClip`, `AttndTests`
-- **Build settings note**: `LM_SKIP_METADATA_EXTRACTION = YES` (project level) skips Xcode's App Intents metadata step, which only warned because the app doesn't use App Intents. Remove it if App Intents are ever added. CI prints a deduplicated warnings summary (`scripts/ci/warnings.py`) after every xcodebuild; keep it at zero.
+- **Build settings note**: the `Attnd` target runs Xcode's App Intents metadata step (it has App Intents; don't skip it there, or Siri/Shortcuts lose the intents). `LM_SKIP_METADATA_EXTRACTION = YES` is set only on `AttndAppClip` and `AttndTests`, which have no App Intents and where the step would only warn "No AppIntents.framework dependency found". The App Clip also defines the Swift condition `APP_CLIP` (`SWIFT_ACTIVE_COMPILATION_CONDITIONS`, both configurations): shared code wraps its few references to app-only types in `#if !APP_CLIP`. CI prints a deduplicated warnings summary (`scripts/ci/warnings.py`) after every xcodebuild; keep it at zero.
 
 ## Source Structure (`Attnd/`)
 
@@ -41,19 +43,24 @@ attnd-web is the coordinating repo. The API contract ([`API_V2.md`](https://gith
 | `AppState.swift` | `@MainActor @Observable` state: event, bundle content, display config, selected tab, device ID, push token, preferences; bundle refresh with ETag; restore/save of the offline copy, `content_updated` handling, `liveRefreshInterval` (API-007); `track(_:detail:)` and `UsageReporter` (API-005); actors `EventStore` (saved bundle on disk) and `ImageStore` (image/flyer cache) + `ImageMemoryCache` |
 | `APIClient.swift` | Stateless, `Sendable` v2 client; async/await; 401 → re-attest → retry once |
 | `Models.swift` | v2 models (`Event`, `Location`, `ScheduleItem`, `AppNotification`, `DisplayConfig`, `EventBundle`, request bodies, `PushPayload`) with lenient decoding; usage types (`UsageMetric`, `UsageEntry`, `UsageRequest`, pure `UsageAggregator`); `SavedEvent` (the on-disk format of the offline copy) |
-| `DisplayLogic.swift` | Pure, unit-tested logic: schedule grouping (timeline/by day/by location/now-next), location grouping, search, map clustering & framing, fold-avoiding insets |
+| `DisplayLogic.swift` | Pure, unit-tested logic: schedule grouping (timeline/by day/by location/now-next), location grouping, per-tab list filtering, map clustering & framing, fold-avoiding insets |
+| `EventSearch.swift` | Pure, unit-tested local search across the event (`EventSearch`, `EventSearchIndex`; same rules and test cases as Android): normalising, prefix/substring/typo matching, time words in the event's zone, ranking, inline info; `SearchTarget` (jump target / entity reference), `EventAssistantAnswer` |
+| `EventSearchView.swift` | The search tab (`Tab(role: .search)`): results, suggestions, "Ask" (app only), result row, destinations pushed on the search stack, `EventInfoView`; `onScreenEntity` / `onScreenEntities` (Siri on-screen awareness, no-op in the App Clip) |
+| `EventEntities.swift` | **App only.** App Intents entities (`ScheduleItemEntity`, `LocationEntity`, `NotificationEntity`, `EventEntity`; `IndexedEntity`) with string queries backed by `EventSearch`; `EventEntityIndex` (Core Spotlight re-index per applied bundle, removed on leave); `IntentBridge` (intents → `AppState`) |
+| `EventIntents.swift` | **App only.** Open intents, answering intents with dialog + snippet (now/next, when is, where is, latest updates, ask), search intent, `AttndShortcuts` (App Shortcuts phrases) |
+| `EventAssistant.swift` | **App only.** Foundation Models: `LanguageModelSession` with tools over the local bundle (search, now/next, location details, latest updates), structured reply citing item ids |
 | `Helpers.swift` | ISO 8601 parsing, event-time-zone formatting, hex colours, deep-link/QR parsing, `SupportInfo` (support code, copyable support text, device model), live-update rules (`LiveRefreshPolicy`, `ContentUpdatePolicy`, `RefreshProblem`, `LastUpdatedText`), `MediaCache` (image cache naming, prefetch set, pruning, MIME sniffing), `ScreenshotMode` (App Store screenshots, see Store listing) |
 | `AttestationManager.swift` | Apple App Attest key generation, attestation, and JWT token caching |
 | `KeychainHelper.swift` | Keychain read/write wrapper |
 | `LocationPermissionManager.swift` | One-shot async location request |
-| `ContentView.swift` | `AppRootView` (launch vs. event) and the server-driven `TabView`; refresh triggers (activation, fallback poll at `liveRefreshInterval`); floating demo / ended / offline badges; accent tint |
+| `ContentView.swift` | `AppRootView` (launch vs. event) and the server-driven `TabView` (event tabs, Options, then the search tab; tab bar minimizes on scroll); refresh triggers (activation, fallback poll at `liveRefreshInterval`); floating Liquid Glass demo / ended / offline badges; accent tint |
 | `LaunchScreen.swift` | Nearby events, system search for a code/exact name, QR scanner |
 | `MapArrangement.swift` | Map tab: map + secondary pane via `ArrangementView` on regular width |
 | `MapView.swift` | Map with clustering, fit-all, category chips, fold-aware overlays |
 | `FoldableLayout.swift` | Wrappers for foldable-era APIs (`reservedRegions`, pinned toolbar placement) |
 | `LocationsView.swift` | Locations tab (`NavigationSplitView`), cards/list/grouped styles, detail view; `CachedImage` (AsyncImage replacement: memory → disk → network) and `ImageDecoding` |
 | `ScheduleView.swift` | Schedule tab (`NavigationSplitView`), styles, filter menu, item detail |
-| `NotificationsView.swift` | Organizer updates from the bundle |
+| `NotificationsView.swift` | Organizer updates from the bundle; a jump scrolls to one and highlights it briefly |
 | `FlyerView.swift` | Event flyer (image/PDF) from `flyer_url`, loaded from the image cache when present |
 | `QRScannerView.swift` | `DataScannerViewController` sheet; pauses/restarts across scene and size changes |
 | `SettingsView.swift` | Options tab: internal-test-build warning, event header (logo), location dot, notifications, About & support, leave event |
@@ -77,18 +84,19 @@ Join event
 ├── POST events/<id>/join/ {device_id, platform: "ios", push_token, app_version}
 └── GET events/<id>/bundle/ (If-None-Match, X-Device-Id)
 │
-ContentView (tabs and default tab from bundle.display; Options always last)
-├── Map / Locations / Schedule / Flyer / Updates
+ContentView (tabs and default tab from bundle.display; then Options, then the search tab)
+├── Map / Locations / Schedule / Flyer / Updates / Options / Search (local, all content)
 ├── Bundle refetched on: foreground, pull-to-refresh, a content_updated push with a newer
 │   content_version (random 0–10 s delay; foreground or background), notification pushes,
 │   and a fallback poll while active: 60 s without a push token (always in the App Clip),
 │   5 min with one, 15 s after a failed refresh (304 when unchanged)
-├── Every applied bundle → saved to disk + images prefetched; a 404 → event forgotten
+├── Every applied bundle → saved to disk + images prefetched + search index rebuilt +
+│   Spotlight entities re-indexed (app only); a 404 → event forgotten
 └── POST events/<id>/usage/ (anonymous counts): every ~60 s with pending data, on background
 │
 Leave event (or switch)
 ├── Pending usage counts flushed first
-├── Saved copy and cached images deleted
+├── Saved copy, cached images and Spotlight entities deleted
 └── POST events/<id>/leave/ {device_id}
 ```
 
@@ -96,7 +104,7 @@ Leave event (or switch)
 
 - Anonymous counts only: `POST events/<id>/usage/` with `{"platform": "ios", "events": [{name, detail?, count, at}]}`. **Never** a device ID, any identifier, or search text.
 - Call sites use `appState.track(.metric, detail:)` / `track(.metric, id:)`; it is a no-op outside an event. `UsageReporter` (main actor, in `AppState.swift`) aggregates in a pure `UsageAggregator` (`Models.swift`) keyed by (event, name, detail, UTC 5-minute bucket; `at` = start of the bucket, e.g. `2026-11-14T16:05:00Z`) and flushes at most every 60 s, when the scene goes to the background (`AppRootView`) and before leaving or switching events. A failed batch is retried once on the next flush, then dropped; errors are never shown. Max 200 entries per request.
-- Instrumented: `app_open` (silent rejoin at launch; scene becomes active in `ContentView`), `tab_view` (`selectedTab` didSet; the opening tab when the first bundle is applied), `location_view` / `schedule_item_view` (`.task(id:)` on `LocationDetailView` / `ScheduleItemDetailView`, so every route counts), `notification_open` (`handlePush(opened: true)`), `search` (`SearchableIf`: on submit, or once a non-empty query settles for 1.5 s), `refresh` (`AppState.pullToRefresh()` from every `.refreshable` in an event).
+- Instrumented: `app_open` (silent rejoin at launch; scene becomes active in `ContentView`), `tab_view` (`selectedTab` didSet; the opening tab when the first bundle is applied), `location_view` / `schedule_item_view` (`.task(id:)` on `LocationDetailView` / `ScheduleItemDetailView`, so every route counts), `notification_open` (`handlePush(opened: true)`), `search` (`SearchUsageCounting`, used by `SearchableIf` and the search tab: on submit, or once a non-empty query settles for 1.5 s; no detail, never the text), no `tab_view` for the search tab (`MainTab.search.usageDetail` is nil: the server accepts only the event tabs and `options`), `refresh` (`AppState.pullToRefresh()` from every `.refreshable` in an event).
 
 ## Support info (API-004)
 
@@ -115,6 +123,23 @@ Leave event (or switch)
 - Live updates (API-007): silent `content_updated` pushes drive them; `ContentView` adds a fallback `refreshBundle(silent: true)` poll at `AppState.liveRefreshInterval` (`LiveRefreshPolicy`: 60 s without a push token — not registered, registration failed, or the App Clip — 5 min safety poll with one, 15 s while the last refresh failed). No `isLoading` spinners for polls/pushes. Lives in shared code so the App Clip gets it too.
 - Offline copy (API-007): every applied bundle is saved as one `SavedEvent` (raw bundle JSON + ETag + last refresh, atomic write) in `Application Support/attnd-event/event.json` (`EventStore`, excluded from backup) and restored at launch before any network, so the event opens offline. Network/server errors never clear it; only a 404 from the bundle (or lookup), leaving or switching events does (with the images). The App Clip uses the same code (the system may purge its storage).
 - Image cache (API-007): `ImageStore` keeps location images, the logo(s) and the flyer (image or PDF) in `Application Support/attnd-images/<sha256(url)>.<ext>` — Application Support rather than Caches because Caches may be purged exactly when the attendee is offline at the venue; excluded from backup. After every applied bundle (and on restore) it prefetches every referenced URL (4 at a time; files older than 24 h are re-downloaded, keeping the old one on failure), then deletes files the bundle no longer references; ≤ 15 MB per file, 300 MB total (largest referenced files dropped first). Views use `CachedImage` (memory → disk → network), never `AsyncImage`; `FlyerView` loads the cached file into its `WKWebView` with a sniffed MIME type.
+
+## Search + Siri
+
+Everything here is local: it reads the bundle already on the device, works offline, and sends no query anywhere (no server or API change).
+
+- **Search tab** (`Tab(role: .search)`, last in the tab bar, `EventSearchView.swift`): one search across schedule items, locations, organizer updates and the event, reachable from every tab and independent of `display.enable_search` (which only controls the per-tab fields). Logic in `EventSearch.swift` (same spec and test cases as Android, `AttndTests/EventSearchTests.swift`): fold case/diacritics, punctuation/`&`/`-` → spaces; every token must match (exact > prefix > substring > typo at edit distance 1 for 5+ characters); field weights name 3 / tags, location, category, snippet, address, code 2 / descriptions, bodies 1; time words in the **event's** zone (`now`, `next`/`up next`/`soon` = within 2 h, `today`, `tonight` ≥ 17:00, `tomorrow`, weekdays, `3pm`/`3 pm`/`3:30`/`15:00`/`noon` = in progress at that time on an event day or starting within 30 min) filter schedule items, and a query of only time words lists schedule items only; now +8, next +4, ended −1000 (last); ties: schedule, location, update, event, then title. Empty query → suggestions (Happening now, Up next, categories). Rows: kind icon, title with matches in bold, one line of inline info ("Sat 7:30 – 8:30 PM · Main Stage" + Now/Next/Ended; category · snippet; time sent · body; dates · address).
+- **Jumps**: a result pushes its detail on the search tab's stack (`AppState.searchPath`), so Back returns to the results and hidden tabs work. Siri/Spotlight use `AppState.navigate(to:)`: the item's own tab when visible (`focusRequest`, consumed by `LocationsTab` / `ScheduleTab` selection, `NotificationsView` scroll + 2 s highlight; the event opens Options), otherwise the search stack. Location details have **Show on Map** (toolbar) when the Map tab is visible.
+- **App Intents** (app target only): entities `ScheduleItemEntity`, `LocationEntity`, `NotificationEntity`, `EventEntity` (`IndexedEntity`, `EntityStringQuery` backed by `EventSearch`, retried with the question's keywords); `EventEntityIndex` deletes and re-indexes them in Core Spotlight after every applied bundle and deletes them on leave/switch/404 (not in screenshot mode), then calls `AttndShortcuts.updateAppShortcutParameters()`. Open intents (`OpenIntent`, `supportedModes = .foreground`; Spotlight uses them) navigate via `IntentBridge` → `AppState`; `IntentBridge.appState` is set in `AppDelegate.didFinishLaunching` and the saved event is restored first when Siri launched the app in the background. Answering intents run in the background (`supportedModes = .background`) and return dialog + snippet (`EventResultsSnippet` reuses `SearchResultRow`): `WhatsOnNowIntent`, `WhenIsIntent`, `WhereIsIntent`, `LatestUpdatesIntent`, `AskEventIntent`; plus `SearchEventIntent` (opens the search tab). Phrases in `AttndShortcuts` (every phrase contains `\(.applicationName)`; entity parameters such as `\(\.$item)` resolve from the suggested entities).
+- **On-screen awareness**: `.onScreenEntity(_:)` (→ `appEntityIdentifier`) on the location / schedule item / event details, search results and update rows; `.onScreenEntities(forSelectionType:)` on the Locations and Schedule lists. Both are no-ops in the App Clip.
+- **Ask about this event** (Foundation Models, `EventAssistant.swift`, app only): offered in the search tab for question-like queries (`EventSearch.looksLikeQuestion`, or 4+ words) when `SystemLanguageModel.default.isAvailable` (never in screenshot mode), and by `AskEventIntent`. A `LanguageModelSession` with four tools over the local bundle (`searchEvent`, `whatsOn`, `locationDetails`, `latestUpdates`); each tool line starts with an id (`[s12]`, `[l3]`, `[n5]`, `[e7]`, `SearchTarget.reference`), the `@Generable` reply lists the ids it used, and the answer shows those items as tappable rows (falling back to what the tools returned). iOS 27 adds `toolCallingMode = .required` (behind `IOS27_SDK` + `#available(iOS 27.0, *)`). Without the model, or when it fails, plain results are shown — for a question that matches nothing as typed, the results for its keywords (`EventSearch.keywords(fromQuestion:)`).
+
+## Liquid Glass
+
+- Glass belongs to the controls/navigation layer floating over content, never to content itself: system bars, the search tab and sheets get it automatically (Xcode 27 builds can't opt out; don't add `UIDesignRequiresCompatibility`, opaque `.background(.bar)` or materials behind bars).
+- Floating overlays use `glassEffect`: status badges (`.regular`, capsule, in one `GlassEffectContainer`, not interactive so touches pass through), map buttons and the selected-location card (`.regular.interactive()`), map category chips (`.glass` / selected `.glassProminent` in a `GlassEffectContainer`), the update banner card, the QR hint and the "Joining…" card. Category chips inside the Locations list (content) are `.bordered` / `.borderedProminent`.
+- Prominent actions use `.glassProminent` (Update, Get Walking Directions). The tab bar minimizes on scroll down (`tabBarMinimizeBehavior(.onScrollDown)`); the search tab sits apart at the trailing end. Toolbars have at most one item per side today, so no `ToolbarSpacer` is needed; add `ToolbarSpacer(.fixed)` between unrelated groups when that changes.
+- Hero images use `.backgroundExtensionEffect()`. Keep the accent tint on the `TabView` (glass prominent styles pick it up) and every Duo rule above.
 
 ## Display Config (`bundle.display`)
 
@@ -155,7 +180,7 @@ Follow Apple's "Preparing your app for iPhone Duo":
 
 ## App Clip
 
-`AttndAppClip` compiles the same sources (see its Sources build phase) with its own entry point, `AttndAppClipApp.swift`, which shows the shared `AppRootView`. It has no app delegate and doesn't register for pushes. New shared `.swift` files in `Attnd/` must be added to both the `Attnd` and `AttndAppClip` targets (the `Attnd` group is not file-system synchronized).
+`AttndAppClip` compiles the same sources (see its Sources build phase) with its own entry point, `AttndAppClipApp.swift`, which shows the shared `AppRootView`. It has no app delegate and doesn't register for pushes. New shared `.swift` files in `Attnd/` must be added to both the `Attnd` and `AttndAppClip` targets (the `Attnd` group is not file-system synchronized). App Intents, Spotlight indexing and Foundation Models stay out of the clip: `EventEntities.swift`, `EventIntents.swift` and `EventAssistant.swift` are in the `Attnd` target only, and shared code that touches them is wrapped in `#if !APP_CLIP` (the clip target defines `APP_CLIP`). The clip still has the search tab (plain results, no Ask).
 
 ## API Key Configuration
 
@@ -184,11 +209,11 @@ Open `Attnd.xcodeproj` in the latest Xcode. For simulator builds, create `Config
 
 ## Running Tests
 
-In Xcode: **Product → Test** (`⌘U`), or `./run_tests.command`. Unit tests (`ModelDecodingTests`, `DisplayLogicTests`, `BusinessLogicTests`) need no network.
+In Xcode: **Product → Test** (`⌘U`), or `./run_tests.command`. Unit tests (`ModelDecodingTests`, `DisplayLogicTests`, `BusinessLogicTests`, `EventSearchTests`) need no network.
 
 **Live integration tests** (`AttndTests/APIClientIntegrationTests.swift`) run the app's real `APIClient` against a server's **DEMO** event (attnd-web `load_demo_event`): app-status, lookup (any case, 404, missing/wrong key → 401), bundle ETag/304/stale ETag/404, join/leave twice, devices (token omitted, never `""`), usage (invalid entries dropped with 200, empty batch), retired `/api/v9/` → 410 `update_required`, and full-bundle decoding against the demo facts (18 locations, 51 items, 4–6 notifications (2 are scheduled) …). They build their own client with `APIClient(serverHost:apiKey:apiVersion:attest:)` (static key, no App Attest) and are **skipped** unless the test process has `ATTND_IT_SERVER` (host) and `ATTND_IT_KEY`. xcodebuild forwards only `TEST_RUNNER_`-prefixed variables to tests (prefix stripped), so:
 ```bash
-ATTND_IT_SERVER=attnd-dev-7ab893f37020.herokuapp.com ATTND_IT_KEY=<dev key> bash scripts/ci/test.sh integration
+ATTND_IT_SERVER=dev.attnd.app ATTND_IT_KEY=<dev key> bash scripts/ci/test.sh integration
 # or: TEST_RUNNER_ATTND_IT_SERVER=… TEST_RUNNER_ATTND_IT_KEY=… xcodebuild test … -only-testing:AttndTests/APIClientIntegrationTests
 ```
 In Xcode, put them in the scheme's Test environment locally (never commit a key). Device ids are `ci-ios-<run id>-<random>` and every test leaves the event. If the server's demo data changes, attnd-web's test of `load_demo_event` is the source of truth; update the three repos together.
@@ -206,7 +231,7 @@ In Xcode, put them in the scheme's Test environment locally (never commit a key)
 | Push to `develop` | One Mac job: unit tests, then archive with the `dev` environment's `ATTND_SERVER` and upload; a Linux job waits for TestFlight processing (internal testers get every build). In parallel: **Integration · dev** and **Integration · prod** (below). |
 | Push to `main` | The same against `attnd.app`; the Linux job sets the store listing text (`asc.py metadata`) and submits for App Review (`scripts/ci/asc.py release`), released after approval. What's New comes from `store/en-US/release_notes.txt` unless the `WHATS_NEW` repo variable is set. |
 
-- **Integration jobs** (every push to `develop`/`main`, separate Mac jobs, no archive): `scripts/ci/test.sh integration "<label>"` runs only `-only-testing:AttndTests/APIClientIntegrationTests` (the unit runs use `-skip-testing` for it). **Integration · dev**: `ATTND_IT_SERVER=attnd-dev-7ab893f37020.herokuapp.com`, key `secrets.ATTND_API_KEY`. **Integration · prod**: `attnd.app`, key `secrets.ATTND_PROD_CI_KEY` (a CI key production accepts only for the DEMO event); `continue-on-error`, so it warns but never turns the run red while production is behind. Neither gates the upload (`publish` needs only `deliver`). `scripts/ci/test_summary.py` prints passed/failed/skipped, annotates failures and fails the job when everything was skipped (the variables never reached the tests).
+- **Integration jobs** (every push to `develop`/`main`, separate Mac jobs, no archive): `scripts/ci/test.sh integration "<label>"` runs only `-only-testing:AttndTests/APIClientIntegrationTests` (the unit runs use `-skip-testing` for it). **Integration · dev**: `ATTND_IT_SERVER=dev.attnd.app`, key `secrets.ATTND_API_KEY`. **Integration · prod**: `attnd.app`, key `secrets.ATTND_PROD_CI_KEY` (a CI key production accepts only for the DEMO event); `continue-on-error`, so it warns but never turns the run red while production is behind. Neither gates the upload (`publish` needs only `deliver`). `scripts/ci/test_summary.py` prints passed/failed/skipped, annotates failures and fails the job when everything was skipped (the variables never reached the tests).
 - Docs-only commits (`*.md`) don't run; a newer push to `develop` cancels the older run (`main` never cancels). Anything that only waits on Apple runs on Linux (Mac minutes cost ~10×).
 - Version = contents of `VERSION` + `.` + run number (e.g. `2.0.57`); build number = run number. Bump `VERSION` for a new major/minor line.
 - Signing is automatic via the App Store Connect API key (`ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` secrets; the key needs the **Admin** role): Xcode manages the profiles and the upload uses a cloud-managed distribution certificate. The archive step reuses one stored **Apple Development** certificate (`IOS_DEV_CERT_P12_BASE64`, `IOS_DEV_CERT_PASSWORD` secrets, imported into a throwaway keychain by `scripts/ci/archive_upload.sh`); without it every fresh runner mints a new "Created via API" certificate and Apple's limit fills up. Renew yearly (attnd-web `SETUP.md` step 3e).

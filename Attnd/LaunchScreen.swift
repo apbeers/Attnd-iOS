@@ -76,7 +76,7 @@ struct LaunchScreen: View {
                 if isJoining {
                     ProgressView("Joining…")
                         .padding()
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                        .glassEffect(.regular, in: .rect(cornerRadius: 20))
                 } else if isLoadingNearby {
                     ProgressView("Finding nearby events…")
                 }

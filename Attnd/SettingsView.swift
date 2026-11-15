@@ -75,7 +75,7 @@ struct SettingsView: View {
                 if notificationPermissionDenied {
                     Text("Notification permission was denied. Enable it in Settings → Attnd.")
                 } else if !AppState.isAppClip {
-                    Text("Organizer updates, and a reminder 15 minutes before anything you've hearted.")
+                    Text("Organizer updates, and a reminder 15 minutes before anything you've liked.")
                 }
             }
 
@@ -269,7 +269,7 @@ private struct LiveFollowSection: View {
         } header: {
             Text("Lock Screen")
         } footer: {
-            Text("Shows what's on now and next from your plan or your hearts (or the whole schedule) on the Lock Screen and in the Dynamic Island, from 2 hours before your first item.")
+            Text("Shows what's on now and next from your plan or your likes (or the whole schedule) on the Lock Screen and in the Dynamic Island, from 2 hours before your first item.")
         }
         .onAppear { refreshToken += 1 }
         .onChange(of: scenePhase) { _, phase in

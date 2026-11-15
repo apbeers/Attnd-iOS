@@ -150,7 +150,7 @@ enum DeepLink {
         return parts[2]
     }
 
-    /// A scanned QR string: a join URL (any host) or a bare event code.
+    /// A scanned QR string: a join URL or a shared plan link (any host), or a bare event code.
     static func eventCode(fromScanned raw: String) -> String? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
@@ -158,6 +158,10 @@ enum DeepLink {
             let parts = url.pathComponents.filter { $0 != "/" }
             if let joinIndex = parts.firstIndex(of: "join"), parts.indices.contains(joinIndex + 1) {
                 return parts[joinIndex + 1]
+            }
+            // A shared plan's QR code (`/p/<code>/<payload>`, API-015) joins its event.
+            if let shared = SharedPlanLink.parse(url) {
+                return shared.eventCode
             }
             return nil
         }

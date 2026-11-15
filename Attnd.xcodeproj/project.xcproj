@@ -104,6 +104,39 @@
             "Attnd/compile-sources",
             "AttndWidgets/compile-sources",
           ],
+        }, {
+          "path": "PlanWidgetModel.swift",
+          "target-membership": [
+            "Attnd/compile-sources",
+            "AttndWidgets/compile-sources",
+          ],
+        },
+        { "path": "PlanWidgetSync.swift", "target-membership": [ "Attnd/compile-sources" ] },
+        {
+          "kind": "group",
+          "path": "Components",
+          "children": [
+            {
+              "path": "AssistantCards.swift",
+              "target-membership": [
+                "Attnd/compile-sources",
+                "AttndAppClip/compile-sources",
+              ],
+            }, {
+              "path": "AssistantBlocks.swift",
+              "target-membership": [
+                "Attnd/compile-sources",
+                "AttndAppClip/compile-sources",
+              ],
+            }, {
+              "path": "ShareCard.swift",
+              "target-membership": [
+                "Attnd/compile-sources",
+                "AttndAppClip/compile-sources",
+              ],
+            },
+            { "path": "CalendarCard.swift", "target-membership": [ "Attnd/compile-sources" ] },
+          ],
         },
         { "path": "LiveFollowLogic.swift", "target-membership": [ "Attnd/compile-sources" ] },
         { "path": "LiveFollowController.swift", "target-membership": [ "Attnd/compile-sources" ] },
@@ -267,6 +300,7 @@
           "target": "AttndWidgets",
           "exclusions": [
             "Info.plist",
+            "AttndWidgets.entitlements",
           ],
         },
       ],
@@ -441,7 +475,7 @@
       ],
       "build-settings": {
         "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME": "AccentColor",
-        "CODE_SIGN_ENTITLEMENTS": "",
+        "CODE_SIGN_ENTITLEMENTS": "AttndWidgets/AttndWidgets.entitlements",
         "CODE_SIGN_STYLE": "Automatic",
         "CURRENT_PROJECT_VERSION": "44",
         "GENERATE_INFOPLIST_FILE": "YES",

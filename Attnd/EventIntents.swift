@@ -9,7 +9,7 @@
 //   - Answers without opening the app (dialog + snippet): what's happening now / next, when is
 //     <item>, where is <location>, latest updates, and "ask about the event" (the on-device
 //     model when available, else local search results).
-//   - Hearts: heart / unheart a schedule item or place, and "what have I hearted" (stored on
+//   - Likes (hearts): like / unlike a schedule item or place, and "what have I liked" (stored on
 //     the device per event, counted as API-009 usage like a heart in the app).
 //   - Search in the app, and App Shortcuts with natural phrases (AttndShortcuts).
 
@@ -267,13 +267,13 @@ struct AskEventIntent: AppIntent {
 // MARK: - Hearts
 
 struct HeartScheduleItemIntent: AppIntent {
-    static let title: LocalizedStringResource = "Heart Schedule Item"
+    static let title: LocalizedStringResource = "Like Schedule Item"
     static let supportedModes: IntentModes = .background
 
     @Parameter(title: "Schedule Item", requestValueDialog: "Which part of the schedule?")
     var item: ScheduleItemEntity
 
-    @Parameter(title: "Heart", default: true)
+    @Parameter(title: "Like", default: true)
     var heart: Bool
 
     @MainActor
@@ -283,19 +283,19 @@ struct HeartScheduleItemIntent: AppIntent {
         guard await IntentBridge.setHeart(heart, for: .scheduleItem(item.id)) else {
             return .result(dialog: IntentAnswers.noEvent)
         }
-        let text = heart ? "Hearted \(item.name)." : "Removed the heart from \(item.name)."
+        let text = heart ? "Liked \(item.name)." : "Removed \(item.name) from your likes."
         return .result(dialog: "\(text)")
     }
 }
 
 struct HeartLocationIntent: AppIntent {
-    static let title: LocalizedStringResource = "Heart Location"
+    static let title: LocalizedStringResource = "Like Location"
     static let supportedModes: IntentModes = .background
 
     @Parameter(title: "Location", requestValueDialog: "Which place?")
     var location: LocationEntity
 
-    @Parameter(title: "Heart", default: true)
+    @Parameter(title: "Like", default: true)
     var heart: Bool
 
     @MainActor
@@ -305,14 +305,14 @@ struct HeartLocationIntent: AppIntent {
         guard await IntentBridge.setHeart(heart, for: .location(location.id)) else {
             return .result(dialog: IntentAnswers.noEvent)
         }
-        let text = heart ? "Hearted \(location.name)." : "Removed the heart from \(location.name)."
+        let text = heart ? "Liked \(location.name)." : "Removed \(location.name) from your likes."
         return .result(dialog: "\(text)")
     }
 }
 
-/// "What have I hearted in Attnd": hearted schedule items (by time), then places.
+/// "What have I liked in Attnd": liked (hearted) schedule items (by time), then places.
 struct HeartedItemsIntent: AppIntent {
-    static let title: LocalizedStringResource = "What Have I Hearted"
+    static let title: LocalizedStringResource = "What Have I Liked"
     static let supportedModes: IntentModes = .background
 
     @MainActor
@@ -328,12 +328,12 @@ struct HeartedItemsIntent: AppIntent {
         let index = EventSearchIndex(bundle)
         let rows = targets.compactMap { index.result(for: $0, now: now) }
         guard !rows.isEmpty else {
-            return .result(dialog: "You haven't hearted anything in \(bundle.event.name) yet.", view: EmptyView())
+            return .result(dialog: "You haven't liked anything in \(bundle.event.name) yet.", view: EmptyView())
         }
         let names = IntentAnswers.list(rows.prefix(3).map(\.title))
         let more = rows.count > 3 ? " and \(rows.count - 3) more" : ""
         return .result(
-            dialog: "You've hearted \(names)\(more).",
+            dialog: "You've liked \(names)\(more).",
             view: EventResultsSnippet(title: bundle.event.name, results: Array(rows.prefix(8)))
         )
     }
@@ -454,19 +454,19 @@ struct AttndShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: HeartScheduleItemIntent(),
             phrases: [
-                "Heart \(\.$item) in \(.applicationName)",
+                "Like \(\.$item) in \(.applicationName)",
                 "Save \(\.$item) in \(.applicationName)",
             ],
-            shortTitle: "Heart",
+            shortTitle: "Like",
             systemImageName: "heart"
         )
         AppShortcut(
             intent: HeartedItemsIntent(),
             phrases: [
-                "What have I hearted in \(.applicationName)",
-                "Show my hearts in \(.applicationName)",
+                "What have I liked in \(.applicationName)",
+                "Show my likes in \(.applicationName)",
             ],
-            shortTitle: "Hearted",
+            shortTitle: "Liked",
             systemImageName: "heart.fill"
         )
         AppShortcut(

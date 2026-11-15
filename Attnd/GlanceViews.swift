@@ -400,7 +400,7 @@ struct HeartButton: View {
         Button {
             appState.toggleHeart(target)
         } label: {
-            Label(hearted ? "Remove Heart" : "Heart", systemImage: hearted ? "heart.fill" : "heart")
+            Label(hearted ? "Unlike" : "Like", systemImage: hearted ? "heart.fill" : "heart")
                 .labelStyle(.iconOnly)
                 .font(font)
                 .foregroundStyle(hearted ? AnyShapeStyle(Color.pink) : AnyShapeStyle(.secondary))
@@ -409,7 +409,7 @@ struct HeartButton: View {
         }
         .buttonStyle(.borderless)
         .sensoryFeedback(.selection, trigger: hearted)
-        .accessibilityValue(hearted ? "Hearted" : "")
+        .accessibilityValue(hearted ? "Liked" : "")
     }
 }
 
@@ -424,7 +424,7 @@ struct HeartToolbarItem: ToolbarContent {
             Button {
                 appState.toggleHeart(target)
             } label: {
-                Label(hearted ? "Hearted" : "Heart", systemImage: hearted ? "heart.fill" : "heart")
+                Label(hearted ? "Liked" : "Like", systemImage: hearted ? "heart.fill" : "heart")
             }
             .tint(hearted ? Color.pink : nil)
             .sensoryFeedback(.selection, trigger: hearted)
@@ -707,7 +707,7 @@ struct ScheduleItemPeek: View {
 
 // MARK: - Hearted list (search)
 
-/// Pushed on the search sheet's stack by the "Hearted" suggestion.
+/// Pushed on the search sheet's stack by the "Liked" suggestion.
 struct HeartedListRoute: Hashable {}
 
 struct HeartedListView: View {
@@ -727,14 +727,14 @@ struct HeartedListView: View {
             .overlay {
                 if rows.isEmpty {
                     ContentUnavailableView(
-                        "Nothing Hearted",
+                        "Nothing Liked",
                         systemImage: "heart",
-                        description: Text("Tap the heart on a schedule item or place to keep it here.")
+                        description: Text("Tap the heart on a schedule item or place to like it and keep it here.")
                     )
                 }
             }
         }
-        .navigationTitle("Hearted")
+        .navigationTitle("Liked")
         .navigationBarTitleDisplayMode(.inline)
         .usesUserLocation(heading: true)
     }

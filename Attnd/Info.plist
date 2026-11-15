@@ -43,6 +43,8 @@
 	<true/>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
+	<key>NSCalendarsWriteOnlyAccessUsageDescription</key>
+	<string>Attnd adds the items of your plan to your calendar, with their times and places. It can't see anything else in your calendar.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Scan an event QR code to join instantly</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>

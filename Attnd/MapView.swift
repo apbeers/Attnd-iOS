@@ -33,7 +33,7 @@ struct MapView: View {
     @State private var selectedLocationId: Int?
     @State private var navigateToLocation: Location?
     @State private var selectedCategory: String?
-    /// The "Hearted" chip: only hearted pins.
+    /// The "Liked" chip: only liked (hearted) pins.
     @State private var heartedOnly = false
     /// Refreshed every 30 s for the live dots, "Next 7:30" and the now-playing strip.
     @State private var now = Date.now

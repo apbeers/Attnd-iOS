@@ -67,7 +67,7 @@ struct ScheduleView: View {
     @State private var searchText = ""
     @State private var selectedLocationId: Int?
     @State private var showEnded = false
-    /// The "Hearted" chip: only hearted items.
+    /// The "Liked" chip: only liked (hearted) items.
     @State private var heartedOnly = false
 
     private var resolvedStyle: ScheduleStyle { style ?? appState.display.scheduleStyle }
@@ -263,9 +263,9 @@ struct ScheduleView: View {
                 ProgressView()
             } else if heartedOnly {
                 ContentUnavailableView(
-                    "Nothing Hearted",
+                    "Nothing Liked",
                     systemImage: "heart",
-                    description: Text("Tap the heart on a schedule item to keep it here.")
+                    description: Text("Tap the heart on a schedule item to like it and keep it here.")
                 )
             } else if hidesEnded, !appState.schedule.isEmpty {
                 ContentUnavailableView(
@@ -391,7 +391,7 @@ private struct ScheduleItemPeekModifier: ViewModifier {
             Button {
                 appState.toggleHeart(target)
             } label: {
-                Label(hearted ? "Remove Heart" : "Heart", systemImage: hearted ? "heart.slash" : "heart")
+                Label(hearted ? "Unlike" : "Like", systemImage: hearted ? "heart.slash" : "heart")
             }
             if let location, location.coordinate != nil, appState.tabs.contains(.map) {
                 Button {
@@ -493,6 +493,21 @@ struct ScheduleItemDetailView: View {
                 } else {
                     Label(item.locationName ?? ScheduleGrouping.generalTitle, systemImage: "mappin.slash")
                         .foregroundStyle(.secondary)
+                }
+            }
+
+            Section {
+                #if !APP_CLIP
+                // The system's event editor (no calendar permission needed; CalendarCard.swift).
+                AddToCalendarButton(item: item)
+                #endif
+                if !ScreenshotMode.isActive {
+                    // Assistant spec §8: for now the search sheet with the item's name.
+                    Button {
+                        appState.askAbout(.scheduleItem(item.id))
+                    } label: {
+                        Label("Ask About This", systemImage: "sparkles")
+                    }
                 }
             }
         }

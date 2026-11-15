@@ -54,7 +54,7 @@ struct EventSearchSheet: View {
                 .navigationDestination(for: Location.self) { location in
                     LocationDetailView(location: location)
                 }
-                // The "Hearted" suggestion.
+                // The "Liked" suggestion.
                 .navigationDestination(for: HeartedListRoute.self) { _ in
                     HeartedListView()
                 }
@@ -208,7 +208,7 @@ struct EventSearchView: View {
             Section {
                 if appState.hasHearts {
                     NavigationLink(value: HeartedListRoute()) {
-                        Label("Hearted", systemImage: "heart.fill")
+                        Label("Liked", systemImage: "heart.fill")
                     }
                 }
                 ForEach(items) { suggestion in
@@ -304,7 +304,7 @@ struct EventSearchView: View {
             if case .answered(let asked, _) = assistant, asked == query {
                 Text("Answered on this device from the event's info. Tap an item to check the details.")
             } else if case .planned(let asked, _, _) = assistant, asked == query {
-                Text("Planned on this device from the schedule, your hearts and walking times.")
+                Text("Planned on this device from the schedule, your likes and walking times.")
             }
         }
     }

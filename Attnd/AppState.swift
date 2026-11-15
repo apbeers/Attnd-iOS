@@ -163,6 +163,11 @@ final class AppState {
     @ObservationIgnored private var personalEventId: Int?
 
     #if !APP_CLIP
+    /// A shared plan link (`/p/<code>/<payload>`, API-015) opened for the joined event, waiting
+    /// for the assistant to show it read-only ("Use this plan" / "Merge with mine"). Cleared
+    /// when the event is left or switched; the assistant clears it once shown.
+    var pendingSharedPlan: PendingSharedPlan?
+
     /// "My plan" (spec §6): the current event's plan and the planner's progress (PlanStore.swift;
     /// the full app only, offered while Apple Intelligence's on-device model is available).
     let planner = PlanStore()
@@ -625,6 +630,9 @@ final class AppState {
         searchIndex = nil
         autoAskQuery = nil
         pendingTour = false
+        #if !APP_CLIP
+        pendingSharedPlan = nil
+        #endif
         loadPersonalState(for: nil)
         #if !APP_CLIP
         EventEntityIndex.shared.update(with: nil)
@@ -814,6 +822,23 @@ final class AppState {
         #endif
     }
 
+    /// "Ask About This" on a location, schedule item or update detail (assistant spec §8). For
+    /// now it opens the search sheet with the item's name; the assistant phase repoints it to
+    /// the assistant with the item as context ("Tell me about X").
+    func askAbout(_ target: SearchTarget) {
+        guard currentEvent != nil, !ScreenshotMode.isActive else { return }
+        let name: String?
+        switch target {
+        case .location(let id):     name = location(id: id)?.name
+        case .scheduleItem(let id): name = schedule.first { $0.id == id }?.name
+        case .notification(let id): name = notifications.first { $0.id == id }?.title
+        case .event:                name = currentEvent?.name
+        }
+        guard let name, !name.isEmpty else { return }
+        AppLog.debug(.ui, "ui.action", "Ask about this", ["name": "ask_about", "id": .string(target.reference)])
+        showSearch(name)
+    }
+
     /// The floating search button: opens the search sheet on its results (the last query
     /// stays, like the old search tab), with the field focused.
     func openSearch() {
@@ -838,9 +863,22 @@ final class AppState {
 
     // MARK: - Deep links
 
-    /// Handles https://attnd.app/join/<event_code>/ (Universal Links, App Clip invocations).
-    /// On failure the user stays where they are.
+    /// Handles https://attnd.app/join/<event_code>/ and shared plan links
+    /// https://attnd.app/p/<event_code>/<payload> (API-015; Universal Links, App Clip
+    /// invocations). A shared plan link joins its event, then (full app only, readable payload)
+    /// keeps the plan in `pendingSharedPlan` for the assistant. On failure the user stays where
+    /// they are.
     func handleDeepLink(_ url: URL) async {
+        if let shared = SharedPlanLink.parse(url) {
+            AppLog.info(.lifecycle, "lifecycle.deep_link", "Opened by a shared plan link", ["kind": "open", "target": "/p/{code}/{payload}/"])
+            guard await join(code: shared.eventCode, via: "link") else { return }
+            #if !APP_CLIP
+            if let payload = shared.payload {
+                pendingSharedPlan = PendingSharedPlan(eventCode: shared.eventCode, payload: payload, receivedAt: .now)
+            }
+            #endif
+            return
+        }
         guard let code = DeepLink.eventCode(from: url) else { return }
         AppLog.info(.lifecycle, "lifecycle.deep_link", "Opened by a join link", ["kind": "join", "target": "/join/{id}/"])
         await join(code: code, via: "link")

@@ -1,8 +1,9 @@
 // AttndWidgetsBundle.swift
 // AttndWidgets (widget extension)
 //
-// The extension's entry point. It holds only the event's Live Activity ("Follow on Lock
-// Screen", EventLiveActivity.swift); Home Screen widgets may join it later.
+// The extension's entry point: the event's Live Activity ("Follow on Lock Screen",
+// EventLiveActivity.swift) and the "Now / Next in my plan" Home Screen and Lock Screen widget
+// (PlanWidget.swift, reading the App Group file the app writes).
 
 import SwiftUI
 import WidgetKit
@@ -11,5 +12,6 @@ import WidgetKit
 struct AttndWidgetsBundle: WidgetBundle {
     var body: some Widget {
         EventLiveActivity()
+        PlanWidget()
     }
 }

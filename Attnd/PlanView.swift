@@ -42,7 +42,7 @@ struct MyPlanContent: View {
             }
             Section {
             } footer: {
-                Text("Planned on your iPhone. Hearted items are always included when they fit.")
+                Text("Planned on your iPhone. Liked items are always included when they fit.")
             }
         } else {
             Section {
@@ -124,7 +124,7 @@ private struct PlanRequestCard: View {
                 Text("Planning uses Apple Intelligence on your iPhone, which isn't available right now.")
                     .foregroundStyle(.secondary)
             } else {
-                Text("Say what you'd like and your iPhone builds a plan from the schedule, with your hearts and walking times. Nothing leaves your iPhone.")
+                Text("Say what you'd like and your iPhone builds a plan from the schedule, with your likes and walking times. Nothing leaves your iPhone.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 TextField("Plan my afternoon around live music", text: $request)
@@ -305,11 +305,11 @@ private struct PlanItemRow: View {
         .accessibilityLabel("Swap \(item?.name ?? "item")")
     }
 
-    /// "7:00 – 8:30 PM · Main Stage · hearted".
+    /// "7:00 – 8:30 PM · Main Stage · liked".
     private func subtitle(_ alternative: ScheduleItem, timeZone: TimeZone) -> String {
         var parts = [EventTimeFormat.range(start: alternative.startTime, end: alternative.endTime, in: timeZone, now: .now)]
         if let place = appState.location(id: alternative.locationId)?.name { parts.append(place) }
-        if entry.orInstead.contains(alternative.id) { parts.append("hearted") }
+        if entry.orInstead.contains(alternative.id) { parts.append("liked") }
         return parts.joined(separator: " · ")
     }
 }

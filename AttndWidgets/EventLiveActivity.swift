@@ -183,7 +183,7 @@ private struct ActivityButtons: View {
         HStack(spacing: 8) {
             if let target = ActivityStyle.heartTarget(state), let id = target.id {
                 Button(intent: HeartActivityItemIntent(eventId: eventId, itemId: id)) {
-                    Label(target.hearted == true ? "Hearted" : "Heart", systemImage: target.hearted == true ? "heart.fill" : "heart")
+                    Label(target.hearted == true ? "Liked" : "Like", systemImage: target.hearted == true ? "heart.fill" : "heart")
                 }
             }
             if let next = state.next, let id = next.id {

@@ -61,7 +61,7 @@ struct LocationsView: View {
     @Environment(AppState.self) private var appState
     @State private var searchText = ""
     @State private var selectedCategory: String?
-    /// The "Hearted" chip: only hearted locations.
+    /// The "Liked" chip: only liked (hearted) locations.
     @State private var heartedOnly = false
 
     private var display: DisplayConfig { appState.display }
@@ -119,9 +119,9 @@ struct LocationsView: View {
                     ContentUnavailableView.search(text: searchText)
                 } else if heartedOnly {
                     ContentUnavailableView(
-                        "No Hearted Places",
+                        "No Liked Places",
                         systemImage: "heart",
-                        description: Text("Tap the heart on a place to keep it here.")
+                        description: Text("Tap the heart on a place to like it and keep it here.")
                     )
                 } else if appState.isLoading {
                     ProgressView()
@@ -175,7 +175,7 @@ private struct LocationPeekModifier: ViewModifier {
             Button {
                 appState.toggleHeart(target)
             } label: {
-                Label(hearted ? "Remove Heart" : "Heart", systemImage: hearted ? "heart.slash" : "heart")
+                Label(hearted ? "Unlike" : "Like", systemImage: hearted ? "heart.slash" : "heart")
             }
             if location.coordinate != nil, appState.tabs.contains(.map) {
                 Button {
@@ -299,7 +299,7 @@ struct CategoryChips: View {
     @Binding var selection: String?
     /// True over the map; false inside the Locations list.
     var floating = false
-    /// The "Hearted" toggle chip, first in the row (nil: not shown).
+    /// The "Liked" toggle chip, first in the row (nil: not shown).
     var heartedOnly: Binding<Bool>? = nil
     /// The Schedule tab's "My plan" toggle chip (spec §6), before Hearted (nil: not shown).
     var myPlan: Binding<Bool>? = nil
@@ -335,7 +335,7 @@ struct CategoryChips: View {
             }
             if let heartedOnly {
                 let isOn = heartedOnly.wrappedValue
-                chip("Hearted", systemImage: isOn ? "heart.fill" : "heart", isSelected: isOn) {
+                chip("Liked", systemImage: isOn ? "heart.fill" : "heart", isSelected: isOn) {
                     heartedOnly.wrappedValue.toggle()
                 }
             }
@@ -656,14 +656,26 @@ struct LocationDetailView: View {
 
                     LocationGlanceLine(location: location, now: now)
 
-                    if let coordinate = location.coordinate {
+                    if location.coordinate != nil {
                         Button {
-                            openWalkingDirections(to: coordinate)
+                            WalkingDirections.open(to: location)
                         } label: {
                             Label("Get Walking Directions", systemImage: "figure.walk")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.glassProminent)
+                        .controlSize(.large)
+                    }
+
+                    if !ScreenshotMode.isActive {
+                        // Assistant spec §8: for now the search sheet with the place's name.
+                        Button {
+                            appState.askAbout(.location(location.id))
+                        } label: {
+                            Label("Ask About This", systemImage: "sparkles")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
                         .controlSize(.large)
                     }
 
@@ -696,17 +708,6 @@ struct LocationDetailView: View {
                 .padding(.bottom, 24)
             }
         }
-    }
-
-    private func openWalkingDirections(to coordinate: Coordinate) {
-        let mapItem = MKMapItem(
-            location: CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude),
-            address: nil
-        )
-        mapItem.name = location.name
-        mapItem.openInMaps(launchOptions: [
-            MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeWalking
-        ])
     }
 }
 

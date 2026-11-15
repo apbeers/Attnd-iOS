@@ -55,8 +55,9 @@ print(best[1] if best else "")
 ')
   [ -n "$device" ] || { echo "No iPhone simulator available" >&2; exit 1; }
   echo "$device" > "$device_file"
-  # Cold-booting a simulator on a fresh runner takes minutes. Boot it now, in the background, while we
-  # build for a generic simulator destination (which, unlike `xcodebuild test`, doesn't wait for it).
+  # Cold-booting a simulator on a fresh runner takes minutes and most of the CPU. Start it first: xcodebuild
+  # waits for the boot before it plans the build, then compiles at full speed (~1 min). Booting after the
+  # build was planned (Nov 2026 experiment) made the compile 6+ min and the whole job 5 min slower.
   xcrun simctl boot "$device" > /dev/null 2>&1 &
   # No index store (CI never uses it); only this Mac's architecture; no signing for the simulator.
   settings=(CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO ONLY_ACTIVE_ARCH=YES ARCHS="$(uname -m)")

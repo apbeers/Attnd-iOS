@@ -442,9 +442,9 @@ private struct ConfirmBlock: View {
     var body: some View {
         let state: ConfirmState = answer.map { $0 ? .confirmed : .declined } ?? .pending
         ConfirmChip(prompt: prompt, state: state) {
-            appState.assistant.answer(turnId: turnId, index: index, yes: true)
+            appState.assistant.answerConfirm(turnId: turnId, index: index, yes: true)
         } onCancel: {
-            appState.assistant.answer(turnId: turnId, index: index, yes: false)
+            appState.assistant.answerConfirm(turnId: turnId, index: index, yes: false)
         }
     }
 }
@@ -552,7 +552,7 @@ private struct PlanEntryList: View {
     }
 }
 
-private struct LegRow: View {
+struct LegRow: View {
     let leg: RouteLeg
     let text: String
 
@@ -560,7 +560,7 @@ private struct LegRow: View {
 
     var body: some View {
         Button {
-            if appState.tabs.contains(.map) { appState.showOnMap(locationId: leg.to.locationId) }
+            if appState.shows(.map) { appState.showOnMap(locationId: leg.to.locationId) }
         } label: {
             Label(text, systemImage: "figure.walk")
                 .font(.caption)
@@ -572,10 +572,12 @@ private struct LegRow: View {
     }
 }
 
-private struct PlanItemLine: View {
+struct PlanItemLine: View {
     let planned: PlannedItem
     let checked: Bool
     let now: Date
+    /// A proposal's mark (My plan's preview): crossed out, or "Moved".
+    var mark: PreviewMark? = nil
 
     @Environment(AppState.self) private var appState
 
@@ -594,16 +596,19 @@ private struct PlanItemLine: View {
             .accessibilityLabel(checked ? "Checked off" : "Check off")
             .accessibilityValue(item?.name ?? "")
             Button {
-                appState.navigate(to: .scheduleItem(planned.itemId))
+                appState.open(.scheduleItem(planned.itemId))
             } label: {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("\(EventTimeFormat.time(planned.start, in: zone)) · \(item?.name ?? "No longer on the schedule")")
                         .font(.subheadline.weight(.semibold))
-                        .strikethrough(checked)
+                        .strikethrough(checked || mark != nil, color: mark != nil ? .red : nil)
                         .foregroundStyle(planned.end <= now ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
                     Text([appState.location(id: item?.locationId)?.name, planned.reason].compactMap { $0 }.joined(separator: " · "))
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    if let mark {
+                        PreviewMarkLabel(mark: mark)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(.rect)
@@ -616,8 +621,9 @@ private struct PlanItemLine: View {
     }
 }
 
-private struct PlanMealLine: View {
+struct PlanMealLine: View {
     let meal: MealBreak
+    var mark: PreviewMark? = nil
 
     @Environment(AppState.self) private var appState
 
@@ -625,10 +631,28 @@ private struct PlanMealLine: View {
         let zone = appState.timeZone
         let place = appState.location(id: meal.locationId)?.name
         Label {
-            Text("\(EventTimeFormat.time(meal.start, in: zone)) · \(meal.kind.label)" + (place.map { " · \($0) nearby" } ?? ""))
-                .font(.subheadline)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(EventTimeFormat.time(meal.start, in: zone)) · \(meal.kind.label)" + (place.map { " · \($0) nearby" } ?? ""))
+                    .font(.subheadline)
+                    .strikethrough(mark == .removed, color: .red)
+                if let mark {
+                    PreviewMarkLabel(mark: mark)
+                }
+            }
         } icon: {
             Image(systemName: "fork.knife").foregroundStyle(.tint)
         }
+    }
+}
+
+/// "Removed" / "Moved" under a row the shown proposal changes.
+struct PreviewMarkLabel: View {
+    let mark: PreviewMark
+
+    var body: some View {
+        Label(mark == .removed ? "Would be removed" : "Moves to another time",
+              systemImage: mark == .removed ? "minus.circle" : "arrow.right.circle")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(mark == .removed ? Color.red : Color.orange)
     }
 }

@@ -1,9 +1,9 @@
 // EventSearchView.swift
 // Attnd
 //
-// The search sheet of the App Clip and of screenshot mode (the full app's floating button opens
-// the event assistant instead, AssistantView.swift, which reuses this file's result rows and
-// destinations): one
+// The search sheet of the App Clip and of screenshot mode (the full app searches from My plan's
+// input bar, AssistantView.swift, which reuses this file's result rows and destinations; there
+// this sheet only shows items of hidden tabs pushed by `navigate(to:)`): one
 // local search across the joined event — schedule, locations, organizer updates and the
 // event itself (EventSearch). Works offline; the query never leaves the device (only the
 // fact of a search is counted, API-005).
@@ -278,9 +278,9 @@ struct EventSearchView: View {
                         .foregroundStyle(.secondary)
                 }
             case .planned(let asked, let summary, let itemIds) where asked == query:
-                Text("Here's your plan: \(summary). It's in Schedule → My plan.")
+                Text("Here's your plan: \(summary). It's in My plan.")
                     .textSelection(.enabled)
-                if appState.tabs.contains(.schedule) {
+                if appState.tabs.contains(.plan) {
                     Button("Open My Plan", systemImage: "list.bullet.clipboard") {
                         openMyPlan()
                     }
@@ -337,7 +337,7 @@ struct EventSearchView: View {
     }
 
     #if !APP_CLIP
-    /// A plan request: the planner makes and stores the plan (Schedule → My plan); the answer
+    /// A plan request: the planner makes and stores the plan (the My plan tab); the answer
     /// is its summary and items, with "Open My plan".
     private func plan(_ request: String) async {
         assistant = .planning(query: request)

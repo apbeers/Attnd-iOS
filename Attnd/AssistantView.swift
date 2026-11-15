@@ -1,40 +1,30 @@
 // AssistantView.swift
 // Attnd (app target only — not in the App Clip)
 //
-// The assistant screen (assistant spec §8): the floating search button's sheet in the full app
-// (screenshot mode and the App Clip keep the plain search sheet, EventSearchView.swift).
-//
-//   - Top: the pinned plan (collapsible): the next entries with walking legs and the mini map,
-//     "Your plan changed" with the planned items the organizers moved or removed, Undo, Open in
-//     Schedule. Without a plan: the "Make a plan" card with the event's examples (only while
-//     the on-device model is available; nothing otherwise).
-//   - Live hints (spec §6): running late ("Leave now" / swap chips), gap fillers, skipped items,
-//     the day's recap.
-//   - The conversation: the person's turns and the assistant's blocks (AssistantBlockView),
-//     shared plan offers ("Use this plan" / "Merge with mine").
-//   - While typing: live search results (debounced, nothing is sent); Return / send runs the
-//     full turn. Empty: suggestion chips (Happening now, Up next, Liked, categories).
-//   - Bottom: one input bar (focused with the keyboard up on open) with the intent chip
-//     ("Searching…", "Asking…", "Editing plan…"; tap to choose the path).
-//
-// The sheet keeps `AppState.searchPath`, so details pushed by results, Siri and hidden tabs
-// work exactly as in the search sheet.
+// The My plan tab (plan tab spec, Nov 15, 2026): one screen that never turns into a conversation.
+//   - `MyPlanTab`: its own NavigationStack (`AppState.planPath`: details opened from the plan, the
+//     answer card and results), Options in the toolbar.
+//   - `MyPlanScreen`: the timeline (PlanView.swift) scrolling above the bottom area, which sits on
+//     the keyboard: the matches while typing, else the answer card (the last non-edit turn,
+//     ≤ a third of the screen, scrollable inside, swipe down or × to dismiss), the proposal pill
+//     ("−2 items, +1 lunch break" · Apply · ×), the Undo pill (~8 s) and the input bar
+//     ("Change your plan or search…", intent chip Searching… / Asking… / Editing plan…).
+//   - `SearchOverlay`: the same bar over the other tabs (the floating search button,
+//     `floatingSearchButton()` in ContentView.swift): search answers there; a plan edit switches
+//     to My plan with its preview.
+// Screenshot mode and the App Clip have no My plan tab (EventSearchView.swift's sheet instead).
 
 import SwiftUI
 
-// MARK: - Sheet
+// MARK: - Tab
 
-struct AssistantSheet: View {
+struct MyPlanTab: View {
     @Environment(AppState.self) private var appState
-    @Environment(\.dismiss) private var dismiss
-
-    /// Put the keyboard up on open (not when Siri / Spotlight opened the sheet on an item).
-    let focusesInput: Bool
 
     var body: some View {
         @Bindable var state = appState
-        NavigationStack(path: $state.searchPath) {
-            AssistantScreen(focusesInput: focusesInput)
+        NavigationStack(path: $state.planPath) {
+            MyPlanScreen()
                 .navigationDestination(for: SearchTarget.self) { target in
                     SearchDestinationView(target: target)
                 }
@@ -44,97 +34,47 @@ struct AssistantSheet: View {
                 .navigationDestination(for: HeartedListRoute.self) { _ in
                     HeartedListView()
                 }
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Close", systemImage: "xmark", role: .close) {
-                            dismiss()
-                        }
-                    }
-                    ToolbarItem(placement: .primaryAction) {
-                        AssistantMenu()
-                    }
-                }
-        }
-        .presentationDetents([.large])
-    }
-}
-
-private struct AssistantMenu: View {
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        Menu {
-            if appState.planner.hasPlan, appState.tabs.contains(.schedule) {
-                Button("Open My Plan in Schedule", systemImage: "list.bullet.clipboard") {
-                    appState.showMyPlan()
-                }
-            }
-            Button("Clear Conversation", systemImage: "trash", role: .destructive) {
-                appState.assistant.clearConversation()
-            }
-            .disabled(appState.assistant.turns.isEmpty)
-        } label: {
-            Label("More", systemImage: "ellipsis")
         }
     }
 }
 
-// MARK: - Screen
-
-struct AssistantScreen: View {
-    let focusesInput: Bool
-
+struct MyPlanScreen: View {
     @Environment(AppState.self) private var appState
     @FocusState private var inputFocused: Bool
     /// The draft the live results are for (debounced).
     @State private var settledDraft = ""
     @State private var predicted: TurnPath = .search
-    @State private var planExpanded = true
+    @State private var height: CGFloat = 600
 
     private var assistant: AssistantController { appState.assistant }
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 16) {
-                    PinnedPlanSection(expanded: $planExpanded)
-                    LiveHintsSection(hints: assistant.live)
-                    ForEach(assistant.turns) { turn in
-                        TurnView(turn: turn)
-                            .id(turn.id)
-                    }
-                    if assistant.busy == .plan {
-                        WorkingRow(text: "Planning on your iPhone…")
-                    }
-                    typingContent
-                    Color.clear.frame(height: 1).id("bottom")
-                }
+        ScrollView {
+            PlanTimeline()
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
-            }
-            .scrollDismissesKeyboard(.interactively)
-            .background(Color(.systemGroupedBackground))
-            .onChange(of: assistant.serial) {
-                withAnimation { proxy.scrollTo("bottom", anchor: .bottom) }
-            }
-            .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
         }
+        .scrollDismissesKeyboard(.interactively)
+        .background(Color(.systemGroupedBackground))
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            AssistantInputBar(focused: $inputFocused, predicted: predicted) { send() }
+            AssistantBottomArea(
+                focused: $inputFocused,
+                predicted: predicted,
+                settledDraft: settledDraft,
+                maxCardHeight: height / 3,
+                onSend: send
+            )
         }
-        .navigationTitle(assistant.modelAvailable ? "Search & Ask" : "Search")
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+        .navigationTitle("My Plan")
         .navigationBarTitleDisplayMode(.inline)
+        .eventStatusBanners()
+        .optionsToolbarItem()
         // Distances on cards and the live hints (only while already permitted).
         .usesUserLocation(heading: true)
-        .task(id: assistant.draft) {
-            // Live results and the intent chip follow the typing, debounced.
-            try? await Task.sleep(for: .milliseconds(300))
-            guard !Task.isCancelled else { return }
-            settledDraft = assistant.draft
-            predicted = assistant.predict(assistant.draft)
-        }
+        .modifier(AssistantDraftTracking(settledDraft: $settledDraft, predicted: $predicted))
         .task {
-            // Live hints once a minute while the screen is open.
+            // Live hints once a minute while the tab is shown.
             while !Task.isCancelled {
                 assistant.refreshLive()
                 try? await Task.sleep(for: .seconds(60))
@@ -147,31 +87,15 @@ struct AssistantScreen: View {
             assistant.openShared(shared)
         }
         .task {
-            planExpanded = assistant.turns.count < 3
-            guard focusesInput else { return }
-            await focusInput()
+            // No plan yet: the input focused with the examples above it.
+            guard !appState.planner.hasPlan, assistant.proposal == nil, !ScreenshotMode.isActive else { return }
+            try? await Task.sleep(for: .milliseconds(450))
+            inputFocused = true
         }
         .onChange(of: assistant.focusSerial) {
-            Task { await focusInput() }
+            guard appState.selectedTab == .plan else { return }
+            inputFocused = true
         }
-    }
-
-    @ViewBuilder
-    private var typingContent: some View {
-        let draft = settledDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !draft.isEmpty, assistant.draft.trimmingCharacters(in: .whitespacesAndNewlines) == draft {
-            LiveResults(query: draft)
-        } else if assistant.turns.isEmpty, assistant.draft.isEmpty {
-            EmptyStateChips()
-        }
-    }
-
-    private func focusInput() async {
-        inputFocused = true
-        // The sheet may still be animating in; ask again once it has settled.
-        try? await Task.sleep(for: .milliseconds(450))
-        guard !Task.isCancelled, !inputFocused else { return }
-        inputFocused = true
     }
 
     private func send() {
@@ -182,11 +106,73 @@ struct AssistantScreen: View {
     }
 }
 
-// MARK: - Input bar
+/// The intent chip and live results follow the typing, debounced; typing again hides the answer card.
+private struct AssistantDraftTracking: ViewModifier {
+    @Binding var settledDraft: String
+    @Binding var predicted: TurnPath
 
-private struct AssistantInputBar: View {
+    @Environment(AppState.self) private var appState
+
+    func body(content: Content) -> some View {
+        let assistant = appState.assistant
+        content
+            .onChange(of: assistant.draft) { _, text in
+                if !text.isEmpty { assistant.dismissAnswer() }
+            }
+            .task(id: assistant.draft) {
+                try? await Task.sleep(for: .milliseconds(300))
+                guard !Task.isCancelled else { return }
+                settledDraft = assistant.draft
+                predicted = assistant.predict(assistant.draft)
+            }
+    }
+}
+
+// MARK: - Bottom area (on the keyboard)
+
+private struct AssistantBottomArea: View {
     var focused: FocusState<Bool>.Binding
     let predicted: TurnPath
+    let settledDraft: String
+    let maxCardHeight: CGFloat
+    var onClose: (() -> Void)? = nil
+    let onSend: () -> Void
+
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        let assistant = appState.assistant
+        let draft = settledDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let typing = !draft.isEmpty && assistant.draft.trimmingCharacters(in: .whitespacesAndNewlines) == draft
+        VStack(spacing: 8) {
+            if typing, assistant.proposal == nil {
+                LiveResults(query: draft, maxHeight: maxCardHeight)
+            } else if let answer = assistant.answer {
+                AnswerCard(turn: answer, maxHeight: maxCardHeight)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+            if let proposal = assistant.proposal, let preview = assistant.preview {
+                ProposalPill(proposal: proposal, preview: preview)
+            }
+            if let pill = assistant.undoPill {
+                UndoPillView(pill: pill)
+            }
+            AssistantInputBar(focused: focused, predicted: predicted, onClose: onClose, onSend: onSend)
+        }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
+        .animation(.snappy, value: assistant.answer?.id)
+        .animation(.snappy, value: assistant.proposal)
+        .animation(.snappy, value: assistant.undoPill)
+    }
+}
+
+// MARK: - Input bar
+
+struct AssistantInputBar: View {
+    var focused: FocusState<Bool>.Binding
+    let predicted: TurnPath
+    var onClose: (() -> Void)? = nil
     let onSend: () -> Void
 
     @Environment(AppState.self) private var appState
@@ -198,12 +184,26 @@ private struct AssistantInputBar: View {
             IntentChip(path: busy ?? assistant.forced ?? predicted, isForced: assistant.forced != nil, isBusy: busy != nil) {
                 assistant.cycleForced()
             }
-            TextField(assistant.modelAvailable ? "Ask, search or change your plan" : "Search or change your plan", text: $assistant.draft)
+            TextField("Change your plan or search…", text: $assistant.draft)
                 .focused(focused)
                 .submitLabel(.send)
                 .onSubmit(onSend)
+                .onKeyPress(.escape) {
+                    guard assistant.proposal != nil else { return .ignored }
+                    assistant.clearProposal()
+                    return .handled
+                }
                 .textInputAutocapitalization(.sentences)
                 .frame(minHeight: 36)
+            if let onClose {
+                Button(action: onClose) {
+                    Label("Close", systemImage: "xmark.circle.fill")
+                        .labelStyle(.iconOnly)
+                        .font(.title2)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
             Button(action: onSend) {
                 Label("Send", systemImage: "arrow.up.circle.fill")
                     .labelStyle(.iconOnly)
@@ -215,10 +215,8 @@ private struct AssistantInputBar: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        // The input bar floats over the conversation: the controls layer, so Liquid Glass.
+        // The input bar floats over the content: the controls layer, so Liquid Glass.
         .glassEffect(.regular.interactive(), in: .capsule)
-        .padding(.horizontal, 12)
-        .padding(.bottom, 8)
     }
 }
 
@@ -260,90 +258,76 @@ private struct IntentChip: View {
     }
 }
 
-// MARK: - Conversation
+// MARK: - Answer card
 
-private struct TurnView: View {
+/// The last non-edit turn, compact (≤ a third of the screen, scrollable inside). Swipe down or ×
+/// dismisses it; typing again hides it.
+private struct AnswerCard: View {
     let turn: AssistantController.Turn
+    let maxHeight: CGFloat
 
     @Environment(AppState.self) private var appState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if let input = turn.input {
-                UserBubble(text: input)
+        VStack(spacing: 0) {
+            AnswerCardHandle()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(Array(turn.blocks.enumerated()), id: \.offset) { index, block in
+                        AssistantBlockView(block: block, turn: turn, index: index)
+                    }
+                    if turn.streaming && turn.blocks.isEmpty {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                            Text("Thinking on your iPhone…").foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 12)
             }
-            ForEach(Array(turn.blocks.enumerated()), id: \.offset) { index, block in
-                AssistantBlockView(block: block, turn: turn, index: index)
-            }
-            if turn.streaming && turn.blocks.isEmpty {
-                WorkingRow(text: "Thinking on your iPhone…")
-            }
-            if let shared = turn.shared {
-                SharedOfferButtons(turnId: turn.id, offer: shared)
-            }
+            .scrollBounceBehavior(.basedOnSize)
         }
+        .frame(maxHeight: max(160, maxHeight))
+        .fixedSize(horizontal: false, vertical: true)
+        .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 22))
+        .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
+        .gesture(DragGesture(minimumDistance: 20).onEnded { value in
+            if value.translation.height > 60 { appState.assistant.dismissAnswer() }
+        })
+        .accessibilityAction(named: "Dismiss") { appState.assistant.dismissAnswer() }
     }
 }
 
-private struct UserBubble: View {
-    let text: String
+private struct AnswerCardHandle: View {
+    @Environment(AppState.self) private var appState
 
     var body: some View {
         HStack {
-            Spacer(minLength: 48)
-            Text(text)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(TintShapeStyle().opacity(0.18), in: .rect(cornerRadius: 18))
-                .accessibilityLabel("You: \(text)")
-        }
-    }
-}
-
-private struct WorkingRow: View {
-    let text: String
-
-    var body: some View {
-        HStack(spacing: 10) {
-            ProgressView()
-            Text(text).foregroundStyle(.secondary)
-        }
-        .padding(.vertical, 4)
-    }
-}
-
-private struct SharedOfferButtons: View {
-    let turnId: Int
-    let offer: AssistantController.SharedOffer
-
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        if offer.handled {
-            Label("Added to your plan", systemImage: "checkmark.circle.fill")
-                .font(.subheadline)
-                .foregroundStyle(.green)
-        } else {
-            HStack(spacing: 8) {
-                Button("Use This Plan", systemImage: "checkmark") {
-                    appState.assistant.useShared(turnId: turnId, merge: false)
-                }
-                .buttonStyle(.borderedProminent)
-                Button("Merge with Mine", systemImage: "arrow.triangle.merge") {
-                    appState.assistant.useShared(turnId: turnId, merge: true)
-                }
-                .buttonStyle(.bordered)
+            Capsule()
+                .fill(.tertiary)
+                .frame(width: 36, height: 5)
+                .frame(maxWidth: .infinity)
+            Button {
+                appState.assistant.dismissAnswer()
+            } label: {
+                Label("Dismiss", systemImage: "xmark")
+                    .labelStyle(.iconOnly)
+                    .font(.caption.weight(.bold))
+                    .frame(width: 28, height: 28)
             }
-            .controlSize(.small)
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
         }
+        .padding(.horizontal, 8)
+        .padding(.top, 6)
     }
 }
-
-// MARK: - Typing and the empty state
 
 /// Results as you type (nothing is sent; Return runs the full turn).
 private struct LiveResults: View {
     let query: String
+    let maxHeight: CGFloat
 
     @Environment(AppState.self) private var appState
 
@@ -351,250 +335,152 @@ private struct LiveResults: View {
         if let index = appState.searchIndex {
             let results = Array(index.search(query, now: .now).prefix(8))
             if !results.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Matches").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                    ForEach(results) { result in
-                        NavigationLink(value: result.target) {
-                            HeartableResultRow(result: result)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .contentShape(.rect)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(results) { result in
+                            Button {
+                                appState.open(result.target)
+                            } label: {
+                                HeartableResultRow(result: result)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(.rect)
+                            }
+                            .buttonStyle(.plain)
+                            .onScreenEntity(result.target)
+                            if result.id != results.last?.id { Divider() }
                         }
-                        .buttonStyle(.plain)
-                        .onScreenEntity(result.target)
-                        if result.id != results.last?.id { Divider() }
                     }
+                    .padding(12)
                 }
-                .blockCardBackground()
+                .scrollBounceBehavior(.basedOnSize)
+                .frame(maxHeight: max(160, maxHeight))
+                .fixedSize(horizontal: false, vertical: true)
+                .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 22))
+                .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
             }
         }
     }
 }
 
-/// Before anything is asked: Happening now, Up next, Liked and the categories.
-private struct EmptyStateChips: View {
-    @Environment(AppState.self) private var appState
+// MARK: - Pills
 
-    var body: some View {
-        if let ctx = appState.assistant.context() {
-            VStack(alignment: .leading, spacing: 10) {
-                Text(appState.assistant.modelAvailable
-                     ? "Ask about the event, find things, or change your plan. Everything stays on your iPhone."
-                     : "Search the event or change your plan. Everything stays on your iPhone.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                let chips = AssistantRouter.suggestionChips(ctx)
-                ChipRow(chips: chips.enumerated().map { ChipItem(id: String($0.offset), label: $0.element.label) }) { item in
-                    guard let i = Int(item.id), i < chips.count else { return }
-                    appState.assistant.chip(chips[i])
-                }
-            }
-        }
-    }
-}
+/// The shown proposal: "−2 items, +1 lunch break" with Apply (one option, or each option of a
+/// change such as a shared plan), or "Pick one of 3" when the options are rows; × clears it.
+private struct ProposalPill: View {
+    let proposal: PlanProposal
+    let preview: PlanPreview
 
-// MARK: - Pinned plan
-
-private struct PinnedPlanSection: View {
-    @Binding var expanded: Bool
-
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        if appState.planner.hasPlan {
-            DisclosureGroup(isExpanded: $expanded) {
-                VStack(alignment: .leading, spacing: 10) {
-                    PlanChangesCard()
-                    AssistantPlanView(showsHeader: false, limit: 4)
-                    PinnedPlanActions()
-                }
-                .padding(.top, 8)
-            } label: {
-                if let plan = appState.planner.plan {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Label("My plan", systemImage: "list.bullet.clipboard")
-                            .font(.headline)
-                        Text(Planner.summary(plan, timeZone: appState.timeZone))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-        } else if AppState.plannerAvailable {
-            MakePlanCard()
-        }
-    }
-}
-
-private struct PinnedPlanActions: View {
     @Environment(AppState.self) private var appState
 
     var body: some View {
         let assistant = appState.assistant
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) { buttons(assistant) }
-            VStack(alignment: .leading, spacing: 8) { buttons(assistant) }
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
-    }
-
-    @ViewBuilder
-    private func buttons(_ assistant: AssistantController) -> some View {
-        if appState.tabs.contains(.schedule) {
-            Button("Open in Schedule", systemImage: "calendar") { appState.showMyPlan() }
-        }
-        Button("Share", systemImage: "square.and.arrow.up") {
-            assistant.run(AssistantAction(name: .sharePlan), label: "Share my plan", source: .manual)
-        }
-        if appState.planner.canUndo {
-            Button("Undo", systemImage: "arrow.uturn.backward") {
-                assistant.run(AssistantAction(name: .planUndo), label: "Undo", source: .manual)
-            }
-        }
-    }
-}
-
-/// Organizer changes (spec §6): which planned items moved or went, with Re-plan / Keep as Is.
-private struct PlanChangesCard: View {
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        let changed = appState.assistant.live.changed
-        if !changed.isEmpty {
-            let names = changed.map { appState.currentBundle?.scheduleItem($0)?.name ?? "A removed item" }
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Your plan changed", systemImage: "exclamationmark.arrow.triangle.2.circlepath")
-                    .font(.subheadline.weight(.semibold))
-                Text("The organizers moved or removed: " + names.joined(separator: ", ") + ".")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                HStack(spacing: 8) {
-                    Button("Re-plan") {
-                        appState.replanFromNow()
-                        appState.assistant.refreshLive()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    Button("Keep as Is") {
-                        appState.keepChangedPlan()
-                        appState.assistant.refreshLive()
-                    }
-                    .buttonStyle(.bordered)
-                }
-                .controlSize(.small)
-            }
-            .padding(10)
-            .background(Color.orange.opacity(0.12), in: .rect(cornerRadius: 14))
-        }
-    }
-}
-
-/// No plan yet (model available): the event's examples make one in a tap.
-private struct MakePlanCard: View {
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        let examples = appState.currentBundle.map { PlanRequest.examples($0, now: .now) } ?? []
-        VStack(alignment: .leading, spacing: 10) {
-            Label("Make a plan", systemImage: "wand.and.stars")
-                .font(.headline)
-            Text("Say what you'd like, or try one of these. Your iPhone plans it from the schedule, your likes and walking times.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            ForEach(examples) { example in
-                Button {
-                    appState.assistant.submit(example.text, forced: example.isPlan ? .plan : .ask)
-                } label: {
-                    Label(example.text, systemImage: example.isPlan ? "sparkles" : "questionmark.bubble")
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .buttonStyle(.bordered)
-                .disabled(appState.planner.isPlanning)
-            }
-        }
-        .blockCardBackground()
-    }
-}
-
-// MARK: - Live hints
-
-private struct LiveHintsSection: View {
-    let hints: LiveHints
-
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        if !hints.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                if let late = hints.runningLate {
-                    HintCard(
-                        text: late.text,
-                        systemImage: late.state == .leaveNow ? "figure.walk.motion" : "exclamationmark.triangle.fill",
-                        tint: .orange,
-                        chips: late.chips
-                    )
-                }
-                ForEach(hints.gaps, id: \.self) { gap in
-                    HintCard(text: gap.text, systemImage: "clock.badge.questionmark", tint: .blue, chips: [gap.chip])
-                }
-                ForEach(hints.skipped, id: \.self) { chip in
-                    SkippedHint(chip: chip)
-                }
-                if hints.recapReady {
-                    HintCard(text: "That's your day. Want the recap?", systemImage: "sparkles", tint: .purple,
-                             chips: [AssistantChip(label: "Show my recap", action: AssistantAction(name: .plan))],
-                             onChip: { _ in appState.assistant.submit("recap", forced: .plan) })
-                }
-            }
-        }
-    }
-}
-
-private struct HintCard: View {
-    let text: String
-    let systemImage: String
-    let tint: Color
-    let chips: [AssistantChip]
-    var onChip: ((AssistantChip) -> Void)? = nil
-
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(text, systemImage: systemImage)
+        HStack(spacing: 8) {
+            Image(systemName: "list.bullet.clipboard")
+                .foregroundStyle(.tint)
+            Text(preview.pill)
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(tint)
-            if !chips.isEmpty {
-                ChipRow(chips: chips.enumerated().map { ChipItem(id: String($0.offset), label: $0.element.label) }) { item in
-                    guard let i = Int(item.id), i < chips.count else { return }
-                    if let onChip { onChip(chips[i]) } else { appState.assistant.chip(chips[i]) }
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if !proposal.hasOptionRows || proposal.options.count == 1 {
+                ForEach(Array(proposal.options.prefix(2).enumerated()), id: \.offset) { index, option in
+                    Button(proposal.options.count == 1 ? "Apply" : option.label) {
+                        assistant.applyProposal(index)
+                    }
+                    .buttonStyle(.glassProminent)
+                    .controlSize(.small)
                 }
             }
+            Button {
+                assistant.clearProposal()
+            } label: {
+                Label("Cancel", systemImage: "xmark")
+                    .labelStyle(.iconOnly)
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(tint.opacity(0.12), in: .rect(cornerRadius: 16))
+        .padding(.leading, 14)
+        .padding(.trailing, 8)
+        .padding(.vertical, 6)
+        .glassEffect(.regular.interactive(), in: .capsule)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(proposal.text)
     }
 }
 
-private struct SkippedHint: View {
-    let chip: AssistantChip
+/// "Removed Velvet Mesquite. · Undo" for ~8 s after a plan change.
+private struct UndoPillView: View {
+    let pill: AssistantController.UndoPill
 
     @Environment(AppState.self) private var appState
 
     var body: some View {
         HStack(spacing: 8) {
-            Button(chip.label) { appState.assistant.chip(chip) }
-                .buttonStyle(.bordered)
-                .buttonBorderShape(.capsule)
-                .controlSize(.small)
-            Button {
-                appState.assistant.dismissSkipped(chip)
-            } label: {
-                Label("Dismiss", systemImage: "xmark").labelStyle(.iconOnly)
+            Text(pill.text)
+                .font(.subheadline)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Undo", systemImage: "arrow.uturn.backward") {
+                appState.assistant.undoLastChange()
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.glass)
             .controlSize(.small)
         }
+        .padding(.leading, 14)
+        .padding(.trailing, 8)
+        .padding(.vertical, 6)
+        .glassEffect(.regular.interactive(), in: .capsule)
+        .task(id: pill.id) {
+            try? await Task.sleep(for: .seconds(8))
+            guard !Task.isCancelled else { return }
+            appState.assistant.expireUndo(pill.id)
+        }
+    }
+}
+
+// MARK: - Over other tabs
+
+/// The floating search button's bar over a tab other than My plan: matches while typing, the
+/// answer card, and the bar itself (focused on open). A plan edit switches to My plan.
+struct SearchOverlay: View {
+    @Environment(AppState.self) private var appState
+    @FocusState private var inputFocused: Bool
+    @State private var settledDraft = ""
+    @State private var predicted: TurnPath = .search
+    @State private var height: CGFloat = 600
+
+    var body: some View {
+        let assistant = appState.assistant
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+            AssistantBottomArea(
+                focused: $inputFocused,
+                predicted: predicted,
+                settledDraft: settledDraft,
+                maxCardHeight: height / 3,
+                onClose: { assistant.closeOverlay() },
+                onSend: send
+            )
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+        .modifier(AssistantDraftTracking(settledDraft: $settledDraft, predicted: $predicted))
+        .task {
+            try? await Task.sleep(for: .milliseconds(150))
+            inputFocused = true
+        }
+        .onChange(of: assistant.focusSerial) { inputFocused = true }
+        .onChange(of: inputFocused) { _, focused in
+            // Keyboard down with nothing typed and nothing shown: the button comes back.
+            if !focused, assistant.draft.isEmpty, assistant.answer == nil { assistant.closeOverlay() }
+        }
+    }
+
+    private func send() {
+        let assistant = appState.assistant
+        let text = assistant.draft
+        assistant.draft = ""
+        settledDraft = ""
+        assistant.submitFromOverlay(text)
     }
 }

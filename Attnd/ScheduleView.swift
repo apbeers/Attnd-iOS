@@ -9,8 +9,7 @@
 // grouped by ScheduleGrouping) and `enable_search`. All times are shown in the
 // event's time zone. Countdown labels update live via TimelineView.
 //
-// In the Schedule tab (full app), a "My plan" chip shows the planner's plan instead of the
-// schedule (PlanView.swift, spec §6), while the planner is available or a plan exists.
+// In the full app it is one of Explore's views (Map | Schedule | Places); My plan is its own tab.
 
 import SwiftUI
 
@@ -22,8 +21,9 @@ struct ScheduleTab: View {
 
     var body: some View {
         NavigationSplitView {
-            ScheduleView(selection: $selection, offersPlan: true)
+            ScheduleView(selection: $selection)
                 .eventStatusBanners()
+                .exploreSwitcher()
                 // After the filter menu, in its own glass group.
                 .optionsToolbarItem(separated: true)
         } detail: {
@@ -60,8 +60,6 @@ struct ScheduleView: View {
     /// Bound in a split view's sidebar. nil when used inside a plain NavigationStack,
     /// where rows push their own destinations.
     var selection: Binding<ScheduleItem?>? = nil
-    /// The Schedule tab (not the pane beside the map): offers the "My plan" chip.
-    var offersPlan = false
 
     @Environment(AppState.self) private var appState
     @State private var searchText = ""
@@ -139,56 +137,22 @@ struct ScheduleView: View {
     /// The Hearted chip appears once something is hearted (or while it is on); not in My plan.
     private var showsHeartedChip: Bool { !inPlan && (appState.hasHearts || heartedOnly) }
 
-    /// "My plan" (full app, Schedule tab): while the planner is available or a plan exists.
-    private var showsPlanChip: Bool {
-        #if APP_CLIP
-        return false
-        #else
-        return offersPlan && appState.offersMyPlan
-        #endif
-    }
-
-    /// The list shows My plan instead of the schedule.
-    private var inPlan: Bool {
-        #if APP_CLIP
-        return false
-        #else
-        return showsPlanChip && appState.planner.showsMyPlan
-        #endif
-    }
-
-    private var myPlanBinding: Binding<Bool>? {
-        #if APP_CLIP
-        return nil
-        #else
-        guard showsPlanChip else { return nil }
-        let planner = appState.planner
-        return Binding(get: { planner.showsMyPlan }, set: { planner.showsMyPlan = $0 })
-        #endif
-    }
+    /// My plan has its own tab now (plan tab spec); the Schedule list never shows it.
+    private var inPlan: Bool { false }
 
     @ViewBuilder
     private func listContent(sections: [ScheduleSection], now: Date) -> some View {
-        if showsHeartedChip || showsPlanChip {
+        if showsHeartedChip {
             CategoryChips(
                 categories: [],
                 selection: .constant(nil),
-                heartedOnly: showsHeartedChip ? $heartedOnly : nil,
-                myPlan: myPlanBinding
+                heartedOnly: $heartedOnly
             )
             .listRowInsets(EdgeInsets())
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)
         }
-        #if !APP_CLIP
-        if inPlan {
-            MyPlanContent(now: now)
-        } else {
-            scheduleSections(sections, now: now)
-        }
-        #else
         scheduleSections(sections, now: now)
-        #endif
     }
 
     @ViewBuilder
@@ -393,7 +357,7 @@ private struct ScheduleItemPeekModifier: ViewModifier {
             } label: {
                 Label(hearted ? "Unlike" : "Like", systemImage: hearted ? "heart.slash" : "heart")
             }
-            if let location, location.coordinate != nil, appState.tabs.contains(.map) {
+            if let location, location.coordinate != nil, appState.shows(.map) {
                 Button {
                     appState.showOnMap(locationId: location.id)
                 } label: {

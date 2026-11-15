@@ -75,7 +75,7 @@ enum ItemCardPart: String, CaseIterable, Hashable, Sendable {
 struct ItemCard: View {
     let item: ScheduleItem
     var show: Set<ItemCardPart> = Set(ItemCardPart.allCases)
-    /// Opens the item; nil = `AppState.navigate(to:)` (its tab, or the search sheet).
+    /// Opens the item; nil = `AppState.open(_:)` (its tab, or the search sheet).
     var onOpen: (() -> Void)? = nil
 
     @Environment(AppState.self) private var appState
@@ -142,7 +142,7 @@ struct ItemCard: View {
     }
 
     private func open() {
-        if let onOpen { onOpen() } else { appState.navigate(to: .scheduleItem(item.id)) }
+        if let onOpen { onOpen() } else { appState.open(.scheduleItem(item.id)) }
     }
 }
 
@@ -168,7 +168,7 @@ private struct CardActions: View {
     @ViewBuilder
     private var buttons: some View {
         Button("Open", systemImage: "arrow.up.right", action: onOpen)
-        if let location = mapLocation, location.coordinate != nil, appState.tabs.contains(.map) {
+        if let location = mapLocation, location.coordinate != nil, appState.shows(.map) {
             Button("Show on Map", systemImage: "map") {
                 appState.showOnMap(locationId: location.id)
             }
@@ -193,7 +193,7 @@ enum PlaceCardPart: String, CaseIterable, Hashable, Sendable {
 struct PlaceCard: View {
     let location: Location
     var show: Set<PlaceCardPart> = Set(PlaceCardPart.allCases)
-    /// Opens the place; nil = `AppState.navigate(to:)`.
+    /// Opens the place; nil = `AppState.open(_:)`.
     var onOpen: (() -> Void)? = nil
 
     @Environment(AppState.self) private var appState
@@ -255,7 +255,7 @@ struct PlaceCard: View {
     }
 
     private func open() {
-        if let onOpen { onOpen() } else { appState.navigate(to: .location(location.id)) }
+        if let onOpen { onOpen() } else { appState.open(.location(location.id)) }
     }
 }
 
@@ -270,7 +270,7 @@ struct UpdateCard: View {
 
     var body: some View {
         Button {
-            if let onOpen { onOpen() } else { appState.navigate(to: .notification(notification.id)) }
+            if let onOpen { onOpen() } else { appState.open(.notification(notification.id)) }
         } label: {
             VStack(alignment: .leading, spacing: 6) {
                 if notification.isUrgent {
@@ -322,7 +322,7 @@ struct CompactList: View {
     let targets: [SearchTarget]
     var title: String? = nil
     var limit: Int? = nil
-    /// A tapped row; nil = `AppState.navigate(to:)`.
+    /// A tapped row; nil = `AppState.open(_:)`.
     var onSelect: ((SearchTarget) -> Void)? = nil
 
     @Environment(AppState.self) private var appState
@@ -351,7 +351,7 @@ struct CompactList: View {
     private func row(_ result: EventSearchResult) -> some View {
         HStack(spacing: 8) {
             Button {
-                if let onSelect { onSelect(result.target) } else { appState.navigate(to: result.target) }
+                if let onSelect { onSelect(result.target) } else { appState.open(result.target) }
             } label: {
                 SearchResultRow(result: result)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -486,7 +486,7 @@ struct ItemTimeline: View {
         let ended = ScheduleTiming.hasEnded(item, at: now)
         return HStack(alignment: .top, spacing: 12) {
             Button {
-                if let onSelect { onSelect(item) } else { appState.navigate(to: .scheduleItem(item.id)) }
+                if let onSelect { onSelect(item) } else { appState.open(.scheduleItem(item.id)) }
             } label: {
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
                     Text(item.startTime.map { EventTimeFormat.time($0, in: timeZone) } ?? "")
@@ -585,7 +585,7 @@ struct NowNextStrip: View {
 
     private func part(label: String, item: ScheduleItem, live: Bool, now: Date) -> some View {
         Button {
-            appState.navigate(to: .scheduleItem(item.id))
+            appState.open(.scheduleItem(item.id))
         } label: {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 HStack(spacing: 4) {
@@ -626,7 +626,7 @@ struct Countdown: View {
             let timeZone = appState.timeZone
             let relative = RelativeTimeText.item(item, now: now, timeZone: timeZone) ?? ""
             Button {
-                appState.navigate(to: .scheduleItem(item.id))
+                appState.open(.scheduleItem(item.id))
             } label: {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(item.name)

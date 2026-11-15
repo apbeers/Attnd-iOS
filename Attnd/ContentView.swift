@@ -2,10 +2,11 @@
 // Attnd
 //
 // AppRootView switches between the launch flow and the joined event.
-// ContentView is the tab container for a joined event: the tabs, their order and
-// the initial tab come from the server's `display` config (at most five, so never a
-// "More" tab). Search is a floating Liquid Glass button on every tab and Options a
-// toolbar item on each tab's root screen; both open sheets (`AppState.presentedSheet`).
+// ContentView is the tab container for a joined event (TabLayout.swift): My plan first (full
+// app), Explore (Map | Schedule | Places, the views `display.tabs` lists), Flyer, Updates; at most
+// four, so never a "More" tab (screenshot mode keeps the event's own tabs). Search is a floating
+// Liquid Glass button on every other tab (the full app: My plan's bar over the tab; the App Clip
+// and screenshot mode: the search sheet) and Options a toolbar item on each tab's root screen.
 // It also drives bundle refreshes (on becoming active, plus a slow poll while
 // active: every 60 s without a push token, e.g. the App Clip; a 5-minute safety
 // poll when silent `content_updated` pushes can arrive; 15 s after a failure) and
@@ -164,18 +165,21 @@ struct ContentView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.scenePhase) private var scenePhase
 
-    /// Re-tapping the selected Map tab re-centres the map.
+    /// Re-tapping the selected Map tab (or Explore on its map) re-centres the map.
     /// (assumeIsolated: the closures always run on the main actor, whether or not
     /// the SDK declares Binding's closures @Sendable.)
-    private var tabSelection: Binding<EventTab> {
+    private var tabSelection: Binding<AppTab> {
         let state = self.appState
         return Binding(
             get: { MainActor.assumeIsolated { state.selectedTab } },
             set: { newTab in
                 MainActor.assumeIsolated {
-                    if newTab == .map, state.selectedTab == .map {
+                    if newTab == state.selectedTab, state.isShowing(.map) {
                         state.mapCenterToken += 1
                     }
+                    #if !APP_CLIP
+                    state.assistant.closeOverlay()
+                    #endif
                     state.selectedTab = newTab
                 }
             }
@@ -184,18 +188,18 @@ struct ContentView: View {
 
     var body: some View {
         @Bindable var state = appState
-        // Only the event's own tabs (`display.tabs`, at most DisplayConfig.maxTabs), so the
-        // tab bar never grows a "More" tab. Search is the floating button on every tab and
-        // Options a toolbar item on every tab's root screen; both open sheets.
+        // TabLayout: My plan, Explore (Map | Schedule | Places), Flyer, Updates — at most four, so
+        // never a "More" tab (screenshot mode: the event's own tabs as before). Search is the
+        // floating button on every other tab and Options a toolbar item on every tab's root screen.
         TabView(selection: tabSelection) {
             ForEach(appState.tabs) { tab in
                 Tab(tab.title, systemImage: tab.systemImage, value: tab) {
                     tabContent(tab)
-                        .latestUpdateBanner(enabled: tab != .notifications)
-                        .floatingSearchButton()
+                        .latestUpdateBanner(enabled: tab != .event(.notifications))
+                        .floatingSearchButton(enabled: tab != .plan)
                 }
                 // Updates sent since the tab was last seen (0 hides the badge).
-                .badge(tab == .notifications ? appState.unreadUpdatesCount : 0)
+                .badge(tab == .event(.notifications) ? appState.unreadUpdatesCount : 0)
             }
         }
         // The tab bar stays visible (no minimize on scroll).
@@ -205,17 +209,9 @@ struct ContentView: View {
                 switch sheet {
                 case .search:
                     // Focus the field unless Siri / Spotlight opened the sheet on an item or
-                    // an onboarding example is being asked. The full app shows the assistant
-                    // (search, Ask and plan changes in one screen; not in screenshot mode).
-                    #if APP_CLIP
+                    // an onboarding example is being asked. In the full app (outside screenshot
+                    // mode) this sheet only shows items of hidden tabs; search is My plan's bar.
                     EventSearchSheet(focusesSearchField: appState.searchPath.isEmpty && appState.autoAskQuery == nil)
-                    #else
-                    if AppState.assistantEnabled {
-                        AssistantSheet(focusesInput: appState.searchPath.isEmpty)
-                    } else {
-                        EventSearchSheet(focusesSearchField: appState.searchPath.isEmpty && appState.autoAskQuery == nil)
-                    }
-                    #endif
                 case .options:
                     OptionsSheet()
                 case .tour:
@@ -268,7 +264,34 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private func tabContent(_ tab: EventTab) -> some View {
+    private func tabContent(_ tab: AppTab) -> some View {
+        switch tab {
+        case .plan:
+            #if APP_CLIP
+            EmptyView()
+            #else
+            MyPlanTab()
+            #endif
+        case .explore:
+            ExploreTab()
+        case .event(let eventTab):
+            EventTabContent(tab: eventTab)
+        }
+    }
+
+    /// The event's own accent; nil → the asset AccentColor (brand purple #431F86).
+    private var accentColor: Color? {
+        HexColor.components(appState.accentHex).map { Color(red: $0.red, green: $0.green, blue: $0.blue) }
+    }
+}
+
+/// One of the event's own tabs (Flyer, Updates; every tab in screenshot mode).
+private struct EventTabContent: View {
+    let tab: EventTab
+
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
         switch tab {
         case .map:
             MapTab()
@@ -288,11 +311,6 @@ struct ContentView: View {
                     .optionsToolbarItem()
             }
         }
-    }
-
-    /// The event's own accent; nil → the asset AccentColor (brand purple #431F86).
-    private var accentColor: Color? {
-        HexColor.components(appState.accentHex).map { Color(red: $0.red, green: $0.green, blue: $0.blue) }
     }
 }
 
@@ -340,8 +358,8 @@ extension View {
     /// much more bottom safe area, so lists scroll clear of it and the map's own floating
     /// column (buttons, selected-location card) sits directly above it. On iPhone Duo it
     /// stays clear of the fold and camera housings (ReservedRegionAvoiding).
-    func floatingSearchButton() -> some View {
-        modifier(FloatingSearchButtonModifier())
+    func floatingSearchButton(enabled: Bool = true) -> some View {
+        modifier(FloatingSearchButtonModifier(enabled: enabled))
     }
 }
 
@@ -357,14 +375,42 @@ enum FloatingSearchButtonMetrics {
 }
 
 private struct FloatingSearchButtonModifier: ViewModifier {
+    let enabled: Bool
+
     @Environment(AppState.self) private var appState
 
+    @ViewBuilder
     func body(content: Content) -> some View {
+        if enabled {
+            withButton(content)
+        } else {
+            content
+        }
+    }
+
+    private var overlayOpen: Bool {
+        #if APP_CLIP
+        return false
+        #else
+        return appState.assistant.overlayOpen
+        #endif
+    }
+
+    private func withButton(_ content: Content) -> some View {
         // Siblings in a ZStack, not an overlay: the extra safe area applies to the content
         // only, so the button itself sits right above the tab bar.
         ZStack {
             content
                 .safeAreaPadding(.bottom, FloatingSearchButtonMetrics.reservedHeight)
+            #if !APP_CLIP
+            if overlayOpen {
+                // The same bar as My plan, over this tab (search answers; plan edits go to My plan).
+                ReservedRegionAvoiding {
+                    SearchOverlay()
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+            #endif
             ReservedRegionAvoiding {
                 VStack(spacing: 0) {
                     Spacer(minLength: 0)
@@ -380,7 +426,10 @@ private struct FloatingSearchButtonModifier: ViewModifier {
             }
             // Stays put (under the keyboard) while a tab's own search field is typing.
             .ignoresSafeArea(.keyboard)
+            .opacity(overlayOpen ? 0 : 1)
+            .allowsHitTesting(!overlayOpen)
         }
+        .animation(.snappy, value: overlayOpen)
     }
 }
 

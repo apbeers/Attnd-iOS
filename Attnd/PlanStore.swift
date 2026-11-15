@@ -4,14 +4,12 @@
 // "My plan" (shared spec §6) at runtime, matching Android's EventViewModel / PlanStore:
 //
 //   - PlanStore: the current event's plan (UserDefaults `pref.plan.<event id>`, `PlanCodec`
-//     JSON, kept after leaving like hearts), whether the planner is working, its last error, and
-//     whether the Schedule tab shows My plan. Loaded with the event's hearts (AppState).
+//     JSON, kept after leaving like hearts), whether the planner is working and its last error. Loaded with the event's hearts (AppState).
 //   - AppState.makePlan: the on-device model reads the request into preferences
 //     (EventAssistant.planPreferences, validated against the bundle) merged with the plain-rule
 //     reading (PlanRequest.heuristic, which alone is used when the model fails); the
-//     deterministic Planner then schedules. Offered only while the model is available
-//     (`AppState.plannerAvailable`); an existing plan can still be viewed, re-planned from now,
-//     swapped and kept without it.
+//     deterministic Planner then schedules. Offered wherever the My plan tab exists
+//     (`AppState.plannerAvailable`); without the model the plain-rule reading plans alone.
 //   - Every stored change updates the Live Activity and reminders (plan > hearts > now/next).
 //
 // Nothing here runs in screenshot mode (the planner is never offered there and no plan loads).
@@ -28,8 +26,6 @@ final class PlanStore {
     fileprivate(set) var isPlanning = false
     /// "Nothing on the schedule fits that. …" (cleared by the next attempt).
     fileprivate(set) var error: String?
-    /// The Schedule tab shows My plan (its chip; "Open My plan" and onboarding turn it on).
-    var showsMyPlan = false
 
     /// The plan's undo stack (≤ 20 earlier versions, `PlanHistory`), stored next to the plan.
     fileprivate(set) var history = PlanHistory()
@@ -49,7 +45,6 @@ final class PlanStore {
     func load(eventId: Int?) {
         guard self.eventId != eventId else { return }
         self.eventId = eventId
-        showsMyPlan = false
         error = nil
         isPlanning = false
         guard let eventId, !ScreenshotMode.isActive else {
@@ -147,12 +142,10 @@ final class PlanStore {
 extension AppState {
     static let nothingFitsMessage = "Nothing on the schedule fits that. Try another day or fewer limits."
 
-    /// The planner is offered (make a plan, Ask plans, onboarding's plan chips): only while the
-    /// on-device model is available (never in screenshot mode).
-    static var plannerAvailable: Bool { assistantAvailable }
-
-    /// The Schedule tab offers "My plan": the planner is available or there is a plan to show.
-    var offersMyPlan: Bool { Self.plannerAvailable || planner.hasPlan }
+    /// The planner is offered (My plan, Ask plans, onboarding's plan chips) wherever the My plan
+    /// tab exists (plan tab spec): with Apple Intelligence the on-device model reads requests,
+    /// without it the plain-rule reading and the likes make the plan. Never in screenshot mode.
+    static var plannerAvailable: Bool { hasPlanTab }
 
     /// A planned item changed or disappeared in a content update since the plan was made.
     var planChanged: Bool {
@@ -188,14 +181,17 @@ extension AppState {
         let now = Date.now
         let rules = PlanRequest.heuristic(trimmed, bundle: bundle, now: now)
         let modelStarted = ContinuousClock.now
-        let model: PlanPreferences?
-        do {
-            model = try await EventAssistant.planPreferences(
-                trimmed, bundle: bundle, heartedItems: personal.heartedScheduleItems, now: now
-            )
-        } catch {
-            AppLog.caught(error, .planner, "plan_preferences", level: .notice)
-            model = nil
+        var model: PlanPreferences?
+        // Without the on-device model the plain-rule reading alone plans (plan tab spec).
+        if Self.assistantAvailable {
+            do {
+                model = try await EventAssistant.planPreferences(
+                    trimmed, bundle: bundle, heartedItems: personal.heartedScheduleItems, now: now
+                )
+            } catch {
+                AppLog.caught(error, .planner, "plan_preferences", level: .notice)
+                model = nil
+            }
         }
         let modelMs = (ContinuousClock.now - modelStarted).wholeMilliseconds
         AppLog.info(.planner, "planner.extract", "Preferences read in \(modelMs) ms", [
@@ -282,12 +278,10 @@ extension AppState {
         planner.apply(nil)
     }
 
-    /// Opens Schedule → My plan (after planning from Ask or onboarding), closing any sheet.
+    /// Opens the My plan tab (after planning from Ask or onboarding), closing any sheet.
     func showMyPlan() {
-        guard currentEvent != nil, tabs.contains(.schedule) else { return }
-        presentedSheet = nil
-        selectedTab = .schedule
-        planner.showsMyPlan = true
+        guard currentEvent != nil else { return }
+        showPlanTab()
     }
 
     /// An onboarding / plan-card example: a plan request plans (and opens My plan), the

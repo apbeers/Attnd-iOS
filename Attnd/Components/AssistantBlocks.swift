@@ -114,10 +114,10 @@ struct MiniMap: View {
     private func open(first: Location?) {
         if let onOpen { return onOpen() }
         guard let first else { return }
-        if appState.tabs.contains(.map) {
+        if appState.shows(.map) {
             appState.showOnMap(locationId: first.id)
         } else {
-            appState.navigate(to: .location(first.id))
+            appState.open(.location(first.id))
         }
     }
 }
@@ -238,10 +238,10 @@ struct Gallery: View {
     private func select(_ image: GalleryImage) {
         if let onSelect { return onSelect(image) }
         if let target = image.target {
-            appState.navigate(to: target)
-        } else if appState.tabs.contains(.flyer) {
+            appState.open(target)
+        } else if appState.shows(.flyer) {
             appState.presentedSheet = nil
-            appState.selectedTab = .flyer
+            appState.select(.flyer)
         }
     }
 }

@@ -63,6 +63,18 @@ extension EventTab {
     var screenName: String { self == .notifications ? "updates" : rawValue }
 }
 
+extension AppTab {
+    /// The display tab a `tab_view` count and `ui.screen` name stand for (Explore: its view;
+    /// My plan: none, the server accepts only the event tabs).
+    func eventTab(explore view: ExploreView) -> EventTab? {
+        switch self {
+        case .plan: return nil
+        case .explore: return view.eventTab
+        case .event(let tab): return tab
+        }
+    }
+}
+
 /// Why the bundle is refetched (`net.bundle.applied` / `not_modified` `source`).
 enum RefreshSource: String, Sendable {
     case join, foreground, poll, push, pull
@@ -99,17 +111,36 @@ final class AppState {
 
     // MARK: - Navigation
 
-    var selectedTab: EventTab = .map {
+    /// The selected tab (TabLayout: My plan, Explore, Flyer, Updates; the old tabs in screenshot mode).
+    var selectedTab: AppTab = .explore {
         didSet {
+            guard oldValue != selectedTab else { return }
             // The first tab is counted in `apply` once the bundle has chosen it.
-            if hasAppliedDefaultTab, oldValue != selectedTab {
-                track(.tabView, detail: selectedTab.rawValue)
+            if hasAppliedDefaultTab, let tab = selectedTab.eventTab(explore: exploreView) {
+                track(.tabView, detail: tab.rawValue)
             }
-            if oldValue != selectedTab {
-                AppLog.debug(.ui, "ui.screen", "Tab \(selectedTab.screenName)", ["name": .string(selectedTab.screenName)])
+            let name = selectedTab.eventTab(explore: exploreView)?.screenName ?? "plan"
+            AppLog.debug(.ui, "ui.screen", "Tab \(name)", ["name": .string(name)])
+        }
+    }
+
+    /// The Explore tab's view (Map | Schedule | Places), remembered per event. Switching it counts
+    /// a `tab_view` with the old tab names (map / schedule / locations) while Explore is shown.
+    var exploreView: ExploreView = .map {
+        didSet {
+            guard oldValue != exploreView else { return }
+            if let id = currentEvent?.id, !ScreenshotMode.isActive {
+                UserDefaults.standard.set(exploreView.rawValue, forKey: Keys.exploreView(id))
+            }
+            if selectedTab == .explore {
+                if hasAppliedDefaultTab { track(.tabView, detail: exploreView.eventTab.rawValue) }
+                AppLog.debug(.ui, "ui.screen", "Explore \(exploreView.eventTab.screenName)", ["name": .string(exploreView.eventTab.screenName)])
             }
         }
     }
+
+    /// My plan's navigation stack (details opened from the plan, its answer card and results).
+    var planPath = NavigationPath()
 
     /// The search or Options sheet over the tabs (nil: none). Opening Options counts a
     /// `tab_view` "options", as the Options tab did.
@@ -285,6 +316,8 @@ final class AppState {
         static let onboardingSeen = "pref.onboardingSeen"
         /// `EventPersonalState` JSON (hearts, Updates seen) for one event.
         static func personal(_ eventId: Int) -> String { "pref.event.\(eventId)" }
+        /// The Explore tab's last view (map / schedule / places) for one event.
+        static func exploreView(_ eventId: Int) -> String { "pref.exploreView.\(eventId)" }
     }
 
     // MARK: - Init
@@ -349,9 +382,39 @@ final class AppState {
 
     var timeZone: TimeZone { currentEvent?.timeZone ?? .current }
 
-    var tabs: [EventTab] { display.resolvedTabs(hasFlyer: currentEvent?.flyerUrl != nil) }
+    /// The tab bar (TabLayout.swift): My plan (full app, not in screenshot mode), Explore (Map |
+    /// Schedule | Places; screenshot mode keeps the old separate tabs), Flyer, Updates.
+    var tabLayout: TabLayout {
+        TabLayout.resolve(display, hasFlyer: currentEvent?.flyerUrl != nil, plan: Self.hasPlanTab, explore: !ScreenshotMode.isActive)
+    }
 
-    var defaultTab: EventTab { display.resolvedDefaultTab(hasFlyer: currentEvent?.flyerUrl != nil) }
+    var tabs: [AppTab] { tabLayout.tabs }
+
+    /// The My plan tab exists: the full app, not in screenshot mode (with or without the model).
+    static var hasPlanTab: Bool {
+        #if APP_CLIP
+        return false
+        #else
+        return !ScreenshotMode.isActive
+        #endif
+    }
+
+    /// `tab` (Map, Schedule, Locations, Flyer, Updates) is reachable: a tab or an Explore view.
+    func shows(_ tab: EventTab) -> Bool { tabLayout.place(of: tab) != nil }
+
+    /// Shows `tab`: its own tab, or Explore on its view. Returns false when it is hidden.
+    @discardableResult
+    func select(_ tab: EventTab) -> Bool {
+        guard let place = tabLayout.place(of: tab) else { return false }
+        if let view = place.view { exploreView = view }
+        selectedTab = place.tab
+        return true
+    }
+
+    /// Whether `tab`'s view is on screen now.
+    func isShowing(_ tab: EventTab) -> Bool {
+        selectedTab.eventTab(explore: exploreView) == tab
+    }
 
     /// `display.accent_color`, falling back to the event's. nil → views use the
     /// asset AccentColor (brand purple), never system blue.
@@ -632,6 +695,7 @@ final class AppState {
         mapFocusLocationId = nil
         searchText = ""
         searchPath = NavigationPath()
+        planPath = NavigationPath()
         focusRequest = nil
         presentedSheet = nil
         searchIndex = nil
@@ -738,20 +802,28 @@ final class AppState {
         schedule = bundle.schedule
         notifications = bundle.notifications
 
-        if pendingNotificationsEventId == bundle.event.id, tabs.contains(.notifications) {
-            selectedTab = .notifications
+        let layout = tabLayout
+        // Explore's view: the one remembered for this event, else default_tab's, else the first.
+        let remembered = isFirstApply && !ScreenshotMode.isActive
+            ? UserDefaults.standard.string(forKey: Keys.exploreView(bundle.event.id)).flatMap(ExploreView.init(rawValue:))
+            : Optional(exploreView)
+        if let view = layout.exploreView(remembered: remembered), view != exploreView {
+            exploreView = view
+        }
+        if pendingNotificationsEventId == bundle.event.id, layout.tabs.contains(.event(.notifications)) {
+            selectedTab = .event(.notifications)
             hasAppliedDefaultTab = true
         } else if !hasAppliedDefaultTab {
-            selectedTab = defaultTab
+            selectedTab = layout.defaultTab
             hasAppliedDefaultTab = true
-        } else if !tabs.contains(selectedTab) {
+        } else if !layout.tabs.contains(selectedTab) {
             // The organizer hid the tab we were on.
-            selectedTab = defaultTab
+            selectedTab = layout.defaultTab
         }
         pendingNotificationsEventId = nil
-        if isFirstApply, hasAppliedDefaultTab {
+        if isFirstApply, hasAppliedDefaultTab, let tab = selectedTab.eventTab(explore: exploreView) {
             // The tab the event opens on (later changes are counted in selectedTab's didSet).
-            track(.tabView, detail: selectedTab.rawValue)
+            track(.tabView, detail: tab.rawValue)
         }
         // New images download first; files the new content no longer uses are deleted after.
         scheduleImageSync()
@@ -801,14 +873,31 @@ final class AppState {
             presentedSheet = .options
             return
         }
-        if tabs.contains(tab) {
+        #if !APP_CLIP
+        assistant.closeOverlay()
+        #endif
+        if shows(tab) {
             presentedSheet = nil
             focusRequest = target
-            selectedTab = tab
+            select(tab)
         } else {
             searchPath = NavigationPath([target])
             presentedSheet = .search
         }
+    }
+
+    /// A tap on an item inside the app (cards, results, plan rows): on My plan its detail is
+    /// pushed on My plan's own stack (the plan stays one Back away); elsewhere `navigate(to:)`.
+    func open(_ target: SearchTarget) {
+        if selectedTab == .plan, presentedSheet == nil, currentEvent != nil {
+            if case .event = target {
+                presentedSheet = .options
+            } else {
+                planPath.append(target)
+            }
+            return
+        }
+        navigate(to: target)
     }
 
     /// Opens the search sheet with `query` (Siri / Shortcuts). `ask`: also put it to the
@@ -819,11 +908,13 @@ final class AppState {
         searchText = query
         autoAskQuery = ask && Self.assistantAvailable ? query : nil
         #if !APP_CLIP
-        // The assistant is the search sheet's place in the full app: the text goes into its
-        // input bar, or runs at once when it was to be asked.
-        if Self.assistantEnabled {
+        // My plan's input bar is the full app's search: the text goes into it, or runs at once
+        // when it was to be asked.
+        if Self.hasPlanTab {
             autoAskQuery = nil
+            showPlanTab()
             assistant.request(query, send: ask)
+            return
         }
         #endif
         presentedSheet = .search
@@ -855,7 +946,7 @@ final class AppState {
         guard let name, !name.isEmpty else { return }
         AppLog.debug(.ui, "ui.action", "Ask about this", ["name": "ask_about", "id": .string(target.reference)])
         #if !APP_CLIP
-        if Self.assistantEnabled {
+        if Self.hasPlanTab {
             let ref: EntityRef?
             switch target {
             case .location(let id):     ref = EntityRef(kind: .location, id: id)
@@ -863,8 +954,7 @@ final class AppState {
             case .notification(let id): ref = EntityRef(kind: .update, id: id)
             case .event:                ref = nil
             }
-            searchPath = NavigationPath()
-            presentedSheet = .search
+            showPlanTab()
             if let ref {
                 assistant.askAbout(ref)
             } else {
@@ -880,16 +970,37 @@ final class AppState {
     /// stays, like the old search tab), with the field focused.
     func openSearch() {
         guard currentEvent != nil else { return }
+        #if !APP_CLIP
+        // The full app: the same input bar as My plan, over the current tab (search-only answers).
+        if Self.hasPlanTab {
+            assistant.openOverlay()
+            return
+        }
+        #endif
         searchPath = NavigationPath()
         presentedSheet = .search
     }
 
+    /// The My plan tab, back at its root, any sheet closed (no-op without it).
+    func showPlanTab() {
+        guard tabs.contains(.plan) else { return }
+        presentedSheet = nil
+        planPath = NavigationPath()
+        #if !APP_CLIP
+        assistant.closeOverlay()
+        #endif
+        selectedTab = .plan
+    }
+
     /// "Show on Map" in a location's detail: the Map tab, focused on that pin (any sheet closes).
     func showOnMap(locationId: Int) {
-        guard tabs.contains(.map) else { return }
+        guard shows(.map) else { return }
         mapFocusLocationId = locationId
         presentedSheet = nil
-        selectedTab = .map
+        #if !APP_CLIP
+        assistant.closeOverlay()
+        #endif
+        select(.map)
     }
 
     /// Pull to refresh: counted, then a normal bundle refresh.
@@ -912,11 +1023,8 @@ final class AppState {
             #if !APP_CLIP
             if let payload = shared.payload {
                 pendingSharedPlan = PendingSharedPlan(eventCode: shared.eventCode, payload: payload, receivedAt: .now)
-                // The assistant shows it read-only ("Use this plan" / "Merge with mine").
-                if Self.assistantEnabled {
-                    searchPath = NavigationPath()
-                    presentedSheet = .search
-                }
+                // My plan shows it as a proposal ("Use This Plan" / "Merge with Mine").
+                showPlanTab()
             }
             #endif
             return
@@ -1073,9 +1181,9 @@ final class AppState {
             AppLog.info(.push, "push.handled", "Push for another event", ["type": .string(payload.kindName), "action": "ignored_other_event"])
             return false
         }
-        if opened, tabs.contains(.notifications) {
+        if opened, shows(.notifications) {
             presentedSheet = nil
-            selectedTab = .notifications
+            select(.notifications)
         }
         if payload.kind == .contentUpdated, !opened {
             guard ContentUpdatePolicy.shouldRefresh(pushedVersion: payload.contentVersion, currentVersion: contentVersion) else {
@@ -1294,7 +1402,7 @@ final class AppState {
         case .item(let id):
             navigate(to: .scheduleItem(id))
         case .map(let locationId):
-            if tabs.contains(.map) {
+            if shows(.map) {
                 showOnMap(locationId: locationId)
             } else {
                 navigate(to: .location(locationId))
@@ -1302,9 +1410,9 @@ final class AppState {
         case .updates(let id?):
             navigate(to: .notification(id))
         case .updates(nil):
-            if tabs.contains(.notifications) {
+            if shows(.notifications) {
                 presentedSheet = nil
-                selectedTab = .notifications
+                select(.notifications)
             }
         case .follow:
             LiveFollowController.shared.followNow()

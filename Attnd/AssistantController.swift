@@ -1,30 +1,31 @@
 // AssistantController.swift
 // Attnd (app target only — not in the App Clip)
 //
-// The event assistant at runtime (assistant spec §1–8), matching Android's
-// `ui/assistant/AssistantController.kt`: one conversation per event (`AppState.assistant`).
+// The event assistant at runtime behind the My plan tab (plan tab spec, Nov 15, 2026; the
+// assistant spec's router, blocks, actions, edits, undo and live rules unchanged), matching
+// Android's `ui/assistant/AssistantController.kt`. One screen, no transcript:
 //
-//   - Turns: every typed turn goes through the rule-based `AssistantRouter`, or — when Apple
-//     Intelligence's on-device model is available and `AssistantFlow.path` says so — the model
-//     (`EventAssistant.assistantTurn`, streamed: blocks appear as they complete; any error or
-//     invalid output → the router's answer for that turn, `AssistantModel.resolve`).
-//   - Actions: the turn's actions, chips, card buttons and live hints go through
-//     `ActionDispatcher` (validation, `confirm` blocks, Undo) to this controller's executor.
-//     Plan changes are stored as new versions with their undo stack (`PlanStore.apply`, ≤ 20).
-//   - Storage (per event, on the device, kept after leaving like the plan, `PlanStore`): the
-//     transcript (`pref.assistant.<id>`, re-validated when shown; old confirmations are
-//     dropped), the model's conversation (`pref.assistantConversation.<id>`), the plan history
-//     (`pref.planHistory.<id>`) and the shared plans received (`pref.sharedPlans.<id>`).
+//   - Turns: every typed turn goes through `PlanProposals.swap`, the rule-based `AssistantRouter`
+//     or — when Apple Intelligence's on-device model is available and `AssistantFlow.path` says
+//     so — the model (`EventAssistant.assistantTurn`, streamed; any error or invalid output → the
+//     router's answer, `AssistantModel.resolve`).
+//   - Plan edits (router or model, pick chips, like clash, shared plan links) are not applied at
+//     once: they become `proposal` (PlanProposal.swift), previewed in the timeline (suggested /
+//     crossed-out rows, diff pill). An option row, the pill's Apply or a typed "do it" / "the
+//     second one" applies it (`ActionDispatcher`, as the person's own choice) and shows the
+//     Undo pill for ~8 s (`undoPill`; "undo" typed works too, ≤ 20 versions in `PlanStore`).
+//   - Everything else (questions, search, why-not, now/next, settings, likes) is the **answer
+//     card** (`answer`, the last turn only, its blocks compact above the input bar). The model's
+//     conversation history is kept as before (`pref.assistantConversation.<id>`).
+//   - Other tabs: the floating search button opens the same bar over the tab (`overlayOpen`,
+//     search-only answers); a plan edit typed there switches to My plan with the preview.
 //   - Live (§6): position samples while a screen tracks the location (never a new permission
 //     prompt) → auto check-off, skipped items; running late, gap fillers, organizer changes and
-//     the day's recap → `live` (`LiveHintRules`), shown above the conversation.
-//   - Shared plan links (`AppState.pendingSharedPlan`, API-015): a read-only turn with
-//     "Use this plan" / "Merge with mine".
+//     the day's recap → `live` (`LiveHintRules`), shown in the timeline.
 //
 // Logging: `assistant.turn` / `assistant.block` / `assistant.action`, `plan.edit` /
 // `plan.undo`, `live.running_late` / `live.checkoff`, `share.created` / `share.opened` (never
-// the typed text in production: `LogRedaction.textFields`). Not in screenshot mode (the
-// search sheet is shown there instead).
+// the typed text in production: `LogRedaction.textFields`). Not in screenshot mode.
 
 import Foundation
 import Observation
@@ -33,40 +34,44 @@ import Observation
 @Observable
 final class AssistantController {
 
-    /// A shared plan link's offer under its turn.
-    struct SharedOffer: Hashable, Sendable {
-        var ids: [Int]
-        var day: PlanDate?
-        var handled = false
-    }
-
-    /// One turn of the conversation as shown.
+    /// The answer card: the last non-edit turn.
     struct Turn: Identifiable, Hashable {
         var id: Int
         /// What the user typed or the chip they tapped; nil for a turn the app added.
         var input: String?
         var blocks: [AssistantBlock]
         var source: TurnSource = .rules
-        /// A write applied with Undo (plan change, like, check-off): Undo / Apply act on it.
+        /// A write applied with Undo (like, check-off): Undo / Apply act on it.
         var applied: AssistantAction? = nil
         var undone = false
         /// Indexes of `confirm` blocks already answered (and how).
         var answered: [Int: Bool] = [:]
         /// The model is still writing this turn.
         var streaming = false
-        var shared: SharedOffer? = nil
     }
 
-    private(set) var turns: [Turn] = []
+    /// "Undo" for ~8 s after a plan change was applied.
+    struct UndoPill: Identifiable, Hashable {
+        var id: Int
+        var text: String
+    }
+
+    /// The answer card (nil: none shown).
+    private(set) var answer: Turn?
+    /// The plan edit shown in the timeline, waiting to be applied (nil: none).
+    private(set) var proposal: PlanProposal?
+    /// The Undo pill after a plan change (nil: none).
+    private(set) var undoPill: UndoPill?
     /// The path of the turn being worked on (busy indicator in the input bar).
     private(set) var busy: TurnPath?
     /// The input bar's chosen path (nil = automatic).
     var forced: TurnPath?
-    /// The input bar's text (kept while the sheet is closed).
+    /// The input bar's text. A proposal stays while typing (so "the second one" can answer it);
+    /// sending anything that isn't an answer to it clears it.
     var draft = ""
+    /// The search bar over another tab is open (the floating search button).
+    private(set) var overlayOpen = false
     private(set) var live = LiveHints()
-    /// Incremented when a turn is added (the screen scrolls to it).
-    private(set) var serial = 0
     /// Incremented to put the keyboard up (a request typed elsewhere, "Ask about this").
     private(set) var focusSerial = 0
     /// The plan's walking legs on real paths (MKDirections, per leg).
@@ -89,7 +94,7 @@ final class AssistantController {
 
     // MARK: - Event
 
-    /// The conversation of `eventId` (AppState, with the event's hearts and plan).
+    /// The assistant of `eventId` (AppState, with the event's hearts and plan).
     func load(eventId: Int?) {
         guard self.eventId != eventId else { return }
         modelTask?.cancel()
@@ -101,30 +106,16 @@ final class AssistantController {
         lateLoggedFor = nil
         busy = nil
         forced = nil
+        answer = nil
+        proposal = nil
+        undoPill = nil
+        overlayOpen = false
         draft = ""
-        guard let eventId, let appState, !ScreenshotMode.isActive else {
-            turns = []
+        guard eventId != nil, appState != nil, !ScreenshotMode.isActive else {
             live = LiveHints()
             return
         }
-        let ctx = context()
-        turns = appState.planner.transcript(eventId).map { stored in
-            // Stored turns are shown again, re-validated; old confirmations can't be answered.
-            let blocks = ctx.map { BlockValidator.validate(stored.turn.blocks, $0.blockContext) } ?? stored.turn.blocks
-            defer { nextId += 1 }
-            return Turn(id: nextId, input: stored.input, blocks: blocks.filter { if case .confirm = $0 { return false } else { return true } })
-        }
         refreshLive()
-    }
-
-    func clearConversation() {
-        guard let eventId, let appState else { return }
-        modelTask?.cancel()
-        appState.planner.setTranscript([], eventId: eventId)
-        appState.planner.setConversation(AssistantConversation(), eventId: eventId)
-        turns = []
-        busy = nil
-        AppLog.debug(.ui, "ui.action", "Assistant conversation cleared", ["name": "assistant_clear"])
     }
 
     var modelAvailable: Bool { AppState.assistantAvailable }
@@ -139,7 +130,8 @@ final class AssistantController {
             plan: appState.planner.plan.flatMap { $0.isEmpty ? nil : $0 },
             now: now,
             user: userPoint(now: now),
-            canPlan: available,
+            // Plans are made with or without the model (plan tab spec).
+            canPlan: AppState.plannerAvailable,
             modelAvailable: available,
             history: appState.planner.history,
             units: DistanceText.usesImperial() ? .imperial : .metric,
@@ -153,11 +145,47 @@ final class AssistantController {
         return appState.userLocation.location
     }
 
+    // MARK: - Screen state
+
+    /// The answer card goes away (typing again, swipe down, the close button).
+    func dismissAnswer() {
+        guard answer != nil else { return }
+        if answer?.streaming == true { modelTask?.cancel() }
+        answer = nil
+    }
+
+    func clearProposal() {
+        proposal = nil
+    }
+
+    func openOverlay() {
+        overlayOpen = true
+        focusSerial += 1
+    }
+
+    func closeOverlay() {
+        guard overlayOpen else { return }
+        overlayOpen = false
+    }
+
+    /// The Undo pill's time is up (only the pill with `id`).
+    func expireUndo(_ id: Int) {
+        if undoPill?.id == id { undoPill = nil }
+    }
+
+    /// The preview of the current proposal (nil: none).
+    var preview: PlanPreview? {
+        guard let proposal, let bundle = appState?.currentBundle else { return nil }
+        return PlanPreview.of(proposal, plan: appState?.planner.plan, bundle)
+    }
+
     // MARK: - Turns
 
     /// The input bar's intent chip for `text` (debounced by the screen).
     func predict(_ text: String) -> TurnPath {
         guard let ctx = context(), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return forced ?? .search }
+        if proposal != nil, case .apply = ProposalReply.parse(text, options: proposal?.options.count ?? 0) { return .plan }
+        if PlanProposals.swap(text, ctx) != nil { return .plan }
         return AssistantFlow.path(AssistantRouter.route(text, ctx).intent, text, modelAvailable: ctx.modelAvailable, forced: forced)
     }
 
@@ -168,14 +196,50 @@ final class AssistantController {
         forced = order[(index + 1) % order.count]
     }
 
-    /// Enter / send: runs the full turn.
+    /// Enter / send on the bar over another tab: search answers there; a plan edit (or anything
+    /// for the plan) switches to My plan with its preview.
+    func submitFromOverlay(_ input: String) {
+        let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, let ctx = context() else { return }
+        let routed = AssistantRouter.route(text, ctx)
+        let path = AssistantFlow.path(routed.intent, text, modelAvailable: ctx.modelAvailable, forced: forced)
+        if path == .plan || PlanProposals.swap(text, ctx) != nil {
+            closeOverlay()
+            appState?.showPlanTab()
+            submit(text)
+        } else {
+            submit(text, forced: path == .ask ? .ask : .search)
+        }
+    }
+
+    /// Enter / send: answers a pending proposal ("do it", "the second one", "no"), or runs a turn.
     func submit(_ input: String, forced overridden: TurnPath? = nil) {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let ctx = context() else { return }
+        if let proposal, !text.isEmpty {
+            switch ProposalReply.parse(text, options: proposal.options.count) {
+            case .apply(let index):
+                applyProposal(index)
+                return
+            case .cancel:
+                clearProposal()
+                AppLog.debug(.ui, "ui.action", "Plan proposal dismissed", ["name": "proposal_cancel"])
+                return
+            case .none:
+                clearProposal()
+            }
+        }
         let path = overridden ?? forced
         let started = ContinuousClock.now
         if text.isEmpty {
             finish(nil, AssistantRouter.route("", ctx).turn, .rules, .empty, started, ctx)
+            return
+        }
+        if path != .search && path != .ask, let swap = PlanProposals.swap(text, ctx) {
+            switch swap {
+            case .proposal(let p): propose(p, input: text, started, ctx)
+            case .message(let message): finish(text, AssistantTurn(blocks: [.text(message)]), .rules, .planEdit, started, ctx)
+            }
             return
         }
         let routed = AssistantRouter.route(text, ctx)
@@ -183,26 +247,47 @@ final class AssistantController {
         case .search:
             if path == .search {
                 finish(text, AssistantFlow.searchTurn(text, ctx), .rules, .search, started, ctx)
+            } else if let p = PlanProposals.from(routed: routed, ctx) {
+                propose(p, input: text, started, ctx)
             } else {
                 finish(text, routed.turn, .rules, routed.intent, started, ctx)
             }
         case .plan:
-            finish(text, AssistantFlow.planTurn(text, routed, ctx), .rules, routed.intent, started, ctx)
+            if let p = PlanProposals.from(routed: routed, ctx) {
+                propose(p, input: text, started, ctx)
+            } else {
+                finish(text, AssistantFlow.planTurn(text, routed, ctx), .rules, routed.intent, started, ctx)
+            }
         case .ask:
             ask(text, ctx, started)
         }
     }
 
-    /// The model path: streamed blocks, then the validated turn (or the router's on invalid output).
+    /// Shows a plan edit as the timeline's preview (nothing is applied yet).
+    private func propose(_ p: PlanProposal, input: String?, _ started: ContinuousClock.Instant, _ ctx: RouterContext,
+                         source: TurnSource = .rules) {
+        busy = nil
+        answer = nil
+        proposal = p
+        var fields: LogFields = [
+            "path": .string(source == .model ? "model" : "rules"), "intent": "plan_edit",
+            "ms": .int((ContinuousClock.now - started).wholeMilliseconds), "blocks": 0, "fallback": false,
+        ]
+        if let input { fields.merge(LogRedaction.textFields(input)) { _, new in new } }
+        AppLog.info(.assistant, "assistant.turn", "Assistant turn (plan proposal)", fields)
+        if let input { remember(ctx.bundle.event.id, input, AssistantTurn(blocks: [.text(p.text)])) }
+    }
+
+    /// The model path: streamed blocks into the answer card, then the validated turn (or the
+    /// router's on invalid output); a plan edit becomes a proposal.
     private func ask(_ text: String, _ ctx: RouterContext, _ started: ContinuousClock.Instant) {
         modelTask?.cancel()
         guard let appState else { return }
         let eventId = ctx.bundle.event.id
         let id = nextId
         nextId += 1
-        turns.append(Turn(id: id, input: text, blocks: [], source: .model, streaming: true))
+        answer = Turn(id: id, input: text, blocks: [], source: .model, streaming: true)
         busy = .ask
-        serial += 1
         let retrieved = AssistantModel.retrieve(text, ctx)
         let prompt = AssistantModel.prompt(text, ctx, appState.planner.conversation(eventId), retrieved)
         modelTask = Task { [weak self] in
@@ -210,14 +295,14 @@ final class AssistantController {
             var toolCalls = 0
             do {
                 let reply = try await EventAssistant.assistantTurn(prompt, bundle: ctx.bundle, now: ctx.now) { [weak self] partial in
-                    guard let self, let index = self.turns.firstIndex(where: { $0.id == id }) else { return }
+                    guard let self, self.answer?.id == id else { return }
                     let shown = AssistantModel.completeBlocks(partial, ctx).filter { !$0.isChips }
-                    if shown != self.turns[index].blocks { self.turns[index].blocks = shown }
+                    if shown != self.answer?.blocks { self.answer?.blocks = shown }
                 }
                 raw = reply.raw
                 toolCalls = reply.toolCalls
             } catch is CancellationError {
-                self?.turns.removeAll { $0.id == id }
+                if self?.answer?.id == id { self?.answer = nil }
                 self?.busy = nil
                 return
             } catch {
@@ -229,13 +314,18 @@ final class AssistantController {
             }
             guard let self, !Task.isCancelled, self.eventId == eventId else { return }
             let resolved = AssistantModel.resolve(text, raw: raw, ctx)
-            self.turns.removeAll { $0.id == id }
+            if self.answer?.id == id { self.answer = nil }
+            if let p = PlanProposals.from(actions: resolved.turn.actions, ctx)
+                ?? resolved.routed.flatMap({ PlanProposals.from(routed: $0, ctx) }) {
+                self.propose(p, input: text, started, ctx, source: resolved.source)
+                return
+            }
             self.finish(text, resolved.turn, resolved.source, resolved.routed?.intent ?? .question, started, ctx,
                         fallback: resolved.source == .rules, modelTried: true, toolCalls: toolCalls)
         }
     }
 
-    /// Adds a finished turn, runs its actions, remembers it and logs it.
+    /// Shows a finished (non-edit) turn as the answer card, runs its actions, logs it.
     private func finish(
         _ input: String?, _ turn: AssistantTurn, _ source: TurnSource, _ intent: AssistantIntent,
         _ started: ContinuousClock.Instant, _ ctx: RouterContext,
@@ -244,9 +334,10 @@ final class AssistantController {
         let actionSource: ActionSource = source == .model ? .model : .rules
         var blocks = turn.blocks
         var applied: AssistantAction?
-        for action in turn.actions {
+        for action in turn.actions where !PlanProposals.isPlanWrite(action) {
             let result = runQuietly(action, actionSource)
             if let action = result.applied { applied = action }
+            if action.name == .planUndo { undoPill = nil }
             // The router's blocks already show the result; the model's may not: add what it lacks.
             if source == .model {
                 let types = Set(blocks.map(\.type))
@@ -254,8 +345,13 @@ final class AssistantController {
                 if result.blocks.isEmpty, let message = result.message { blocks.append(.text(message)) }
             }
         }
+        // A like that clashes with the plan: "Add to plan instead of X?" is an inline preview.
+        if proposal == nil, let clash = clashProposal(blocks, ctx) {
+            proposal = clash
+        }
+        if proposal != nil { blocks = blocks.map(Self.withoutPlanChips).filter(Self.isNotEmptyChips) }
         let validated = context().map { BlockValidator.validate(blocks, $0.blockContext) } ?? blocks
-        append(input, validated, source: source, applied: applied)
+        show(input, validated, source: source, applied: applied)
         if [.search, .question, .noMatch].contains(intent), input != nil { appState?.track(.search) }
         let ms = (ContinuousClock.now - started).wholeMilliseconds
         var fields: LogFields = [
@@ -271,22 +367,36 @@ final class AssistantController {
         remember(ctx.bundle.event.id, input, AssistantTurn(blocks: validated))
     }
 
-    private func append(_ input: String?, _ blocks: [AssistantBlock], source: TurnSource = .rules,
-                        applied: AssistantAction? = nil, shared: SharedOffer? = nil) {
-        busy = nil
-        if blocks.isEmpty && shared == nil { return }
+    /// A like-clash chip in the turn ("Add to plan instead of X?") as a proposal.
+    private func clashProposal(_ blocks: [AssistantBlock], _ ctx: RouterContext) -> PlanProposal? {
+        for case .chips(let chips) in blocks {
+            if let chip = chips.first(where: { PlanProposals.isPlanWrite($0.action) && $0.label.hasPrefix("Add to plan instead of") }) {
+                return PlanProposals.from(chips: [chip], text: chip.label, context() ?? ctx)
+            }
+        }
+        return nil
+    }
+
+    private static func isNotEmptyChips(_ block: AssistantBlock) -> Bool {
+        if case .chips(let chips) = block { return !chips.isEmpty }
+        return true
+    }
+
+    private static func withoutPlanChips(_ block: AssistantBlock) -> AssistantBlock {
+        if case .chips(let chips) = block { return .chips(chips.filter { !$0.label.hasPrefix("Add to plan instead of") }) }
+        return block
+    }
+
+    /// The answer card shows `blocks` (replacing the last one).
+    private func show(_ input: String?, _ blocks: [AssistantBlock], source: TurnSource = .rules, applied: AssistantAction? = nil) {
+        // A plan being made keeps its progress (makePlan clears it).
+        if busy != .plan || appState?.planner.isPlanning != true { busy = nil }
+        if blocks.isEmpty { return }
         for block in blocks {
             AppLog.debug(.assistant, "assistant.block", "Block \(block.type)", ["type": .string(block.type), "ids": .int(AssistantFlow.refs(block).count)])
         }
-        turns.append(Turn(id: nextId, input: input, blocks: blocks, source: source, applied: applied, shared: shared))
+        answer = Turn(id: nextId, input: input, blocks: blocks, source: source, applied: applied)
         nextId += 1
-        serial += 1
-        persist()
-    }
-
-    private func persist() {
-        guard let eventId, let appState else { return }
-        appState.planner.setTranscript(turns.filter { !$0.streaming }.map { StoredTurn(input: $0.input, turn: AssistantTurn(blocks: $0.blocks)) }, eventId: eventId)
     }
 
     /// The model's conversation: the user's text and what the assistant answered (text only).
@@ -296,6 +406,73 @@ final class AssistantController {
         if let input { conversation = conversation.with(ConversationTurn(fromUser: true, text: input)) }
         conversation = conversation.with(ConversationTurn(fromUser: false, text: AssistantFlow.replyText(turn, bundle)))
         appState.planner.setConversation(conversation, eventId: eventId)
+    }
+
+    // MARK: - Proposals
+
+    /// Applies option `index` of the shown proposal (an option row, the pill, "do it", "the
+    /// second one"): dispatched as the person's own choice; the screen stays where it is and the
+    /// Undo pill shows.
+    func applyProposal(_ index: Int) {
+        guard let proposal, index >= 0, index < proposal.options.count, let appState, let ctx = context() else { return }
+        let option = proposal.options[index]
+        self.proposal = nil
+        switch option.apply {
+        case .action(let action):
+            planSource = "plan"
+            defer { planSource = "assistant" }
+            switch dispatcher.dispatch(action, context: actionContext(ctx), source: .manual, confirmed: true) {
+            case .executed(.done(let message, _), _):
+                logAction(action, "applied", confirm: .chip)
+                showUndo(message ?? proposal.text)
+            case .executed(.failed(let reason), _), .rejected(let reason):
+                logAction(action, "failed")
+                show(nil, [.text(rejectText(reason))])
+            case .needsConfirmation(let confirm):
+                show(nil, [confirm])
+            }
+        case .plan(let plan):
+            appState.planner.apply(plan)
+            AppLog.notice(.ui, "share.opened", "Shared plan applied", [
+                "target": "plan", "items": .int(plan.itemIds.count), "known": .int(plan.itemIds.count),
+                "action": .string(index == 0 ? "use" : "merge"), "joined": false,
+            ])
+            refreshLive()
+            showUndo(index == 0 ? "Using the shared plan." : "Merged with your plan.")
+        }
+    }
+
+    private func showUndo(_ text: String) {
+        undoPill = UndoPill(id: nextId, text: text.replacingOccurrences(of: "**", with: ""))
+        nextId += 1
+    }
+
+    /// The Undo pill: the previous plan version back.
+    func undoLastChange() {
+        undoPill = nil
+        guard let ctx = context() else { return }
+        _ = dispatcher.dispatch(AssistantAction(name: .planUndo), context: actionContext(ctx), source: .manual)
+    }
+
+    /// A plan row's own edit (its menu: Remove, Keep, Later showing): previewed like a typed one.
+    func proposeEdit(_ ops: [PlanOp], label: String) {
+        guard let ctx = context(), let p = PlanProposals.from(action: .planEdit(ops, ctx.bundle), label: label, ctx) else { return }
+        answer = nil
+        proposal = p
+    }
+
+    /// A plan row's Swap: its alternatives as option rows under it.
+    func proposeSwap(_ itemId: Int) {
+        guard let ctx = context(), let name = ctx.bundle.scheduleItem(itemId)?.name else { return }
+        switch PlanProposals.swap("swap \(name)", ctx) {
+        case .proposal(let p)?:
+            answer = nil
+            proposal = p
+        case .message(let message)?:
+            show(nil, [.text(message)])
+        case nil:
+            show(nil, [.text("There's nothing to swap \(name) for.")])
+        }
     }
 
     // MARK: - Actions
@@ -310,7 +487,7 @@ final class AssistantController {
         ActionContext(bundle: ctx.bundle, now: ctx.now, hasLocation: ctx.user != nil, hasPlan: ctx.plan != nil)
     }
 
-    /// A turn's own action: dispatched with its source; the result is returned, not shown as a new turn.
+    /// A turn's own action: dispatched with its source; the result is returned, not shown.
     private func runQuietly(_ action: AssistantAction, _ source: ActionSource) -> Quiet {
         guard let ctx = context() else { return Quiet() }
         if !action.name.mutates && action.name.result != .navigation {
@@ -334,19 +511,19 @@ final class AssistantController {
         }
     }
 
-    /// A chip, a card button, the pinned plan or a live hint: runs `action` and shows its result
-    /// as a new turn labelled `label`. Reads render with the router's layout; writes go through
-    /// the dispatcher (`.rules` confirms chip-confirmed actions first; `.manual` is the person's
-    /// own button). Returns the outcome's message.
+    /// A chip, a card button or a live hint: runs `action` and shows its result in the answer
+    /// card labelled `label`. A plan edit from a chip in the answer card is previewed first
+    /// (`propose`); a live hint's or the person's own button (`.manual`) applies at once with the
+    /// Undo pill. Reads render with the router's layout. Returns the outcome's message.
     @discardableResult
     func run(_ action: AssistantAction, label: String?, source: ActionSource = .rules, confirmed: Bool = false) -> String? {
         guard let ctx = context() else { return nil }
         if !action.name.mutates && action.name.result != .navigation {
             let blocks = AssistantRouter.renderRead(action, ctx)
-            append(label, blocks.isEmpty ? [.text("Nothing to show for that.")] : blocks)
+            show(label, blocks.isEmpty ? [.text("Nothing to show for that.")] : blocks)
             logAction(action, "applied")
             if action.name == .search, label != nil { appState?.track(.search) }
-            remember(ctx.bundle.event.id, label, AssistantTurn(blocks: turns.last?.blocks ?? []))
+            remember(ctx.bundle.event.id, label, AssistantTurn(blocks: answer?.blocks ?? []))
             return nil
         }
         if source == .manual && planSource == "assistant" { planSource = "plan" }
@@ -355,62 +532,94 @@ final class AssistantController {
         case .rejected(let reason):
             logAction(action, "failed")
             let text = rejectText(reason)
-            append(label, [.text(text)])
+            show(label, [.text(text)])
             return text
         case .needsConfirmation(let confirm):
-            append(label, [confirm])
+            show(label, [confirm])
             return nil
         case .executed(let outcome, let undo):
             switch outcome {
             case .done(let message, let blocks):
                 logAction(action, confirmed ? "confirmed" : "applied", confirm: confirmed ? .chip : action.name.confirm)
-                let all = (message.map { [AssistantBlock.text($0)] } ?? []) + blocks
+                if PlanProposals.isPlanWrite(action) || action.name == .planUndo {
+                    // Plan changes show in the timeline itself, with the Undo pill.
+                    if action.name != .planUndo { showUndo(message ?? "Plan changed.") } else { undoPill = nil }
+                    if answer?.streaming != true { answer = nil }
+                    return message
+                }
+                var all = (message.map { [AssistantBlock.text($0)] } ?? []) + blocks
+                if let clash = clashProposal(all, context() ?? ctx) {
+                    proposal = clash
+                    all = all.map(Self.withoutPlanChips)
+                }
                 let validated = BlockValidator.validate(all, (context() ?? ctx).blockContext)
-                append(label, validated, applied: undo != nil ? action : nil)
+                show(label, validated, applied: undo != nil ? action : nil)
                 if !validated.isEmpty { remember(ctx.bundle.event.id, label, AssistantTurn(blocks: validated)) }
                 return message
             case .failed(let reason):
                 logAction(action, "failed")
-                append(label, [.text(reason)])
+                show(label, [.text(reason)])
                 return reason
             }
         }
     }
 
+    /// A chip in the answer card: a plan edit is previewed in the timeline; anything else runs.
     func chip(_ chip: AssistantChip) {
+        if PlanProposals.isPlanWrite(chip.action), let ctx = context(),
+           let p = PlanProposals.from(chips: [chip], text: chip.label, ctx) {
+            answer = nil
+            proposal = p
+            return
+        }
+        if chip.action.name == .planMake, let request = chip.action.string("request") {
+            answer = nil
+            makePlan(request)
+            return
+        }
         run(chip.action, label: chip.label)
     }
 
-    /// A `confirm` block's Yes / Not Now.
-    func answer(turnId: Int, index: Int, yes: Bool) {
-        guard let t = turns.firstIndex(where: { $0.id == turnId }), turns[t].answered[index] == nil,
-              index < turns[t].blocks.count, case .confirm(let action, _) = turns[t].blocks[index] else { return }
-        turns[t].answered[index] = yes
+    /// A live hint's chip (running late, gap filler, skipped): applied at once with Undo.
+    func hintChip(_ chip: AssistantChip) {
+        if PlanProposals.isPlanWrite(chip.action) {
+            run(chip.action, label: chip.label, source: .manual)
+        } else {
+            run(chip.action, label: chip.label)
+        }
+    }
+
+    /// A `confirm` block's Yes / Not Now (in the answer card).
+    func answerConfirm(turnId: Int, index: Int, yes: Bool) {
+        guard var turn = answer, turn.id == turnId, turn.answered[index] == nil,
+              index < turn.blocks.count, case .confirm(let action, _) = turn.blocks[index] else { return }
+        turn.answered[index] = yes
+        answer = turn
         if yes {
             run(action, label: nil, source: .rules, confirmed: true)
         } else {
             logAction(action, "declined", confirm: .chip)
-            append(nil, [.text("OK, nothing changed.")])
+            show(nil, [.text("OK, nothing changed.")])
         }
     }
 
-    /// A turn's Undo: the applied write's inverse (`ActionRegistry.undo(for:)`).
+    /// The answer card's Undo: the applied write's inverse (`ActionRegistry.undo(for:)`).
     func undo(turnId: Int) {
-        guard let t = turns.firstIndex(where: { $0.id == turnId }), let applied = turns[t].applied, !turns[t].undone,
+        guard let turn = answer, turn.id == turnId, let applied = turn.applied, !turn.undone,
               let inverse = ActionRegistry.undo(for: applied), let ctx = context() else { return }
         if case .executed(.done, _) = dispatcher.dispatch(inverse, context: actionContext(ctx), source: .manual) {
             logAction(applied, "undone")
-            if let i = turns.firstIndex(where: { $0.id == turnId }) { turns[i].undone = true }
+            if answer?.id == turnId { answer?.undone = true }
         }
     }
 
     /// Apply again after an Undo.
     func reapply(turnId: Int) {
-        guard let t = turns.firstIndex(where: { $0.id == turnId }), let applied = turns[t].applied, turns[t].undone,
+        guard let turn = answer, turn.id == turnId, let applied = turn.applied, turn.undone,
               let ctx = context() else { return }
         if case .executed(.done, _) = dispatcher.dispatch(applied, context: actionContext(ctx), source: .manual) {
             logAction(applied, "applied")
-            if let i = turns.firstIndex(where: { $0.id == turnId }) { turns[i].undone = false }
+            if answer?.id == turnId { answer?.undone = false }
         }
     }
 
@@ -496,7 +705,7 @@ final class AssistantController {
             Task { [weak self] in
                 let ok = await appState.setNotificationsEnabled(on)
                 if on && !ok {
-                    self?.append(nil, [.text("Notifications are off for Attnd. Allow them in Settings → Attnd → Notifications to turn this on.")])
+                    self?.show(nil, [.text("Notifications are off for Attnd. Allow them in Settings → Attnd → Notifications to turn this on.")])
                 }
             }
             let text: String
@@ -611,36 +820,28 @@ final class AssistantController {
 
     // MARK: - Plans
 
-    private func makePlan(_ request: String) {
+    /// Makes a plan in place (progress in the timeline; the model reads the request when available).
+    func makePlan(_ request: String) {
         guard let appState else { return }
         busy = .plan
+        proposal = nil
         Task { [weak self] in
             let plan = await appState.makePlan(request)
             guard let self else { return }
+            self.busy = nil
             guard let plan, !plan.isEmpty, let bundle = appState.currentBundle else {
-                self.append(nil, [.text(appState.planner.error ?? AppState.nothingFitsMessage)])
+                self.show(nil, [.text(appState.planner.error ?? AppState.nothingFitsMessage)])
                 return
             }
-            let blocks: [AssistantBlock] = [
-                .text("Here's your plan: \(Planner.summary(plan, timeZone: bundle.event.timeZone))."),
-                .plan(),
-                .chips([
-                    AssistantChip(label: "Share my plan", action: AssistantAction(name: .sharePlan)),
-                    AssistantChip(label: "Add my plan to calendar", action: .calendarPlan()),
-                    AssistantChip(label: PlanVersionKind.chill.label + " version", action: .planVersion(.chill)),
-                    AssistantChip(label: "Undo", action: AssistantAction(name: .planUndo)),
-                ]),
-            ]
-            if let ctx = self.context() {
-                let validated = BlockValidator.validate(blocks, ctx.blockContext)
-                self.append(nil, validated)
-                self.remember(bundle.event.id, nil, AssistantTurn(blocks: validated))
-            }
+            self.answer = nil
+            self.showUndo("Here's your plan: \(Planner.summary(plan, timeZone: bundle.event.timeZone)).")
+            self.remember(bundle.event.id, nil, AssistantTurn(blocks: [.text("Made a plan: \(Planner.summary(plan, timeZone: bundle.event.timeZone)).")]))
             self.refreshLive()
         }
     }
 
-    /// A shared plan link opened for the joined event (API-015): a read-only turn with Use / Merge.
+    /// A shared plan link opened for the joined event (API-015): a proposal with "Use This Plan" /
+    /// "Merge with Mine" (one shared item: its card in the answer card).
     func openShared(_ pending: PendingSharedPlan) {
         guard let appState, let bundle = appState.currentBundle,
               pending.eventCode.caseInsensitiveCompare(bundle.event.eventCode) == .orderedSame,
@@ -653,12 +854,12 @@ final class AssistantController {
         ])
         guard let ctx = context() else { return }
         if known.isEmpty {
-            append(nil, [.text("That shared plan's items aren't on the schedule any more.")])
+            show(nil, [.text("That shared plan's items aren't on the schedule any more.")])
             return
         }
         if single, let id = known.first {
             let ref = EntityRef(kind: .schedule, id: id)
-            append(nil, BlockValidator.validate([
+            show(nil, BlockValidator.validate([
                 .text("Someone shared **\(ref.name(bundle) ?? "an item")** with you."),
                 .itemCard(id: id),
                 .chips(AssistantRouter.entityChips(ref, ctx)),
@@ -666,40 +867,17 @@ final class AssistantController {
             return
         }
         appState.planner.addSharedPlan(known, eventId: bundle.event.id)
-        append(nil, BlockValidator.validate([
-            .text("Someone shared a plan with \(known.count) items."),
-            .timeline(ids: known, title: "Shared plan"),
-        ], ctx.blockContext), shared: SharedOffer(ids: known, day: payload.day))
-    }
-
-    /// "Use this plan" (merge false) or "Merge with mine" on a shared plan turn.
-    func useShared(turnId: Int, merge: Bool) {
-        guard let appState, let bundle = appState.currentBundle,
-              let t = turns.firstIndex(where: { $0.id == turnId }), let offer = turns[t].shared, !offer.handled else { return }
-        let eventId = bundle.event.id
         let now = Date.now
         let own = appState.likeSet
-        let plan = merge
-            ? SharedPlans.merge(appState.planner.sharedPlans(eventId), own, bundle, current: appState.planner.plan, now: now)
-            : SharedPlans.use(offer.ids, day: offer.day, bundle, own, now: now)
-        AppLog.notice(.ui, "share.opened", merge ? "Shared plan merged" : "Shared plan used", [
-            "target": "plan", "items": .int(offer.ids.count), "known": .int(offer.ids.count),
-            "action": .string(merge ? "merge" : "use"), "joined": false,
-        ])
-        guard let plan else {
-            append(nil, [.text("Nothing in that plan is still ahead.")])
+        let current = appState.planner.plan.flatMap { $0.isEmpty ? nil : $0 }
+        guard let use = SharedPlans.use(known, day: payload.day, bundle, own, now: now) else {
+            show(nil, [.text("Nothing in that plan is still ahead.")])
             return
         }
-        appState.planner.apply(plan)
-        turns[t].shared?.handled = true
-        let summary = Planner.summary(plan, timeZone: bundle.event.timeZone)
-        let blocks: [AssistantBlock] = [
-            .text(merge ? "Merged: \(summary)." : "Using the shared plan: \(summary)."),
-            .plan(),
-            .chips([AssistantChip(label: "Undo", action: AssistantAction(name: .planUndo))]),
-        ]
-        append(nil, context().map { BlockValidator.validate(blocks, $0.blockContext) } ?? blocks)
-        refreshLive()
+        let merged = current == nil ? nil
+            : SharedPlans.merge(appState.planner.sharedPlans(bundle.event.id), own, bundle, current: current, now: now)
+        answer = nil
+        proposal = PlanProposals.shared(use: use, merged: merged, current: current, eventId: bundle.event.id, bundle)
     }
 
     /// The link of a `share` block ("plan" or "item:s12"), logged as `share.created` once shown.
@@ -723,9 +901,10 @@ final class AssistantController {
     }
 
     /// "Ask about this" from a detail screen: "Tell me about X" (the model when available, else
-    /// the item's card and chips).
+    /// the item's card and chips) in the answer card.
     func askAbout(_ ref: EntityRef) {
         guard let ctx = context(), let text = AssistantFlow.askAbout(ref, ctx.bundle) else { return }
+        proposal = nil
         if ctx.modelAvailable {
             submit(text, forced: .ask)
         } else {
@@ -741,6 +920,11 @@ final class AssistantController {
             draft = text
             focusSerial += 1
         }
+    }
+
+    /// Puts the keyboard up on My plan's bar.
+    func focusInput() {
+        focusSerial += 1
     }
 
     // MARK: - Live (spec §6)
@@ -826,11 +1010,10 @@ extension AppState {
         LikeSet(locations: personal.heartedLocations, scheduleItems: personal.heartedScheduleItems)
     }
 
-    /// The assistant is the floating button's target (full app, not in screenshot mode, where the
-    /// plain search sheet is shown).
-    static var assistantEnabled: Bool { !ScreenshotMode.isActive }
+    /// The assistant runs (full app, not in screenshot mode): the My plan tab.
+    static var assistantEnabled: Bool { hasPlanTab }
 
-    /// `open(screen, id?)`: a manual screen (closing the assistant when the screen is a tab).
+    /// `open(screen, id?)`: a manual screen (Map / Schedule / Locations open Explore on that view).
     func openAssistantScreen(_ screen: String, _ ref: EntityRef?) {
         func target(_ ref: EntityRef) -> SearchTarget {
             switch ref.kind {
@@ -840,14 +1023,15 @@ extension AppState {
             }
         }
         func tab(_ tab: EventTab) {
-            guard tabs.contains(tab) else { return }
+            guard shows(tab) else { return }
             presentedSheet = nil
-            selectedTab = tab
+            assistant.closeOverlay()
+            select(tab)
         }
         switch screen {
         case "map":
             if let ref, ref.kind == .location {
-                if tabs.contains(.map) { showOnMap(locationId: ref.id) } else { navigate(to: .location(ref.id)) }
+                if shows(.map) { showOnMap(locationId: ref.id) } else { navigate(to: .location(ref.id)) }
             } else {
                 tab(.map)
             }

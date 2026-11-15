@@ -30,6 +30,18 @@
             "AttndAppClip/compile-sources",
           ],
         }, {
+          "path": "TabLayout.swift",
+          "target-membership": [
+            "Attnd/compile-sources",
+            "AttndAppClip/compile-sources",
+          ],
+        }, {
+          "path": "ExploreTab.swift",
+          "target-membership": [
+            "Attnd/compile-sources",
+            "AttndAppClip/compile-sources",
+          ],
+        }, {
           "path": "DisplayLogic.swift",
           "target-membership": [
             "Attnd/compile-sources",
@@ -171,6 +183,7 @@
         { "path": "AssistantView.swift", "target-membership": [ "Attnd/compile-sources" ] },
         { "path": "AssistantBlockView.swift", "target-membership": [ "Attnd/compile-sources" ] },
         { "path": "DayRouteProvider.swift", "target-membership": [ "Attnd/compile-sources" ] },
+        { "path": "PlanProposal.swift", "target-membership": [ "Attnd/compile-sources" ] },
         {
           "path": "APIClient.swift",
           "target-membership": [
@@ -289,6 +302,8 @@
         { "path": "PlanEditingTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "AssistantExtrasTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "AssistantFlowTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
+        { "path": "PlanProposalTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
+        { "path": "TabLayoutTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
       ],
     }, {
       "kind": "group",

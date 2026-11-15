@@ -22,6 +22,7 @@ struct LocationsTab: View {
         NavigationSplitView {
             LocationsView(selection: $selection)
                 .eventStatusBanners()
+                .exploreSwitcher()
                 .optionsToolbarItem()
         } detail: {
             NavigationStack {
@@ -177,7 +178,7 @@ private struct LocationPeekModifier: ViewModifier {
             } label: {
                 Label(hearted ? "Unlike" : "Like", systemImage: hearted ? "heart.slash" : "heart")
             }
-            if location.coordinate != nil, appState.tabs.contains(.map) {
+            if location.coordinate != nil, appState.shows(.map) {
                 Button {
                     appState.showOnMap(locationId: location.id)
                 } label: {
@@ -595,7 +596,7 @@ struct LocationDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             HeartToolbarItem(target: .location(location.id), appState: appState)
-            if location.coordinate != nil, appState.tabs.contains(.map) {
+            if location.coordinate != nil, appState.shows(.map) {
                 ToolbarSpacer(.fixed, placement: .topBarTrailing)
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {

@@ -57,6 +57,9 @@ struct SettingsView: View {
                     EventHeader(event: event, logoUrl: appState.logoUrl)
                         // Siri on-screen awareness: "share this event", "where is it?".
                         .onScreenEntity(.event(event.id))
+                    if let website = event.websiteUrl {
+                        EventWebsiteLink(url: website)
+                    }
                 }
             }
 
@@ -340,6 +343,19 @@ struct EventHeader: View {
             }
         }
         .padding(.vertical, 4)
+    }
+}
+
+/// API-016: the event's Attnd Studio website, opened in Safari (`Link` → `openURL`, never an in-app
+/// web view), so no device id, token or cookie of the app goes to it.
+struct EventWebsiteLink: View {
+    let url: URL
+
+    var body: some View {
+        Link(destination: url) {
+            Label("Website", systemImage: "safari")
+        }
+        .accessibilityHint("Opens the event's website in Safari")
     }
 }
 

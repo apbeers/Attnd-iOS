@@ -484,6 +484,9 @@ struct EventInfoView: View {
             if let event = appState.currentEvent {
                 Section {
                     EventHeader(event: event, logoUrl: appState.logoUrl)
+                    if let website = event.websiteUrl {
+                        EventWebsiteLink(url: website)
+                    }
                 }
                 if !event.description.isEmpty {
                     Section("About") {

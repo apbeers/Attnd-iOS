@@ -23,6 +23,7 @@ final class ModelDecodingTests: XCTestCase {
      "timezone":"America/Chicago","status":"published","paid":false,"is_demo":true,
      "flyer_url":"https://attnd.app/media/flyer.pdf","accent_color":"#FF5A1F",
      "logo_url":null,"content_version":15,"join_url":"https://attnd.app/join/FWFM2026/",
+     "website_url":"https://sites.attnd-example.com/fw-fair/",
      "some_future_key":{"nested":[1,2,3]}}
     """
 
@@ -44,6 +45,27 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertEqual(event.startTime, ISODate.parse("2026-11-14T18:00:00Z"))
         XCTAssertNotNil(event.endTime)
         XCTAssertNotNil(event.coordinate)
+        XCTAssertEqual(event.websiteUrl?.absoluteString, "https://sites.attnd-example.com/fw-fair/")
+    }
+
+    /// API-016: `website_url` is kept only as an absolute https URL.
+    func testEvent_WebsiteUrl_OnlyHttps() throws {
+        func website(_ extra: String) throws -> URL? {
+            try decode(Event.self, #"{"id":1"# + extra + "}").websiteUrl
+        }
+        XCTAssertNil(try website(""))
+        XCTAssertNil(try website(#","website_url":null"#))
+        XCTAssertNil(try website(#","website_url":"""#))
+        XCTAssertNil(try website(#","website_url":"   ""#))
+        XCTAssertNil(try website(#","website_url":"http://sites.attnd-example.com/fw-fair/""#))
+        XCTAssertNil(try website(#","website_url":"javascript:alert(1)""#))
+        XCTAssertNil(try website(#","website_url":"/fw-fair/""#))
+        XCTAssertNil(try website(#","website_url":"https://""#))
+        XCTAssertNil(try website(#","website_url":42"#))
+        XCTAssertEqual(try website(#","website_url":" https://sites.attnd-example.com/fw-fair/ ""#)?.absoluteString,
+                       "https://sites.attnd-example.com/fw-fair/")
+        XCTAssertEqual(try website(#","website_url":"HTTPS://sites.attnd-example.com/x/""#)?.host,
+                       "sites.attnd-example.com")
     }
 
     func testEvent_MinimalPayload_UsesDefaults() throws {

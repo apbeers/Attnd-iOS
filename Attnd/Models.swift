@@ -41,6 +41,8 @@ struct Event: Identifiable, Hashable, Sendable {
     var logoUrl: URL? = nil
     var contentVersion: Int = 0
     var joinUrl: URL? = nil
+    /// API-016: the event's website (Attnd Studio). Only absolute `https` URLs; nil when there is none.
+    var websiteUrl: URL? = nil
 
     /// The event's own time zone. All event times are displayed in it.
     var timeZone: TimeZone {
@@ -63,6 +65,7 @@ extension Event: Decodable {
         case logoUrl = "logo_url"
         case contentVersion = "content_version"
         case joinUrl = "join_url"
+        case websiteUrl = "website_url"
     }
 
     init(from decoder: Decoder) throws {
@@ -87,6 +90,7 @@ extension Event: Decodable {
         logoUrl = c.url(.logoUrl)
         contentVersion = c.lenient(Int.self, .contentVersion) ?? 0
         joinUrl = c.url(.joinUrl)
+        websiteUrl = c.httpsURL(.websiteUrl)
     }
 }
 
@@ -791,6 +795,13 @@ extension KeyedDecodingContainer {
 
     func url(_ key: Key) -> URL? {
         nonEmptyString(key).flatMap { URL(string: $0) }
+    }
+
+    /// An absolute `https` URL with a host, or nil (missing, null, blank, `http`, other schemes, relative).
+    func httpsURL(_ key: Key) -> URL? {
+        guard let url = url(key), url.scheme?.lowercased() == "https",
+              let host = url.host, !host.isEmpty else { return nil }
+        return url
     }
 
     /// An ISO 8601 timestamp (with or without fractional seconds), or nil.

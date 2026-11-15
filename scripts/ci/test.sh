@@ -55,17 +55,27 @@ print(best[1] if best else "")
 ')
   [ -n "$device" ] || { echo "No iPhone simulator available" >&2; exit 1; }
   echo "$device" > "$device_file"
-  # Cold-booting a simulator on a fresh runner takes minutes. Boot it now, in the background, while we
-  # build for a generic simulator destination (which, unlike `xcodebuild test`, doesn't wait for it).
-  xcrun simctl boot "$device" > /dev/null 2>&1 &
   # No index store (CI never uses it); only this Mac's architecture; no signing for the simulator.
   settings=(CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO ONLY_ACTIVE_ARCH=YES ARCHS="$(uname -m)")
   if [ -n "${COMPILATION_CACHE_DIR:-}" ]; then
     settings+=(COMPILATION_CACHE_ENABLE_CACHING=YES COMPILATION_CACHE_CAS_PATH="$PWD/$COMPILATION_CACHE_DIR")
   fi
-  status=0
+  # Cold-booting a simulator on a fresh runner takes minutes, so it overlaps the build. But while a
+  # simulator is booting, xcodebuild can't resolve even a generic simulator destination (it stalled ~4 min
+  # before planning the build, Nov 2026), so the boot starts only once the build has been planned.
+  : > "$log"
   xcodebuild build-for-testing "${common[@]}" -destination 'generic/platform=iOS Simulator' "${settings[@]}" \
-    2>&1 | tee "$log" || status=$?
+    > >(tee "$log") 2>&1 &
+  build_pid=$!
+  for _ in $(seq 1 240); do
+    grep -q -e 'ComputeTargetDependencyGraph' -e 'TEST BUILD' -e 'error:' "$log" 2>/dev/null && break
+    kill -0 "$build_pid" 2>/dev/null || break
+    sleep 0.5
+  done
+  xcrun simctl boot "$device" > /dev/null 2>&1 &
+  status=0
+  wait "$build_pid" || status=$?
+  sleep 1  # let tee flush the log
   python3 scripts/ci/warnings.py "$log" "$label" || true
   exit "$status"
 fi

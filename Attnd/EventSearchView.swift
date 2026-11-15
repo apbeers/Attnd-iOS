@@ -349,7 +349,7 @@ extension View {
 
     /// The same for a list whose selection type is `Item`: each row is an entity.
     @ViewBuilder
-    func onScreenEntities<Item: Hashable>(
+    func onScreenEntities<Item: Hashable & SendableMetatype>(
         forSelectionType type: Item.Type,
         _ target: @escaping @Sendable (Item) -> SearchTarget
     ) -> some View {

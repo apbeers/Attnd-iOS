@@ -78,9 +78,24 @@ actor AttestationManager {
         }
 
         let task = Task<String, Error> {
-            let t = try await self.attest()
-            self.inflightTask = nil
-            return t
+            let started = ContinuousClock.now
+            AppLog.info(.auth, "auth.attest.started", "App Attest", ["kind": "app_attest"])
+            do {
+                let t = try await self.attest()
+                self.inflightTask = nil
+                let ms = (ContinuousClock.now - started).wholeMilliseconds
+                AppLog.info(.auth, "auth.attest.finished", "App Attest token in \(ms) ms", ["kind": "app_attest", "ms": .int(ms), "ok": true])
+                return t
+            } catch {
+                // The failed task stays in place (callers fall back to the static key) until a
+                // 401 invalidates it, as before.
+                let ns = error as NSError
+                AppLog.warning(.auth, "auth.attest.failed", "App Attest failed", [
+                    "kind": "app_attest", "error": .string(String(describing: error).prefix(120).description),
+                    "domain": .string(ns.domain), "code": .int(ns.code),
+                ])
+                throw error
+            }
         }
         inflightTask = task
         return try await task.value
@@ -89,6 +104,7 @@ actor AttestationManager {
     /// Force-clears the stored JWT and re-attests.
     /// Call this after receiving a 401 from the API so a fresh token is fetched.
     func invalidateToken() {
+        AppLog.info(.auth, "auth.token.expired", "401: attestation token cleared", ["reason": "401"])
         KeychainHelper.delete(key: jwtKeychainKey)
         inflightTask = nil
     }

@@ -6,6 +6,27 @@
 
 import CoreLocation
 
+extension CLAuthorizationStatus {
+    /// `location.permission` status (LOG_EVENTS.md): granted, denied, not_determined, restricted.
+    var logName: String {
+        switch self {
+        case .notDetermined:                         return "not_determined"
+        case .restricted:                            return "restricted"
+        case .denied:                                return "denied"
+        case .authorizedAlways, .authorizedWhenInUse: return "granted"
+        @unknown default:                            return "denied"
+        }
+    }
+}
+
+/// `location.permission` fields.
+func locationPermissionFields(_ status: CLAuthorizationStatus, precise: Bool, asked: Bool) -> LogFields {
+    [
+        "status": .string(status.logName), "precision": .string(precise ? "precise" : "approximate"),
+        "background": .bool(status == .authorizedAlways), "asked": .bool(asked),
+    ]
+}
+
 @MainActor
 final class LocationPermissionManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 
@@ -27,6 +48,10 @@ final class LocationPermissionManager: NSObject, ObservableObject, CLLocationMan
             continuation = cont
             let status = manager.authorizationStatus
             if status == .notDetermined {
+                AppLog.notice(.location, "location.permission", "Asking for location",
+                              locationPermissionFields(status, precise: manager.accuracyAuthorization == .fullAccuracy, asked: true))
+            }
+            if status == .notDetermined {
                 manager.requestWhenInUseAuthorization()
             } else if status == .authorizedWhenInUse || status == .authorizedAlways {
                 manager.requestLocation()
@@ -43,6 +68,8 @@ final class LocationPermissionManager: NSObject, ObservableObject, CLLocationMan
 
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         let status = manager.authorizationStatus
+        AppLog.notice(.location, "location.permission", "Location permission: \(status.logName)",
+                      locationPermissionFields(status, precise: manager.accuracyAuthorization == .fullAccuracy, asked: false))
         Task { @MainActor in
             if status == .authorizedWhenInUse || status == .authorizedAlways {
                 self.manager.requestLocation()
@@ -60,6 +87,10 @@ final class LocationPermissionManager: NSObject, ObservableObject, CLLocationMan
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        let ns = error as NSError
+        AppLog.warning(.location, "location.error", "One-shot location failed", [
+            "error": .string(ns.localizedDescription), "domain": .string(ns.domain), "code": .int(ns.code),
+        ])
         Task { @MainActor in
             self.finish(with: nil)
         }

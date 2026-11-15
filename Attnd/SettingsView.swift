@@ -125,6 +125,8 @@ struct SettingsView: View {
                         Text("Never")
                     }
                 }
+                // Logs viewer and debug logging (API-013; not in screenshot mode).
+                DiagnosticsRows()
                 Button {
                     copySupportInfo(info)
                 } label: {
@@ -136,7 +138,7 @@ struct SettingsView: View {
             } header: {
                 Text("About & Support")
             } footer: {
-                Text("If you contact support, share the support code or the copied info. It identifies this device's app install, not you.")
+                Text("If you contact support, share the support code or the copied info. It identifies this device's app install, not you. A debug code identifies only one debug-logging session.")
             }
 
             // MARK: - Leave Event

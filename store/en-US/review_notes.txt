@@ -13,4 +13,6 @@ After joining an event for the first time, a short tour (onboarding cards) expla
 Follow on Lock Screen (Live Activity): heart a schedule item (heart button on any schedule row), or turn on Options > Lock Screen > Follow on Lock Screen and tap Start Now. A Live Activity then shows what is on now and next on the Lock Screen and in the Dynamic Island. With notifications on, hearted items also get a reminder 15 minutes before they start. "Tell Me When I Arrive" (optional, asks for Always location) only notices arrival at the event's venue and never leaves the device.
 Urgent announcements from organizers (e.g. a cancellation) are delivered as time-sensitive notifications and shown on the Live Activity.
 
+Diagnostics: crash and hang reports from MetricKit and anonymous performance counts (launch and loading times in ranges) are sent without any identifier and are not linked to the user or used for tracking. Options > About & Support > "Turn On Debug Logging for 10 Minutes" is optional and user-started: for 10 minutes it sends detailed app logs (no search text, location or account details, no device identifier) under a random debug code the user can share with support; it turns itself off. "Recent Logs" only shows the logs kept on the device.
+
 To switch events, use Options (gear button) > Leave Event.

@@ -232,7 +232,7 @@ struct SearchableIf: ViewModifier {
                 // Under the navigation bar, never in the bottom toolbar: the bottom-trailing
                 // corner belongs to the floating search button (ContentView).
                 .searchable(text: $text, placement: .navigationBarDrawer, prompt: Text(prompt))
-                .modifier(SearchUsageCounting(text: text))
+                .modifier(SearchUsageCounting(text: text, source: "tab"))
         } else {
             content
         }
@@ -244,6 +244,8 @@ struct SearchableIf: ViewModifier {
 /// Only the fact of a search is counted, never the text.
 struct SearchUsageCounting: ViewModifier {
     let text: String
+    /// `search.query` source: "sheet" or "tab".
+    var source = "sheet"
 
     @Environment(AppState.self) private var appState
     /// The query last counted (kept on device only), so a submit and the settle timer count it once.
@@ -273,6 +275,16 @@ struct SearchUsageCounting: ViewModifier {
         let query = normalizedQuery
         guard !query.isEmpty, query != countedQuery else { return }
         countedQuery = query
+        // The text only in Debug/Dev builds; production logs its length.
+        if AppLog.isEnabled(.debug), let index = appState.searchIndex {
+            let started = ContinuousClock.now
+            let results = index.search(query, now: .now).count
+            let ms = (ContinuousClock.now - started).wholeMilliseconds
+            AppLog.debug(.search, "search.query", "Search: \(results) results in \(ms) ms", LogRedaction.textFields(query).merging([
+                "results": .int(results), "ms": .int(ms), "source": .string(source),
+                "time_words": .bool(!EventSearch.parse(query).timeFilters.isEmpty),
+            ]) { _, new in new })
+        }
         appState.track(.search)
     }
 }

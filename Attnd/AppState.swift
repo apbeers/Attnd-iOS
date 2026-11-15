@@ -38,6 +38,15 @@ enum EventSheet: String, Identifiable, Hashable, Sendable {
 
     var id: String { rawValue }
 
+    /// `ui.screen` name (LOG_EVENTS.md).
+    var screenName: String {
+        switch self {
+        case .search:  return "search"
+        case .options: return "options"
+        case .tour:    return "onboarding"
+        }
+    }
+
     /// `tab_view` detail (API-005) counted when the sheet opens: "options" (the server
     /// accepts the event tabs and options). nil for search, which counts as `search`, and
     /// for the tour.
@@ -49,13 +58,30 @@ enum EventSheet: String, Identifiable, Hashable, Sendable {
     }
 }
 
+extension EventTab {
+    /// `ui.screen` name (LOG_EVENTS.md): the tab's raw value, "updates" for notifications.
+    var screenName: String { self == .notifications ? "updates" : rawValue }
+}
+
+/// Why the bundle is refetched (`net.bundle.applied` / `not_modified` `source`).
+enum RefreshSource: String, Sendable {
+    case join, foreground, poll, push, pull
+}
+
 @MainActor
 @Observable
 final class AppState {
 
     // MARK: - Joined event content
 
-    private(set) var currentEvent: Event?
+    private(set) var currentEvent: Event? {
+        didSet {
+            guard oldValue?.id != currentEvent?.id else { return }
+            // Logs carry the joined event's id; perf counts go with its usage batch.
+            AppLog.setEventId(currentEvent?.id)
+            usage.eventId = currentEvent?.id
+        }
+    }
     private(set) var display: DisplayConfig = .default
     private(set) var categories: [String] = []
     private(set) var locations: [Location] = []
@@ -79,6 +105,9 @@ final class AppState {
             if hasAppliedDefaultTab, oldValue != selectedTab {
                 track(.tabView, detail: selectedTab.rawValue)
             }
+            if oldValue != selectedTab {
+                AppLog.debug(.ui, "ui.screen", "Tab \(selectedTab.screenName)", ["name": .string(selectedTab.screenName)])
+            }
         }
     }
 
@@ -88,6 +117,9 @@ final class AppState {
         didSet {
             if oldValue != presentedSheet, let detail = presentedSheet?.usageDetail {
                 track(.tabView, detail: detail)
+            }
+            if oldValue != presentedSheet, let sheet = presentedSheet {
+                AppLog.debug(.ui, "ui.screen", "Sheet \(sheet.screenName)", ["name": .string(sheet.screenName)])
             }
         }
     }
@@ -250,6 +282,7 @@ final class AppState {
 
     init() {
         usage = UsageReporter()
+        usage.attachPerfMetrics()
         let defaults = UserDefaults.standard
         if let stored = defaults.string(forKey: Keys.deviceId) {
             deviceId = stored
@@ -277,8 +310,16 @@ final class AppState {
     func checkForUpdate() async {
         // Screenshot mode never shows the update banner.
         guard !ScreenshotMode.isActive else { return }
-        guard let status = try? await APIClient.shared.appStatus() else { return }
-        appStatus = status
+        do {
+            let status = try await APIClient.shared.appStatus()
+            appStatus = status
+            AppLog.notice(.lifecycle, "lifecycle.update_prompt", "Update: \(status.update.rawValue)", [
+                "update": .string(status.update.rawValue), "min_version": .string(status.minVersion ?? ""),
+                "latest_version": .string(status.latestVersion ?? ""),
+            ])
+        } catch {
+            AppLog.caught(error, .net, "app_status", level: .notice)
+        }
     }
 
     func dismissUpdateBanner() {
@@ -286,6 +327,7 @@ final class AppState {
     }
 
     private func handleUpdateRequired() async {
+        AppLog.warning(.lifecycle, "lifecycle.update_prompt", "This build's API version is retired", ["update": "required"])
         var status = (try? await APIClient.shared.appStatus()) ?? appStatus
         status.update = .required
         appStatus = status
@@ -334,21 +376,29 @@ final class AppState {
         Task { await checkForUpdate() }
         await restoreSavedEventIfNeeded()
         if currentEvent != nil {
+            if let event = currentEvent {
+                AppLog.notice(.lifecycle, "lifecycle.event.joined", "Reopened the saved event", ["event_id": .int(event.id), "via": "rejoin"])
+            }
             track(.appOpen)
             Task { await self.ensureJoined() }
-            Task { await self.refreshBundle() }
+            Task { await self.refreshBundle(source: .foreground) }
             return
         }
-        guard let code = savedEventCode else { return }
+        guard let code = savedEventCode else {
+            AppLog.debug(.ui, "ui.screen", "Launch screen", ["name": "launch"])
+            return
+        }
         do {
             let event = try await APIClient.shared.lookupEvent(query: code)
-            await joinEvent(event)
+            await joinEvent(event, via: "rejoin")
             track(.appOpen)
         } catch APIError.notFound {
+            AppLog.notice(.lifecycle, "lifecycle.event.left", "The saved event is gone (404)", ["event_id": 0, "reason": "404"])
             savedEventCode = nil
         } catch {
             // Offline or server trouble with nothing saved on disk: show the launch screen
             // but keep the code, so the next launch tries again.
+            AppLog.caught(error, .lifecycle, "rejoin_lookup")
         }
     }
 
@@ -369,7 +419,13 @@ final class AppState {
     private func restoreSavedEvent() async {
         guard !ScreenshotMode.isActive, currentEvent == nil else { return }
         let code = savedEventCode
+        let started = ContinuousClock.now
         guard let restored = await EventStore.shared.load() else { return }
+        let ms = (ContinuousClock.now - started).wholeMilliseconds
+        AppLog.info(.storage, "storage.bundle.restored", "Saved event read in \(ms) ms", [
+            "ms": .int(ms), "bytes": .int(restored.0.bundleJSON.count), "content_version": .int(restored.1.contentVersion),
+            "age_s": .int(restored.0.lastRefreshed.map { Int(Date.now.timeIntervalSince($0)) } ?? -1),
+        ])
         let (saved, bundle) = restored
         guard saved.belongs(toEventCode: code) else {
             // Left over from an event the user left or switched away from.
@@ -397,7 +453,8 @@ final class AppState {
             bundleJSON: data
         )
         lastSavedRefresh = lastRefreshed
-        enqueueDisk { await EventStore.shared.save(saved) }
+        let version = contentVersion ?? event.contentVersion
+        enqueueDisk { await EventStore.shared.save(saved, contentVersion: version) }
     }
 
     /// Deletes the saved event and its cached images (leave, switch, 404).
@@ -457,7 +514,7 @@ final class AppState {
             if currentEvent == nil {
                 _ = await join(code: screenshot.eventCode)
             } else {
-                await refreshBundle()
+                await refreshBundle(source: .join)
             }
             if hasAppliedDefaultTab { break }
             if attempt < 8 { try? await Task.sleep(for: .seconds(5)) }
@@ -486,18 +543,23 @@ final class AppState {
 
     // MARK: - Join / Leave
 
-    func joinEvent(_ event: Event) async {
+    /// `via` says how (`lifecycle.event.joined`): "qr", "link", "search", "nearby", "rejoin".
+    func joinEvent(_ event: Event, via: String = "search") async {
         if currentEvent?.id != event.id {
+            if let old = currentEvent {
+                AppLog.notice(.lifecycle, "lifecycle.event.left", "Switching events", ["event_id": .int(old.id), "reason": "switch"])
+            }
             // Send the old event's counts before switching.
             usage.flush()
             resetContent()
             deleteSavedEvent()
         }
+        AppLog.notice(.lifecycle, "lifecycle.event.joined", "Joined event \(event.id)", ["event_id": .int(event.id), "via": .string(via)])
         savedEventCode = event.eventCode
         currentEvent = event
         loadPersonalState(for: event.id)
         Task { await self.ensureJoined() }
-        await refreshBundle()
+        await refreshBundle(source: .join)
     }
 
     /// `POST events/<id>/join/` until the server has accepted it once for this event.
@@ -511,10 +573,12 @@ final class AppState {
             if currentEvent?.id == event.id { joinedEventId = event.id }
         } catch {
             // Retried later; the bundle works without it.
+            AppLog.caught(error, .net, "join")
         }
     }
 
     func leaveEvent() async {
+        AppLog.notice(.lifecycle, "lifecycle.event.left", "Left the event", ["event_id": .int(currentEvent?.id ?? 0), "reason": "user"])
         usage.flush()
         savedEventCode = nil
         if let event = currentEvent {
@@ -527,6 +591,8 @@ final class AppState {
 
     /// The event is gone (404 from the bundle): forget it and return to the launch screen.
     private func forgetEvent() {
+        AppLog.notice(.lifecycle, "lifecycle.event.left", "The event is gone (404): back to the launch screen",
+                      ["event_id": .int(currentEvent?.id ?? 0), "reason": "404"])
         usage.flush()
         savedEventCode = nil
         currentEvent = nil
@@ -573,14 +639,14 @@ final class AppState {
     /// event share one request; a 304 just marks the content as fresh.
     /// `silent` (polls and pushes) doesn't toggle `isLoading`, so no spinners
     /// flash; errors are recorded the same way as any refresh.
-    func refreshBundle(silent: Bool = false) async {
+    func refreshBundle(silent: Bool = false, source: RefreshSource = .foreground) async {
         guard let eventId = currentEvent?.id else { return }
         if let inflight = inflightRefresh, inflight.eventId == eventId {
             await inflight.task.value
             return
         }
         let token = UUID()
-        let task = Task { await self.fetchBundle(eventId: eventId, silent: silent) }
+        let task = Task { await self.fetchBundle(eventId: eventId, silent: silent, source: source) }
         inflightRefresh = (eventId, token, task)
         await task.value
         if inflightRefresh?.token == token { inflightRefresh = nil }
@@ -589,11 +655,16 @@ final class AppState {
     /// A 304 re-saves `lastRefreshed` at most this often (the content itself is unchanged).
     private static let refreshSaveInterval: TimeInterval = 5 * 60
 
-    private func fetchBundle(eventId: Int, silent: Bool) async {
+    private func fetchBundle(eventId: Int, silent: Bool, source: RefreshSource) async {
         if !silent { isLoading = true }
         defer { if !silent { isLoading = false } }
+        let signpost = AppSignpost.begin(.bundleFetch)
         do {
             let result = try await APIClient.shared.bundle(eventId: eventId, etag: etag, deviceId: deviceId)
+            let notModified: Bool
+            if case .notModified = result { notModified = true } else { notModified = false }
+            let ms = AppSignpost.end(signpost, ["cache": .string(notModified ? "304" : "none"), "source": .string(source.rawValue)])
+            PerfMetrics.shared.record(notModified ? .perfBundle304 : .perfBundleFetch, detail: PerfBucket.bundleFetch(ms: ms))
             // The user may have left or switched events while we waited.
             guard currentEvent?.id == eventId, !Task.isCancelled else { return }
             let now = Date.now
@@ -603,11 +674,21 @@ final class AppState {
             if refreshProblem != nil { refreshProblem = nil }
             switch result {
             case .updated(let bundle, let newEtag, let data):
+                let previous = contentVersion
                 etag = newEtag
                 bundleData = data
                 apply(bundle)
                 saveEvent()
+                AppLog.info(.net, "net.bundle.applied", "Bundle v\(bundle.contentVersion) applied", [
+                    "content_version": .int(bundle.contentVersion), "previous_version": .int(previous ?? -1),
+                    "source": .string(source.rawValue), "bytes": .int(data.count),
+                    "locations": .int(bundle.locations.count), "items": .int(bundle.schedule.count),
+                    "notifications": .int(bundle.notifications.count),
+                ])
             case .notModified:
+                AppLog.debug(.net, "net.bundle.not_modified", "Bundle unchanged (304)", [
+                    "content_version": .int(contentVersion ?? -1), "source": .string(source.rawValue),
+                ])
                 if lastSavedRefresh.map({ now.timeIntervalSince($0) >= Self.refreshSaveInterval }) ?? true {
                     saveEvent()
                 }
@@ -618,9 +699,12 @@ final class AppState {
             }
         } catch APIError.notFound {
             // The event was deleted or unpublished: the only error that drops the saved copy.
+            AppSignpost.end(signpost, ["error": "not_found"])
             guard currentEvent?.id == eventId else { return }
             forgetEvent()
         } catch {
+            AppSignpost.end(signpost, ["error": .string((error as? APIError)?.logKind ?? "other")])
+            AppLog.caught(error, .net, "bundle_refresh", level: silent ? .notice : .warning)
             guard currentEvent?.id == eventId else { return }
             // Saved content stays on screen; the badge shows the last successful refresh.
             loadError = error.localizedDescription
@@ -749,7 +833,7 @@ final class AppState {
     /// Pull to refresh: counted, then a normal bundle refresh.
     func pullToRefresh() async {
         track(.refresh)
-        await refreshBundle()
+        await refreshBundle(source: .pull)
     }
 
     // MARK: - Deep links
@@ -758,21 +842,28 @@ final class AppState {
     /// On failure the user stays where they are.
     func handleDeepLink(_ url: URL) async {
         guard let code = DeepLink.eventCode(from: url) else { return }
-        await join(code: code)
+        AppLog.info(.lifecycle, "lifecycle.deep_link", "Opened by a join link", ["kind": "join", "target": "/join/{id}/"])
+        await join(code: code, via: "link")
     }
 
     /// Looks up an event by code (QR codes, deep links) and joins it, leaving any
     /// current event first. Returns false if no live event matches.
     @discardableResult
-    func join(code: String) async -> Bool {
+    func join(code: String, via: String = "search") async -> Bool {
         if let current = currentEvent, current.eventCode.caseInsensitiveCompare(code) == .orderedSame {
             return true
         }
-        guard let event = try? await APIClient.shared.lookupEvent(query: code) else { return false }
+        let event: Event
+        do {
+            event = try await APIClient.shared.lookupEvent(query: code)
+        } catch {
+            AppLog.caught(error, .net, "lookup", level: .notice)
+            return false
+        }
         if let current = currentEvent, current.id != event.id {
             Task { _ = try? await APIClient.shared.leaveEvent(eventId: current.id, deviceId: self.deviceId) }
         }
-        await joinEvent(event)
+        await joinEvent(event, via: via)
         return true
     }
 
@@ -790,6 +881,8 @@ final class AppState {
             return true
         }
         let granted = await Self.requestNotificationAuthorization()
+        AppLog.notice(.push, "push.permission", "Alert permission \(granted ? "granted" : "denied")",
+                      ["status": .string(granted ? "granted" : "denied"), "asked": true])
         notificationsEnabled = granted
         registerForRemoteNotifications()
         // Reminders before hearted items follow the opt-in.
@@ -808,14 +901,20 @@ final class AppState {
     /// Stores a new APNs token and sends it to the server.
     func updatePushToken(_ token: String) {
         pushRegistrationFailed = false
+        // Never the token itself.
+        AppLog.info(.push, "push.token", "APNs token received", ["kind": "apns", "changed": .bool(token != pushToken), "length": .int(token.count)])
         guard !token.isEmpty, token != pushToken else { return }
         pushToken = token
         Task { await syncDevice() }
     }
 
     /// APNs registration failed: no silent pushes this launch, so poll more often.
-    func pushRegistrationDidFail() {
+    func pushRegistrationDidFail(_ error: Error? = nil) {
         pushRegistrationFailed = true
+        let ns = error.map { $0 as NSError }
+        AppLog.warning(.push, "push.token.failed", "APNs registration failed: polling every 60 s", [
+            "error": .string(ns?.localizedDescription ?? "unknown"), "domain": .string(ns?.domain ?? ""), "code": .int(ns?.code ?? 0),
+        ])
     }
 
     /// `POST devices/` with the current token (omitted while there is none) and the alert
@@ -834,8 +933,16 @@ final class AppState {
                 liveActivityToken: change
             )
             if change != .unchanged, liveActivityToken == token { liveActivityTokenSynced = true }
+            AppLog.info(.net, "net.device.registered", "Device registered", [
+                "status": 200, "has_push_token": .bool(pushToken != nil), "subscribed": .bool(notificationsEnabled),
+                "has_live_activity_token": .bool(liveActivityToken != nil),
+            ])
+            if change != .unchanged {
+                AppLog.info(.live, "live.token", "Live Activity token sent", ["action": .string(token == nil ? "cleared" : "sent"), "status": 200])
+            }
         } catch {
             // Retried with the next registration (launch, token change, Live Activity update).
+            AppLog.caught(error, .push, "device_registration")
         }
     }
 
@@ -843,6 +950,8 @@ final class AppState {
     func setLiveActivityToken(_ hex: String?) {
         let token = APIClient.nonEmpty(hex)
         guard token != liveActivityToken || !liveActivityTokenSynced else { return }
+        AppLog.info(.live, "live.token", token == nil ? "Live Activity token cleared" : "Live Activity token received",
+                    ["action": .string(token == nil ? "cleared" : "received")])
         liveActivityToken = token
         liveActivityTokenSynced = false
         Task { await syncDevice() }
@@ -855,7 +964,18 @@ final class AppState {
     /// so a background wake leaves fresh content for the next launch.
     @discardableResult
     func handlePush(_ payload: PushPayload, opened: Bool) async -> Bool {
-        guard let eventId = payload.eventId else { return false }
+        let received = ContinuousClock.now
+        AppLog.info(.push, opened ? "push.opened" : "push.received", "Push \(payload.kindName)\(opened ? " opened" : "")", {
+            var fields: LogFields = ["type": .string(payload.kindName)]
+            if let version = payload.contentVersion { fields["content_version"] = .int(version) }
+            if let id = payload.notificationId { fields["notification_id"] = .int(id) }
+            fields["state"] = .string(UIApplication.shared.applicationState == .active ? "fg" : "bg")
+            return fields
+        }())
+        guard let eventId = payload.eventId else {
+            AppLog.warning(.push, "push.dropped", "Push without an event", ["type": .string(payload.kindName), "reason": "no_event"])
+            return false
+        }
         if opened, currentEvent == nil || currentEvent?.id == eventId {
             // Counted against the push's event, so a tap that cold-launches the app counts too.
             usage.record(.notificationOpen, detail: payload.notificationId.map { String($0) }, eventId: eventId)
@@ -869,22 +989,41 @@ final class AppState {
             if opened { pendingNotificationsEventId = eventId }
             return false
         }
-        guard current.id == eventId else { return false }
+        guard current.id == eventId else {
+            AppLog.info(.push, "push.handled", "Push for another event", ["type": .string(payload.kindName), "action": "ignored_other_event"])
+            return false
+        }
         if opened, tabs.contains(.notifications) {
             presentedSheet = nil
             selectedTab = .notifications
         }
         if payload.kind == .contentUpdated, !opened {
             guard ContentUpdatePolicy.shouldRefresh(pushedVersion: payload.contentVersion, currentVersion: contentVersion) else {
+                AppLog.info(.push, "push.handled", "content_updated: already current", [
+                    "type": .string(payload.kindName), "action": "skipped_not_newer",
+                    "ms": .int((ContinuousClock.now - received).wholeMilliseconds),
+                ])
                 return false
             }
-            try? await Task.sleep(for: ContentUpdatePolicy.jitter())
+            let delay = ContentUpdatePolicy.jitter()
+            try? await Task.sleep(for: delay)
             guard currentEvent?.id == eventId else { return false }
-            await refreshBundle(silent: true)
+            await refreshBundle(silent: true, source: .push)
+            let ms = (ContinuousClock.now - received).wholeMilliseconds
+            PerfMetrics.shared.record(.perfPushRefreshDelay, detail: PerfBucket.pushRefreshDelay(ms: ms))
+            await diskTask?.value
+            AppLog.info(.push, "push.handled", "content_updated: refreshed in \(ms) ms", [
+                "type": .string(payload.kindName), "action": "refreshed", "ms": .int(ms), "delay_ms": .int(delay.wholeMilliseconds),
+            ])
+            return true
         } else {
-            await refreshBundle()
+            await refreshBundle(source: .push)
         }
         await diskTask?.value
+        AppLog.info(.push, "push.handled", "Push handled", [
+            "type": .string(payload.kindName), "action": .string(opened ? "shown" : "refreshed"),
+            "ms": .int((ContinuousClock.now - received).wholeMilliseconds),
+        ])
         return true
     }
 
@@ -1006,6 +1145,7 @@ final class AppState {
 
     func setFollowOnLockScreen(_ on: Bool) {
         guard currentEvent != nil, personal.followOnLockScreen != on else { return }
+        AppLog.notice(.live, "live.follow.changed", on ? "Follow on Lock Screen on" : "Follow on Lock Screen off", ["on": .bool(on), "default": false])
         personal.followOnLockScreen = on
         savePersonalState()
         liveFollowNeedsUpdate()
@@ -1104,6 +1244,17 @@ final class AppState {
         // Screenshot runs don't count as usage.
         guard !ScreenshotMode.isActive else { return }
         guard let eventId = currentEvent?.id else { return }
+        switch metric {
+        case .locationView, .scheduleItemView:
+            // Detail screens (tabs and sheets log themselves).
+            let name = metric == .locationView ? "location" : "schedule_item"
+            AppLog.debug(.ui, "ui.screen", "\(name) \(detail ?? "")", ["name": .string(name), "id": .string(detail ?? "")])
+        case .locationHeart, .scheduleItemHeart, .locationUnheart, .scheduleItemUnheart, .refresh:
+            let name = metric == .refresh ? "refresh" : (metric == .locationHeart || metric == .scheduleItemHeart ? "heart" : "unheart")
+            AppLog.debug(.ui, "ui.action", name, ["name": .string(name), "id": .string(detail ?? "")])
+        default:
+            break
+        }
         usage.record(metric, detail: detail, eventId: eventId)
     }
 
@@ -1151,6 +1302,11 @@ final class UsageReporter {
     static let flushInterval: Duration = .seconds(60)
 
     private var aggregator = UsageAggregator()
+    /// The joined event: waiting perf counts (API-014, `PerfMetrics`) go into its batches.
+    var eventId: Int? {
+        didSet { if eventId != nil, !PerfMetrics.shared.isEmpty { scheduleFlush() } }
+    }
+    private var drainsPerfMetrics = false
     /// Batches whose first send failed; sent once more on the next flush.
     private var retryBatches: [Batch] = []
     private var timer: Task<Void, Never>?
@@ -1167,10 +1323,27 @@ final class UsageReporter {
         scheduleFlush()
     }
 
+    /// The app's reporter (not the tests') also sends the perf counts.
+    func attachPerfMetrics() {
+        drainsPerfMetrics = true
+        PerfMetrics.shared.setObserver { [weak self] in
+            Task { @MainActor in
+                guard let self, self.eventId != nil else { return }
+                self.scheduleFlush()
+            }
+        }
+    }
+
     /// Sends everything pending in the background. Safe to call often.
     func flush() {
         timer?.cancel()
         timer = nil
+        // Perf counts made outside an event wait for the next one (or are dropped after 6 days).
+        if drainsPerfMetrics, let eventId {
+            for entry in PerfMetrics.shared.drain() {
+                aggregator.record(entry.metric, detail: entry.detail, eventId: eventId, at: entry.at, count: entry.count)
+            }
+        }
         let retries = retryBatches
         retryBatches = []
         let fresh = aggregator.drain()
@@ -1186,7 +1359,11 @@ final class UsageReporter {
                 for chunk in UsageAggregator.chunks(entries) {
                     do {
                         try await sender(eventId, chunk)
+                        AppLog.debug(.net, "net.usage.flushed", "Usage batch sent", ["entries": .int(chunk.count), "status": 200])
                     } catch {
+                        AppLog.debug(.net, "net.usage.flushed", "Usage batch failed (retried once)", [
+                            "entries": .int(chunk.count), "status": 0, "retry": .bool(false),
+                        ])
                         failed.append(Batch(eventId: eventId, entries: chunk))
                     }
                 }
@@ -1234,16 +1411,36 @@ actor EventStore {
             let saved = try SavedEvent.decode(data)
             return (saved, try saved.decodedBundle())
         } catch {
+            AppLog.error(.storage, "storage.bundle.failed", "The saved event could not be read", {
+                var fields = LogRedaction.errorFields(error)
+                fields["op"] = "restore"
+                fields["error"] = .string(String(describing: type(of: error)))
+                return fields
+            }())
             try? FileManager.default.removeItem(at: fileURL)
             return nil
         }
     }
 
-    func save(_ saved: SavedEvent) {
-        guard let fileURL, let data = try? SavedEvent.encode(saved) else { return }
-        let directory = fileURL.deletingLastPathComponent()
-        StorageDirectory.prepare(directory)
-        try? data.write(to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+    func save(_ saved: SavedEvent, contentVersion: Int? = nil) {
+        guard let fileURL else { return }
+        let started = ContinuousClock.now
+        do {
+            let data = try SavedEvent.encode(saved)
+            let directory = fileURL.deletingLastPathComponent()
+            StorageDirectory.prepare(directory)
+            try data.write(to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            let ms = (ContinuousClock.now - started).wholeMilliseconds
+            AppLog.debug(.storage, "storage.bundle.saved", "Saved event written (\(data.count) bytes, \(ms) ms)",
+                         ["bytes": .int(data.count), "ms": .int(ms), "content_version": .int(contentVersion ?? -1)])
+        } catch {
+            AppLog.error(.storage, "storage.bundle.failed", "The saved event could not be written", {
+                var fields = LogRedaction.errorFields(error)
+                fields["op"] = "save"
+                fields["error"] = .string(String(describing: type(of: error)))
+                return fields
+            }())
+        }
     }
 
     func delete() {
@@ -1332,6 +1529,7 @@ actor ImageStore {
                 && MediaCache.needsDownload(existing: files[MediaCache.fileName(for: url)], now: now)
         }
         var allFetched = true
+        let started = ContinuousClock.now
         await withTaskGroup(of: Bool.self) { group in
             var running = 0
             for url in todo {
@@ -1360,6 +1558,10 @@ actor ImageStore {
             guard !tooLarge.contains(url), let file = fileURL(for: url) else { return false }
             return !FileManager.default.fileExists(atPath: file.path)
         }
+        AppLog.debug(.storage, "storage.images.prefetch", "Images: \(urls.count) referenced, \(todo.count) fetched", [
+            "total": .int(urls.count), "fetched": .int(todo.count), "failed": .int(allFetched && !missing ? 0 : 1),
+            "ms": .int((ContinuousClock.now - started).wholeMilliseconds),
+        ])
         return allFetched && !missing
     }
 
@@ -1394,10 +1596,17 @@ actor ImageStore {
         do {
             (temporary, response) = try await session.download(from: url)
         } catch {
+            AppLog.warning(.net, "net.image.failed", "Image download failed", [
+                "error": .string((error as? URLError).map(LogRedaction.urlErrorKind) ?? "other"), "status": 0,
+            ])
             return false
         }
         defer { try? FileManager.default.removeItem(at: temporary) }
-        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { return false }
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            AppLog.warning(.net, "net.image.failed", "Image download failed (\((response as? HTTPURLResponse)?.statusCode ?? 0))",
+                           ["error": "http", "status": .int((response as? HTTPURLResponse)?.statusCode ?? 0)])
+            return false
+        }
         let bytes = (try? temporary.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
         guard bytes > 0 else { return false }
         guard bytes <= MediaCache.maxFileBytes else {

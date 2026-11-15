@@ -130,13 +130,17 @@ struct MapView: View {
         .mapStyle(.standard)
         .onMapCameraChange(frequency: .onEnd) { context in
             visibleSpan = context.region.span
+            MapRenderTiming.cameraSettled(pins: allClusters.count, clustered: appState.display.mapClustering)
         }
         .navigationTitle(appState.currentEvent?.name ?? "Map")
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(item: $navigateToLocation) { location in
             LocationDetailView(location: location)
         }
-        .onAppear(perform: positionInitiallyIfNeeded)
+        .onAppear {
+            MapRenderTiming.appeared()
+            positionInitiallyIfNeeded()
+        }
         .onChange(of: appState.locations) { positionInitiallyIfNeeded() }
         .onChange(of: appState.mapCenterToken) { recenter() }
         // initial: a "Show on Map" from another tab may arrive before this view exists.
@@ -433,4 +437,29 @@ private struct LocationInfoCard: View {
         MapView(cameraPosition: .constant(.automatic), hasPositioned: .constant(false))
     }
     .environment(AppState())
+}
+
+// MARK: - First render timing (API-014 `perf_map_first_render`)
+
+/// The Map tab's first appearance → its first settled camera (SwiftUI's Map has no "rendered"
+/// callback; the first `onMapCameraChange(.onEnd)` comes once the initial region is drawn).
+/// Once per launch; signpost "map first render".
+@MainActor
+enum MapRenderTiming {
+    private static var interval: AppSignpost.Interval?
+    private static var done = false
+
+    static func appeared() {
+        guard !done, interval == nil else { return }
+        interval = AppSignpost.begin(.mapFirstRender)
+    }
+
+    static func cameraSettled(pins: Int, clustered: Bool) {
+        guard !done, let interval else { return }
+        done = true
+        self.interval = nil
+        let ms = AppSignpost.end(interval, ["pins": .int(pins)])
+        AppLog.info(.map, "map.first_render", "Map ready in \(ms) ms", ["ms": .int(ms), "pins": .int(pins), "clustered": .bool(clustered)])
+        PerfMetrics.shared.record(.perfMapFirstRender, detail: PerfBucket.mapFirstRender(ms: ms))
+    }
 }

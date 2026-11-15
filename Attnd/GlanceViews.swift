@@ -83,11 +83,15 @@ final class UserLocationTracker {
         if runLocation != updatingLocation {
             updatingLocation = runLocation
             if runLocation { manager.startUpdatingLocation() } else { manager.stopUpdatingLocation() }
+            AppLog.debug(.location, "location.updates", runLocation ? "Location updates on" : "Location updates off", [
+                "on": .bool(runLocation), "heading": .bool(runLocation && users.values.contains(true)), "consumers": .int(users.count),
+            ])
         }
         let runHeading = runLocation && users.values.contains(true) && CLLocationManager.headingAvailable()
         if runHeading != updatingHeading {
             updatingHeading = runHeading
             if runHeading {
+                AppLog.debug(.location, "location.heading.source", "Compass: CLHeading", ["source": "clheading"])
                 attachHeadingToWindow(manager)
                 manager.startUpdatingHeading()
             } else {
@@ -125,6 +129,10 @@ final class UserLocationTracker {
 
     fileprivate func applyAuthorization(status: CLAuthorizationStatus, precise: Bool) {
         let authorized = status == .authorizedWhenInUse || status == .authorizedAlways
+        if isAuthorized != authorized || isPrecise != precise {
+            AppLog.notice(.location, "location.permission", "Location permission: \(status.logName)",
+                          locationPermissionFields(status, precise: precise, asked: false))
+        }
         if isAuthorized != authorized { isAuthorized = authorized }
         if isPrecise != precise { isPrecise = precise }
         if !authorized {
@@ -209,6 +217,11 @@ private final class TrackerDelegate: NSObject, CLLocationManagerDelegate {
 
     nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         // Transient (no fix yet) or denied; authorization changes arrive separately.
+        let ns = error as NSError
+        // kCLErrorLocationUnknown (0) is "no fix yet": not worth a warning.
+        AppLog.log(ns.code == 0 ? .debug : .warning, .location, "location.error", "Location updates failed", [
+            "error": .string(ns.localizedDescription), "domain": .string(ns.domain), "code": .int(ns.code),
+        ])
     }
 }
 

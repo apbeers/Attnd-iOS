@@ -27,6 +27,8 @@ struct OpenScheduleItemIntent: OpenIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
+        let started = ContinuousClock.now
+        defer { IntentLog.finished("OpenScheduleItemIntent", started: started) }
         await IntentBridge.navigate(to: .scheduleItem(target.id))
         return .result()
     }
@@ -41,6 +43,8 @@ struct OpenLocationIntent: OpenIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
+        let started = ContinuousClock.now
+        defer { IntentLog.finished("OpenLocationIntent", started: started) }
         await IntentBridge.navigate(to: .location(target.id))
         return .result()
     }
@@ -55,6 +59,8 @@ struct OpenNotificationIntent: OpenIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
+        let started = ContinuousClock.now
+        defer { IntentLog.finished("OpenNotificationIntent", started: started) }
         await IntentBridge.navigate(to: .notification(target.id))
         return .result()
     }
@@ -69,6 +75,8 @@ struct OpenEventIntent: OpenIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
+        let started = ContinuousClock.now
+        defer { IntentLog.finished("OpenEventIntent", started: started) }
         await IntentBridge.navigate(to: .event(target.id))
         return .result()
     }
@@ -84,6 +92,8 @@ struct SearchEventIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
+        let started = ContinuousClock.now
+        defer { IntentLog.finished("SearchEventIntent", started: started) }
         await IntentBridge.showSearch(query)
         return .result()
     }
@@ -97,6 +107,8 @@ struct WhatsOnNowIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog & ShowsSnippetView {
+        let started = ContinuousClock.now
+        defer { IntentLog.finished("WhatsOnNowIntent", started: started) }
         guard let bundle = await IntentBridge.bundle() else {
             return .result(dialog: IntentAnswers.noEvent, view: EmptyView())
         }
@@ -132,6 +144,8 @@ struct WhenIsIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog & ShowsSnippetView {
+        let started = ContinuousClock.now
+        defer { IntentLog.finished("WhenIsIntent", started: started) }
         guard let bundle = await IntentBridge.bundle(),
               let scheduleItem = bundle.schedule.first(where: { $0.id == item.id }) else {
             return .result(dialog: IntentAnswers.noEvent, view: EmptyView())
@@ -166,6 +180,8 @@ struct WhereIsIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog & ShowsSnippetView {
+        let started = ContinuousClock.now
+        defer { IntentLog.finished("WhereIsIntent", started: started) }
         guard let bundle = await IntentBridge.bundle(),
               let place = bundle.locations.first(where: { $0.id == location.id }) else {
             return .result(dialog: IntentAnswers.noEvent, view: EmptyView())
@@ -198,6 +214,8 @@ struct LatestUpdatesIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog & ShowsSnippetView {
+        let started = ContinuousClock.now
+        defer { IntentLog.finished("LatestUpdatesIntent", started: started) }
         guard let bundle = await IntentBridge.bundle() else {
             return .result(dialog: IntentAnswers.noEvent, view: EmptyView())
         }
@@ -224,6 +242,8 @@ struct AskEventIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog & ShowsSnippetView {
+        let started = ContinuousClock.now
+        defer { IntentLog.finished("AskEventIntent", started: started) }
         guard let bundle = await IntentBridge.bundle() else {
             return .result(dialog: IntentAnswers.noEvent, view: EmptyView())
         }
@@ -258,6 +278,8 @@ struct HeartScheduleItemIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
+        let started = ContinuousClock.now
+        defer { IntentLog.finished("HeartScheduleItemIntent", started: started) }
         guard await IntentBridge.setHeart(heart, for: .scheduleItem(item.id)) else {
             return .result(dialog: IntentAnswers.noEvent)
         }
@@ -278,6 +300,8 @@ struct HeartLocationIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
+        let started = ContinuousClock.now
+        defer { IntentLog.finished("HeartLocationIntent", started: started) }
         guard await IntentBridge.setHeart(heart, for: .location(location.id)) else {
             return .result(dialog: IntentAnswers.noEvent)
         }
@@ -293,6 +317,8 @@ struct HeartedItemsIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog & ShowsSnippetView {
+        let started = ContinuousClock.now
+        defer { IntentLog.finished("HeartedItemsIntent", started: started) }
         guard let hearted = await IntentBridge.hearted() else {
             return .result(dialog: IntentAnswers.noEvent, view: EmptyView())
         }
@@ -452,5 +478,16 @@ struct AttndShortcuts: AppShortcutsProvider {
             shortTitle: "Search Event",
             systemImageName: "magnifyingglass"
         )
+    }
+}
+
+
+/// `assistant.request` (kind "intent") when a Siri / Shortcuts / Spotlight intent finishes.
+enum IntentLog {
+    static func finished(_ name: String, started: ContinuousClock.Instant) {
+        let ms = (ContinuousClock.now - started).wholeMilliseconds
+        AppLog.info(.assistant, "assistant.request", "\(name) in \(ms) ms", [
+            "kind": "intent", "name": .string(name), "ms": .int(ms), "ok": true,
+        ])
     }
 }

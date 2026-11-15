@@ -2,6 +2,7 @@
   "default-configuration": "Release",
   "configurations": [
     "Debug",
+    "Dev",
     "Release",
   ],
   "localizations": {
@@ -70,7 +71,26 @@
             "Attnd/compile-sources",
             "AttndAppClip/compile-sources",
           ],
+        }, {
+          "path": "AppLog.swift",
+          "target-membership": [
+            "Attnd/compile-sources",
+            "AttndAppClip/compile-sources",
+          ],
+        }, {
+          "path": "Diagnostics.swift",
+          "target-membership": [
+            "Attnd/compile-sources",
+            "AttndAppClip/compile-sources",
+          ],
+        }, {
+          "path": "LogViewer.swift",
+          "target-membership": [
+            "Attnd/compile-sources",
+            "AttndAppClip/compile-sources",
+          ],
         },
+        { "path": "MetricKitReporter.swift", "target-membership": [ "Attnd/compile-sources" ] },
         { "path": "AppDelegate.swift", "target-membership": [ "Attnd/compile-sources" ] },
         {
           "path": "LiveActivityModel.swift",
@@ -207,6 +227,7 @@
         { "path": "DisplayLogicTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "EventSearchTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "GlanceTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
+        { "path": "LoggingTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "LiveFollowTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "ModelDecodingTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "PlannerFixture.swift", "target-membership": [ "AttndTests/compile-sources" ] },
@@ -218,6 +239,7 @@
       "path": "Config",
       "children": [
         { "path": "Debug.xcconfig" },
+        { "path": "Dev.xcconfig" },
         { "path": "Release.xcconfig" },
       ],
     }, {
@@ -267,6 +289,7 @@
       "product-type": "application",
       "specialized-configurations": [
         { "name": "Debug", "file": "Config/Debug.xcconfig" },
+        { "name": "Dev", "file": "Config/Dev.xcconfig" },
         { "name": "Release", "file": "Config/Release.xcconfig" },
       ],
       "dependencies": [
@@ -354,6 +377,7 @@
       "product-type": "application.on-demand-install-capable",
       "specialized-configurations": [
         { "name": "Debug", "file": "Config/Debug.xcconfig" },
+        { "name": "Dev", "file": "Config/Dev.xcconfig" },
         { "name": "Release", "file": "Config/Release.xcconfig" },
       ],
       "build-phases": [
@@ -407,6 +431,7 @@
       "product-type": "app-extension",
       "specialized-configurations": [
         { "name": "Debug", "file": "Config/Debug.xcconfig" },
+        { "name": "Dev", "file": "Config/Dev.xcconfig" },
         { "name": "Release", "file": "Config/Release.xcconfig" },
       ],
       "build-phases": [
@@ -477,18 +502,28 @@
     "CODE_SIGN_ENTITLEMENTS": "Attnd/Attnd.entitlements",
     "COPY_PHASE_STRIP": "NO",
     "DEBUG_INFORMATION_FORMAT[config=Debug]": "dwarf",
+    "DEBUG_INFORMATION_FORMAT[config=Dev]": "dwarf-with-dsym",
     "DEBUG_INFORMATION_FORMAT[config=Release]": "dwarf-with-dsym",
     "DEVELOPMENT_TEAM": "GQQX4L6TE2",
     "ENABLE_NS_ASSERTIONS[config=Release]": "NO",
     "ENABLE_STRICT_OBJC_MSGSEND": "YES",
+    "ENABLE_DEBUG_DYLIB[config=Dev]": "NO",
     "ENABLE_TESTABILITY[config=Debug]": "YES",
+    "ENABLE_TESTABILITY[config=Dev]": "YES",
     "ENABLE_USER_SCRIPT_SANDBOXING": "YES",
     "GCC_C_LANGUAGE_STANDARD": "gnu11",
     "GCC_DYNAMIC_NO_PIC[config=Debug]": "NO",
+    "GCC_DYNAMIC_NO_PIC[config=Dev]": "NO",
     "GCC_NO_COMMON_BLOCKS": "YES",
     "GCC_OPTIMIZATION_LEVEL[config=Debug]": "0",
+    "GCC_OPTIMIZATION_LEVEL[config=Dev]": "0",
     "GCC_PREPROCESSOR_DEFINITIONS[config=Debug]": [
       "DEBUG=1",
+      "$(inherited)",
+    ],
+    "GCC_PREPROCESSOR_DEFINITIONS[config=Dev]": [
+      "DEBUG=1",
+      "DEV=1",
       "$(inherited)",
     ],
     "GCC_WARN_64_TO_32_BIT_CONVERSION": "YES",
@@ -499,15 +534,19 @@
     "GCC_WARN_UNUSED_VARIABLE": "YES",
     "IPHONEOS_DEPLOYMENT_TARGET": "26.0",
     "MTL_ENABLE_DEBUG_INFO[config=Debug]": "INCLUDE_SOURCE",
+    "MTL_ENABLE_DEBUG_INFO[config=Dev]": "INCLUDE_SOURCE",
     "MTL_ENABLE_DEBUG_INFO[config=Release]": "NO",
     "MTL_FAST_MATH": "YES",
     "ONLY_ACTIVE_ARCH[config=Debug]": "YES",
     "SDKROOT": "iphoneos",
     "STRING_CATALOG_GENERATE_SYMBOLS": "YES",
     "SWIFT_ACTIVE_COMPILATION_CONDITIONS[config=Debug]": "DEBUG",
+    "SWIFT_ACTIVE_COMPILATION_CONDITIONS[config=Dev]": "DEBUG DEV",
     "SWIFT_COMPILATION_MODE[config=Release]": "wholemodule",
     "SWIFT_OPTIMIZATION_LEVEL[config=Debug]": "-Onone",
+    "SWIFT_OPTIMIZATION_LEVEL[config=Dev]": "-Onone",
     "SWIFT_OPTIMIZATION_LEVEL[config=Release]": "-O",
+    "VALIDATE_PRODUCT[config=Dev]": "YES",
     "VALIDATE_PRODUCT[config=Release]": "YES",
   },
   "last-upgrade": "27.2",

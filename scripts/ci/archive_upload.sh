@@ -10,6 +10,13 @@
 # Env: ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8 (contents of AuthKey_XXXX.p8)
 #      IOS_DEV_CERT_P12_BASE64, IOS_DEV_CERT_PASSWORD (the stored Apple Development certificate)
 #      BUILD_NUMBER, MARKETING_VERSION, ATTND_SERVER (host, e.g. attnd.app)
+#      CONFIGURATION: Dev (develop → TestFlight: -Onone, DEBUG + DEV, readable crash logs, continuous
+#      log upload) or Release (main, the default). Both are distribution-signed by the export: the
+#      archive is signed for development (so it carries get-task-allow, as every archive does) and
+#      -exportArchive re-signs it with the App Store distribution profile, whose entitlements have no
+#      get-task-allow; the export is checked below before anything is uploaded.
+#      The archive's dSYMs (build/Attnd.xcarchive/dSYMs) are uploaded to App Store Connect and kept
+#      as a CI artifact by ios.yml.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 : "${ASC_KEY_ID:?}" "${ASC_ISSUER_ID:?}" "${ASC_KEY_P8:?}" "${BUILD_NUMBER:?}" "${MARKETING_VERSION:?}"
@@ -54,18 +61,25 @@ if [ -n "${COMPILATION_CACHE_DIR:-}" ]; then
   cache=(COMPILATION_CACHE_ENABLE_CACHING=YES COMPILATION_CACHE_CAS_PATH="$PWD/$COMPILATION_CACHE_DIR")
 fi
 
-echo "Archiving $MARKETING_VERSION ($BUILD_NUMBER) for server ${ATTND_SERVER:-attnd.app}"
-xcodebuild archive -project Attnd.xcodeproj -scheme Attnd -configuration Release \
+configuration=${CONFIGURATION:-Release}
+case "$configuration" in Dev|Release) ;; *) echo "CONFIGURATION must be Dev or Release" >&2; exit 2 ;; esac
+echo "Archiving $MARKETING_VERSION ($BUILD_NUMBER), $configuration, for server ${ATTND_SERVER:-attnd.app}"
+xcodebuild archive -project Attnd.xcodeproj -scheme Attnd -configuration "$configuration" \
   -destination 'generic/platform=iOS' -archivePath build/Attnd.xcarchive "${auth[@]}" \
   CURRENT_PROJECT_VERSION="$BUILD_NUMBER" MARKETING_VERSION="$MARKETING_VERSION" \
   ATTND_SERVER="${ATTND_SERVER:-attnd.app}" ATTND_API_KEY= COMPILER_INDEX_STORE_ENABLE=NO ${cache[@]+"${cache[@]}"} 2>&1 | tee -a "$log"
 
+# dSYMs for every binary (app, App Clip, widgets), also with Dev's -Onone (DEBUG_INFORMATION_FORMAT =
+# dwarf-with-dsym in both configurations).
+ls build/Attnd.xcarchive/dSYMs/*.dSYM > /dev/null 2>&1 || echo "::warning::The archive has no dSYMs"
+
+write_export_options() {
 cat > build/ExportOptions.plist <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>method</key><string>app-store-connect</string>
-  <key>destination</key><string>upload</string>
+  <key>destination</key><string>$1</string>
   <key>teamID</key><string>${APPLE_TEAM_ID:-GQQX4L6TE2}</string>
   <key>signingStyle</key><string>automatic</string>
   <key>uploadSymbols</key><true/>
@@ -73,8 +87,31 @@ cat > build/ExportOptions.plist <<PLIST
   <key>testFlightInternalTestingOnly</key><${TESTFLIGHT_INTERNAL_ONLY:-false}/>
 </dict></plist>
 PLIST
+}
 
-# destination=upload sends the build straight to App Store Connect.
+# 1. Export locally and check the distribution signature: App Store Connect rejects a build whose
+#    binaries are signed with get-task-allow (a debuggable build). Dev is a Debug copy, so check every
+#    executable bundle in the .ipa (app, App Clip, widgets).
+write_export_options export
+xcodebuild -exportArchive -archivePath build/Attnd.xcarchive -exportPath build/export-check \
+  -exportOptionsPlist build/ExportOptions.plist "${auth[@]}" 2>&1 | tee -a "$log"
+ipa=$(ls build/export-check/*.ipa | head -1)
+rm -rf build/ipa-check && mkdir -p build/ipa-check && unzip -q "$ipa" -d build/ipa-check
+bad=0
+while IFS= read -r -d '' bundle; do
+  codesign -d --entitlements - --xml "$bundle" > build/ipa-check/entitlements.plist 2>/dev/null || true
+  allow=$(/usr/libexec/PlistBuddy -c 'Print :get-task-allow' build/ipa-check/entitlements.plist 2>/dev/null || echo absent)
+  echo "${bundle#build/ipa-check/Payload/}: get-task-allow $allow"
+  if [ "$allow" = true ]; then
+    echo "::error::$bundle is signed with get-task-allow=true; TestFlight would reject it"
+    bad=1
+  fi
+done < <(find build/ipa-check/Payload \( -name '*.app' -o -name '*.appex' \) -type d -print0)
+[ "$bad" = 0 ] || exit 1
+echo "Distribution signature OK (no get-task-allow) for $configuration"
+
+# 2. destination=upload sends the build straight to App Store Connect.
+write_export_options upload
 xcodebuild -exportArchive -archivePath build/Attnd.xcarchive -exportPath build/export \
   -exportOptionsPlist build/ExportOptions.plist "${auth[@]}" 2>&1 | tee -a "$log"
-echo "Uploaded build $BUILD_NUMBER"
+echo "Uploaded build $BUILD_NUMBER ($configuration)"

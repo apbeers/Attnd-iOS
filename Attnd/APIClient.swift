@@ -45,6 +45,31 @@ enum APIError: LocalizedError, Sendable {
         case .updateRequired:       return "This version of Attnd is no longer supported. Please update."
         }
     }
+
+    /// A stable name for logs (`error.caught` fields; no server text).
+    var logKind: String {
+        switch self {
+        case .invalidURL:            return "invalid_url"
+        case .unauthorized:          return "unauthorized"
+        case .notFound:              return "not_found"
+        case .badRequest:            return "bad_request"
+        case .serverError(let code): return "server_\(code)"
+        case .decodingError:         return "decoding"
+        case .networkError:          return "network"
+        case .updateRequired:        return "update_required"
+        }
+    }
+}
+
+/// Outcome of a diagnostics upload (`POST diagnostics/logs/` or `reports/`, API-013).
+enum DiagnosticsUploadResult: Sendable, Equatable {
+    case accepted
+    /// The server can't use it (400, 413, 422, …): drop it.
+    case rejected(Int)
+    /// 429 (or the endpoint isn't there yet): wait this many seconds.
+    case retryAfter(TimeInterval)
+    /// Offline or a server error: try again later.
+    case failed(String)
 }
 
 extension Notification.Name {
@@ -213,16 +238,71 @@ final class APIClient: Sendable {
         guard let url = components?.url else { throw APIError.invalidURL }
         var req = URLRequest(url: url)
         req.setValue("application/json", forHTTPHeaderField: "Accept")
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await session.data(for: req)
-        } catch {
-            throw APIError.networkError(error.localizedDescription)
-        }
-        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        let (data, http) = try await perform(req, template: "/api/app-status/", requestId: Self.newRequestId())
+        let code = http.statusCode
         guard (200...299).contains(code) else { throw APIError.serverError(code) }
         return try decode(data)
+    }
+
+    // MARK: - Diagnostics (API-013)
+
+    /// `POST diagnostics/logs/` (with the debug code as `X-Diag-Session`) or `diagnostics/reports/`
+    /// (anonymous, none). The body is gzip-compressed JSON. Never logged as a request itself, so
+    /// uploads don't feed the logs they upload; never throws.
+    func postDiagnostics(_ path: String, gzippedJSON body: Data, diagSession: String?, isRetry: Bool = false) async -> DiagnosticsUploadResult {
+        guard let url = URL(string: baseURL + path) else { return .rejected(0) }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        let token = await bearerToken()
+        if !token.isEmpty { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("gzip", forHTTPHeaderField: "Content-Encoding")
+        req.setValue(Self.newRequestId(), forHTTPHeaderField: "X-Request-Id")
+        if let diagSession { req.setValue(diagSession, forHTTPHeaderField: "X-Diag-Session") }
+        req.httpBody = body
+        let response: URLResponse
+        do {
+            (_, response) = try await session.data(for: req)
+        } catch let error as URLError {
+            return .failed(LogRedaction.urlErrorKind(error))
+        } catch {
+            return .failed("network")
+        }
+        guard let http = response as? HTTPURLResponse else { return .failed("no_response") }
+        switch http.statusCode {
+        case 200...299:
+            return .accepted
+        case 401 where !isRetry:
+            if attest { await AttestationManager.shared.invalidateToken() }
+            return await postDiagnostics(path, gzippedJSON: body, diagSession: diagSession, isRetry: true)
+        case 429, 503:
+            return .retryAfter(Self.retryAfter(http.value(forHTTPHeaderField: "Retry-After")) ?? 60)
+        case 404, 405, 410:
+            // An older server without the endpoint: check again in an hour.
+            return .retryAfter(3600)
+        case 400..<500:
+            return .rejected(http.statusCode)
+        default:
+            return .failed("http_\(http.statusCode)")
+        }
+    }
+
+    /// `Retry-After`: seconds, or an HTTP date.
+    static func retryAfter(_ header: String?, now: Date = .now) -> TimeInterval? {
+        guard let header = header?.trimmingCharacters(in: .whitespaces), !header.isEmpty else { return nil }
+        if let seconds = TimeInterval(header) { return max(0, seconds) }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "GMT")
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        guard let date = formatter.date(from: header) else { return nil }
+        return max(0, date.timeIntervalSince(now))
+    }
+
+    /// A random id for `X-Request-Id`, also logged as `req_id`, so the server's line joins ours.
+    static func newRequestId() -> String {
+        UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
     }
 
     // MARK: - Query encoding
@@ -261,6 +341,7 @@ final class APIClient: Sendable {
         do {
             return try JSONDecoder().decode(T.self, from: data)
         } catch {
+            AppLog.caught(error, .net, "decode_\(T.self)", level: .error, ["bytes": .int(data.count)])
             throw APIError.decodingError(error.localizedDescription)
         }
     }
@@ -291,15 +372,9 @@ final class APIClient: Sendable {
             req.httpBody = body
         }
 
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await session.data(for: req)
-        } catch {
-            throw APIError.networkError(error.localizedDescription)
-        }
-
-        guard let http = response as? HTTPURLResponse else { throw APIError.serverError(0) }
+        let requestId = Self.newRequestId()
+        let template = LogRedaction.pathTemplate(path)
+        let (data, http) = try await perform(req, template: template, requestId: requestId, attempt: isRetry ? 2 : 1)
 
         switch http.statusCode {
         case 200...299, 304:
@@ -308,6 +383,9 @@ final class APIClient: Sendable {
         case 401:
             // Token expired or invalid — invalidate and retry once.
             guard !isRetry else { throw APIError.unauthorized }
+            AppLog.info(.net, "net.request.retry", "\(method) \(template): 401, re-attesting", [
+                "path": .string(template), "req_id": .string(requestId), "reason": "401",
+            ])
             if attest { await AttestationManager.shared.invalidateToken() }
             return try await send(path, method: method, body: body, headers: headers, isRetry: true)
 
@@ -325,5 +403,56 @@ final class APIClient: Sendable {
         default:
             throw APIError.serverError(http.statusCode)
         }
+    }
+
+    /// Runs one request with `X-Request-Id` (and `X-Diag-Session` while logs are uploaded), and
+    /// logs it: `net.request.started` / `finished` (status, ms, bytes, 304, req_id) / `failed`.
+    /// Errors and HTTP ≥ 400 are also counted as `perf_api_error` (API-014). `template` is the
+    /// path with ids as `{id}` and no query.
+    private func perform(_ request: URLRequest, template: String, requestId: String, attempt: Int = 1) async throws -> (Data, HTTPURLResponse) {
+        var req = request
+        req.setValue(requestId, forHTTPHeaderField: "X-Request-Id")
+        if let diag = AppLog.diagSession { req.setValue(diag, forHTTPHeaderField: "X-Diag-Session") }
+        let method = req.httpMethod ?? "GET"
+        AppLog.trace(.net, "net.request.started", "\(method) \(template)", [
+            "method": .string(method), "path": .string(template), "req_id": .string(requestId), "attempt": .int(attempt),
+        ])
+        let started = ContinuousClock.now
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: req)
+        } catch {
+            let ms = (ContinuousClock.now - started).wholeMilliseconds
+            let kind = (error as? URLError).map(LogRedaction.urlErrorKind) ?? "network"
+            AppLog.log(kind == "cancelled" ? .debug : .warning, .net, "net.request.failed",
+                       "\(method) \(template) failed (\(kind)) after \(ms) ms", [
+                "method": .string(method), "path": .string(template), "req_id": .string(requestId),
+                "ms": .int(ms), "error": .string(kind), "code": .int((error as NSError).code),
+            ])
+            if let urlError = error as? URLError, let detail = PerfBucket.apiError(urlError) {
+                PerfMetrics.shared.record(.perfApiError, detail: detail)
+            }
+            throw APIError.networkError(error.localizedDescription)
+        }
+        guard let http = response as? HTTPURLResponse else { throw APIError.serverError(0) }
+        let ms = (ContinuousClock.now - started).wholeMilliseconds
+        let status = http.statusCode
+        let level: LogLevel = status >= 500 ? .warning : (status >= 400 ? .notice : .debug)
+        AppLog.log(level, .net, "net.request.finished", "\(method) \(template) \(status) in \(ms) ms", {
+            var fields: LogFields = [
+                "method": .string(method), "path": .string(template), "status": .int(status), "ms": .int(ms),
+                "bytes": .int(data.count), "req_id": .string(requestId), "attempt": .int(attempt),
+                "cache": .string(status == 304 ? "304" : (req.value(forHTTPHeaderField: "If-None-Match") != nil ? "etag" : "none")),
+            ]
+            if let server = http.value(forHTTPHeaderField: "X-Request-Id"), server != requestId {
+                fields["server_req_id"] = .string(server)
+            }
+            return fields
+        }())
+        if let detail = PerfBucket.apiError(status: status), !(status == 401 && attempt == 1) {
+            PerfMetrics.shared.record(.perfApiError, detail: detail)
+        }
+        return (data, http)
     }
 }

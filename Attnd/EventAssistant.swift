@@ -59,8 +59,21 @@ enum EventAssistant {
             options.toolCallingMode = .required
         }
         #endif
-        let response = try await session.respond(generating: AssistantReply.self, options: options) {
-            question
+        let started = ContinuousClock.now
+        let response: LanguageModelSession.Response<AssistantReply>
+        do {
+            response = try await session.respond(generating: AssistantReply.self, options: options) {
+                question
+            }
+        } catch {
+            let ms = (ContinuousClock.now - started).wholeMilliseconds
+            let ns = error as NSError
+            AppLog.warning(.assistant, "assistant.error", "Ask failed after \(ms) ms", [
+                "kind": "ask", "error": .string(String(describing: type(of: error))), "domain": .string(ns.domain), "code": .int(ns.code),
+            ])
+            AppLog.info(.assistant, "assistant.request", "Ask failed after \(ms) ms",
+                        LogRedaction.textFields(question).merging(["kind": "ask", "name": "ask", "ms": .int(ms), "ok": false]) { _, new in new })
+            throw error
         }
         let reply = response.content
         let looked = await recorder.targets
@@ -73,6 +86,14 @@ enum EventAssistant {
             // The model named nothing (or ids that don't exist): show what it looked at.
             sources = Array(looked.prefix(3))
         }
+        let ms = (ContinuousClock.now - started).wholeMilliseconds
+        AppLog.debug(.assistant, "assistant.answer", "Answered in \(ms) ms", [
+            "ms": .int(ms), "citations": .int(reply.sources.count), "tool_calls": .int(looked.count),
+            "fallback": .bool(sources.isEmpty || reply.sources.isEmpty),
+        ])
+        AppLog.info(.assistant, "assistant.request", "Ask answered in \(ms) ms", LogRedaction.textFields(question).merging([
+            "kind": "ask", "name": "ask", "ms": .int(ms), "ok": true, "results": .int(sources.count),
+        ]) { _, new in new })
         return EventAssistantAnswer(text: reply.text, sources: Array(sources.prefix(6)))
     }
 }

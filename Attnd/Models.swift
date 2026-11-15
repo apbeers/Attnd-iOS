@@ -544,6 +544,17 @@ enum UsageMetric: String, Hashable, Sendable, CaseIterable {
     case locationUnheart = "location_unheart"
     case scheduleItemHeart = "schedule_item_heart"
     case scheduleItemUnheart = "schedule_item_unheart"
+    // API-014: anonymous performance counts (detail = bucket, `PerfBucket`), recorded through
+    // `PerfMetrics` and sent with the joined event's batch (or the next one).
+    case perfLaunchCold = "perf_launch_cold"
+    case perfLaunchWarm = "perf_launch_warm"
+    case perfBundleFetch = "perf_bundle_fetch"
+    case perfBundle304 = "perf_bundle_304"
+    case perfApiError = "perf_api_error"
+    case perfPushRefreshDelay = "perf_push_refresh_delay"
+    case perfLiveStartFail = "perf_live_start_fail"
+    case perfPlannerMs = "perf_planner_ms"
+    case perfMapFirstRender = "perf_map_first_render"
 }
 
 /// One aggregated count. `detail` is omitted from the JSON when nil.
@@ -720,6 +731,16 @@ struct PushPayload: Hashable, Sendable {
         eventId = Self.int(userInfo["event_id"])
         notificationId = Self.int(userInfo["notification_id"])
         contentVersion = Self.int(userInfo["content_version"])
+    }
+
+    /// The push's `type` for logs ("notification", "content_updated", …, "none").
+    var kindName: String {
+        switch kind {
+        case .notification?:      return "notification"
+        case .contentUpdated?:    return "content_updated"
+        case .other(let name)?:   return String(name.prefix(32))
+        case nil:                 return "none"
+        }
     }
 
     /// APNs JSON numbers arrive as NSNumber; FCM-style payloads use strings.

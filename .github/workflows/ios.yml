@@ -3,8 +3,11 @@
 #                       then three suites on that build and simulator: unit tests, "Integration · dev"
 #                       (live API tests against the dev server; same-repo PRs only, forks get no secrets) and
 #                       "Integration · prod" (pushes only; continue-on-error: production may lag develop).
-#   push to develop   → in parallel with Test: "Archive & upload" (Mac) sends the build straight to
-#                       TestFlight (internal testers get it once Apple has processed it; nothing waits).
+#   push to develop   → in parallel with Test: "Archive & upload" (Mac) archives the Dev configuration (a
+#                       Debug copy: -Onone, DEBUG + DEV, continuous log upload; distribution-signed) and
+#                       sends it straight to TestFlight (internal testers get it once Apple has processed
+#                       it; nothing waits). main archives Release. Every archive's dSYMs are kept as the
+#                       artifact dsyms-<build> for 90 days (symbolicating MetricKit reports).
 #   push to main      → the same two jobs, then "Submit for App Review" (Linux, needs Test and Archive):
 #                       store listing text (store/en-US) and App Review submission (released when approved).
 #                       A failing test blocks the release. Screenshots stay as last uploaded by the manual
@@ -110,6 +113,8 @@ jobs:
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
       ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
       ATTND_SERVER: ${{ vars.ATTND_SERVER || 'attnd.app' }}
+      # develop → Dev (readable TestFlight builds), main → Release.
+      CONFIGURATION: ${{ github.ref == 'refs/heads/main' && 'Release' || 'Dev' }}
       COMPILATION_CACHE_DIR: build/CompilationCache
     steps:
       - uses: actions/checkout@v7
@@ -152,6 +157,15 @@ jobs:
           IOS_DEV_CERT_P12_BASE64: ${{ secrets.IOS_DEV_CERT_P12_BASE64 }}
           IOS_DEV_CERT_PASSWORD: ${{ secrets.IOS_DEV_CERT_PASSWORD }}
         run: bash scripts/ci/archive_upload.sh
+      # dSYMs of this build (app, App Clip, widgets) for symbolicating crash / hang reports (API-013).
+      - name: Keep dSYMs
+        if: ${{ !cancelled() && steps.archive.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: dsyms-${{ env.BUILD_NUMBER }}
+          path: build/Attnd.xcarchive/dSYMs
+          if-no-files-found: warn
+          retention-days: 90
       - name: Save compilation cache
         if: ${{ !cancelled() && steps.archive.outcome == 'success' }}
         uses: actions/cache/save@v6

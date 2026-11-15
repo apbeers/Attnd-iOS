@@ -31,6 +31,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        AppLog.setForeground(application.applicationState != .background)
+        if application.applicationState == .background {
+            AppLog.info(.background, "background.wake", "Launched in the background", ["reason": .string(Self.launchReason(launchOptions))])
+        }
+        // MetricKit: crash / hang reports (API-013) and launch-time buckets (API-014).
+        MetricKitReporter.shared.start()
         UNUserNotificationCenter.current().delegate = self
         // Siri, Shortcuts and Spotlight intents (EventIntents.swift) read the joined event from here.
         IntentBridge.appState = appState
@@ -51,7 +57,15 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
         // Simulators without APNs and devices without the entitlement end up here.
         // The app keeps working; it polls every 60 s instead of waiting for pushes.
-        appState.pushRegistrationDidFail()
+        appState.pushRegistrationDidFail(error)
+    }
+
+    /// Why iOS launched the app in the background (`background.wake` reason).
+    private static func launchReason(_ options: [UIApplication.LaunchOptionsKey: Any]?) -> String {
+        guard let options else { return "app_refresh" }
+        if options[.remoteNotification] != nil { return "silent_push" }
+        if options[.location] != nil { return "region" }
+        return "intent"
     }
 
     // MARK: - Silent pushes (content_updated)
@@ -63,6 +77,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         didReceiveRemoteNotification userInfo: [AnyHashable: Any]
     ) async -> UIBackgroundFetchResult {
         let payload = PushPayload(userInfo: userInfo)
+        if application.applicationState != .active {
+            AppLog.info(.background, "background.wake", "Silent push (\(payload.kindName))", ["reason": "silent_push"])
+        }
         guard payload.kind == .contentUpdated || payload.kind == .notification else { return .noData }
         let refreshed = await appState.handlePush(payload, opened: false)
         return refreshed ? .newData : .noData
@@ -84,7 +101,12 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
     ) async -> UNNotificationPresentationOptions {
         let userInfo = notification.request.content.userInfo
         // A reminder or "tap to follow" while the app is open: just show it.
-        guard LocalNotificationInfo(userInfo: userInfo) == nil else { return [.banner, .list, .sound] }
+        if let local = LocalNotificationInfo(userInfo: userInfo) {
+            if local.kind == LiveFollowKeys.reminderCategory {
+                AppLog.info(.live, "live.reminder.shown", "Reminder shown", ["item_id": .int(local.itemId ?? 0)])
+            }
+            return [.banner, .list, .sound]
+        }
         let payload = PushPayload(userInfo: userInfo)
         Task { @MainActor in
             await self.appState.handlePush(payload, opened: false)
@@ -99,6 +121,7 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
     ) async {
         let userInfo = response.notification.request.content.userInfo
         if let local = LocalNotificationInfo(userInfo: userInfo) {
+            AppLog.info(.push, "push.opened", "Local notification tapped (\(local.kind))", ["type": .string(local.kind)])
             Task { @MainActor in
                 _ = await LiveFollowController.shared.handleNotificationTap(local)
             }

@@ -192,6 +192,8 @@ final class BusinessLogicTests: XCTestCase {
         XCTAssertEqual(UsageMetric.allCases.map(\.rawValue), [
             "app_open", "tab_view", "location_view", "schedule_item_view", "notification_open", "search", "refresh",
             "location_heart", "location_unheart", "schedule_item_heart", "schedule_item_unheart",
+            "perf_launch_cold", "perf_launch_warm", "perf_bundle_fetch", "perf_bundle_304", "perf_api_error",
+            "perf_push_refresh_delay", "perf_live_start_fail", "perf_planner_ms", "perf_map_first_render",
         ])
         // tab_view details: the event tabs' raw values, and "options" for the Options sheet.
         XCTAssertEqual(EventTab.allCases.map(\.rawValue), ["map", "locations", "schedule", "flyer", "notifications"])

@@ -138,13 +138,14 @@ struct LaunchScreen: View {
     }
 
     /// Exact event code or name via `events/lookup/`.
-    private func joinByCode(_ code: String) async {
+    private func joinByCode(_ code: String, via: String = "search") async {
         guard !code.isEmpty, !isJoining else { return }
         isJoining = true
         joinError = nil
-        let joined = await appState.join(code: code)
+        let joined = await appState.join(code: code, via: via)
         if !joined {
             joinError = "Event not found. Check the code or full event name and try again."
+            AppLog.warning(.ui, "ui.error.shown", "Event not found", ["kind": .string(via == "qr" ? "scan" : "lookup")])
         }
         isJoining = false
     }
@@ -153,16 +154,17 @@ struct LaunchScreen: View {
     private func handleScannedCode(_ raw: String) async {
         guard let code = DeepLink.eventCode(fromScanned: raw) else {
             joinError = "QR code not recognised. Try entering the event code instead."
+            AppLog.warning(.ui, "ui.error.shown", "QR code not recognised", ["kind": "scan"])
             return
         }
         searchQuery = code
-        await joinByCode(code)
+        await joinByCode(code, via: "qr")
     }
 
     private func join(_ event: Event) async {
         isJoining = true
         joinError = nil
-        await appState.joinEvent(event)
+        await appState.joinEvent(event, via: "nearby")
         isJoining = false
     }
 }

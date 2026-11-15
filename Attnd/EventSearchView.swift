@@ -115,7 +115,7 @@ struct EventSearchView: View {
             prompt: Text("Schedule, places, updates")
         )
         .searchFocused($isSearchFocused)
-        .modifier(SearchUsageCounting(text: appState.searchText))
+        .modifier(SearchUsageCounting(text: appState.searchText, source: "sheet"))
         // Distances to places in the results.
         .usesUserLocation(heading: true)
         .onChange(of: appState.searchText) {

@@ -13,6 +13,7 @@
 // colour (AccentColor).
 
 import SwiftUI
+import UIKit
 
 // MARK: - Root
 
@@ -29,6 +30,7 @@ struct AppRootView: View {
             } else if appState.mustUpdate {
                 UpdateRequiredView()
                     .transition(.opacity)
+                    .onAppear { AppLog.debug(.ui, "ui.screen", "Update required", ["name": "update_required"]) }
             } else if isLaunching {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -50,11 +52,17 @@ struct AppRootView: View {
         .animation(.easeInOut, value: appState.currentEvent?.id)
         .animation(.easeInOut, value: appState.mustUpdate)
         .animation(.easeInOut, value: appState.showUpdateBanner)
+        .onAppear { LaunchTiming.firstFrame() }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
+            AppLog.warning(.lifecycle, "lifecycle.memory_warning", "Memory warning")
+        }
         .task {
             await appState.launch()
             isLaunching = false
         }
         .onChange(of: scenePhase, initial: true) { _, phase in
+            AppLog.setForeground(phase != .background)
+            LaunchTiming.scenePhaseChanged(background: phase == .background, active: phase == .active)
             // Location and compass only run while the scene is active (and a screen needs them).
             appState.userLocation.setSceneActive(phase == .active)
             if phase == .active, !isLaunching {
@@ -63,10 +71,12 @@ struct AppRootView: View {
             // Usage counts (API-005) go out before the app may be suspended.
             if phase == .background {
                 appState.flushUsage()
+                AppLog.flush()
             }
         }
     }
 }
+
 
 /// Screenshot mode's `orientation-probe` screen: red top half, blue bottom half, edge to edge.
 /// `compose_screenshots.py` uses its capture to rotate a display's captures upright.
@@ -237,7 +247,7 @@ struct ContentView: View {
             while !Task.isCancelled {
                 try? await Task.sleep(for: interval)
                 guard !Task.isCancelled, scenePhase == .active, appState.currentEvent != nil else { break }
-                await appState.refreshBundle(silent: true)
+                await appState.refreshBundle(silent: true, source: .poll)
             }
         }
     }

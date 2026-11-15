@@ -167,6 +167,7 @@ final class LiveFollowController {
             // Outside an event: nothing to follow.
             for activity in activities where Self.isRunning(activity) {
                 await activity.end(nil, dismissalPolicy: .immediate)
+                AppLog.notice(.live, "live.end", "Live Activity ended (no event)", ["reason": "left_event"])
             }
             await rescheduleReminders(nil)
             await setFollowPrompt(nil)
@@ -236,9 +237,9 @@ final class LiveFollowController {
                             ? dayItems.filter { personal.heartedScheduleItems.contains($0.id) }
                             : dayItems
                     summary.completedCount = followed.filter { ScheduleTiming.hasEnded($0, at: now) }.count
-                    await end(activity, final: summary, dismissal: .after(now.addingTimeInterval(LiveActivityPlanner.summaryLinger)))
+                    await end(activity, final: summary, dismissal: .after(now.addingTimeInterval(LiveActivityPlanner.summaryLinger)), reason: "day_over")
                 } else {
-                    await end(activity, final: nil)
+                    await end(activity, final: nil, reason: enabled && activity.attributes.eventId == event.id ? "day_over" : "unfollowed")
                 }
                 continue
             }
@@ -266,7 +267,7 @@ final class LiveFollowController {
         if let activity = live, let day {
             let content = state(at: now, existing: activity.content.state.urgent, for: day)
             if content.dayComplete == true {
-                await end(activity, final: content, dismissal: .after(now.addingTimeInterval(LiveActivityPlanner.summaryLinger)))
+                await end(activity, final: content, dismissal: .after(now.addingTimeInterval(LiveActivityPlanner.summaryLinger)), reason: "day_over")
             } else {
                 await send(content, to: activity, now: now)
             }
@@ -351,15 +352,27 @@ final class LiveFollowController {
                     style: .standard, alertConfiguration: alert, start: at
                 )
                 rememberScheduledStart(at, of: activity)
+                AppLog.notice(.live, "live.start", "Live Activity scheduled", Self.startFields(state, scheduled: true, items: day.items.count))
             } else {
+                var withPush = true
                 do {
                     activity = try Activity.request(attributes: attributes, content: content, pushType: .token)
                 } catch {
                     // No push support (e.g. APNs unavailable): local updates only.
+                    AppLog.caught(error, .live, "live_start_push", level: .notice)
+                    withPush = false
                     activity = try Activity.request(attributes: attributes, content: content, pushType: nil)
                 }
+                AppLog.notice(.live, "live.start", "Live Activity started",
+                              Self.startFields(state, scheduled: false, items: day.items.count).merging(["push": .bool(withPush)]) { _, new in new })
             }
         } catch {
+            let reason = Self.startFailureReason(error)
+            let ns = error as NSError
+            AppLog.warning(.live, "live.start.failed", "Live Activity didn't start (\(reason))", [
+                "reason": .string(reason), "domain": .string(ns.domain), "code": .int(ns.code), "scheduled": .bool(at != nil),
+            ])
+            PerfMetrics.shared.record(.perfLiveStartFail, detail: reason)
             return false
         }
         lastContent[activity.id] = state
@@ -389,17 +402,48 @@ final class LiveFollowController {
         } else {
             await activity.update(content)
         }
+        AppLog.debug(.live, "live.update", "Live Activity updated", [
+            "mode": .string(Self.mode(state)), "has_current": .bool(state.current != nil), "has_next": .bool(state.next != nil),
+            "pending": .bool(activity.activityState == .pending),
+        ])
     }
 
     private func end(
         _ activity: Activity<EventActivityAttributes>,
         final state: EventActivityAttributes.ContentState?,
-        dismissal: ActivityUIDismissalPolicy = .immediate
+        dismissal: ActivityUIDismissalPolicy = .immediate,
+        reason: String = "unfollowed"
     ) async {
         lastContent[activity.id] = nil
         let content = state.map { ActivityContent(state: $0, staleDate: nil) }
         await activity.end(content, dismissalPolicy: dismissal)
+        AppLog.notice(.live, "live.end", "Live Activity ended (\(reason))", ["reason": .string(reason), "summary": .bool(state != nil)])
         forgetScheduledStart(of: activity)
+    }
+
+    // MARK: Log fields (LOG_EVENTS.md)
+
+    /// `live.start` / `live.update` mode: before, active, end_of_day or urgent.
+    private static func mode(_ state: EventActivityAttributes.ContentState) -> String {
+        if state.urgent != nil { return "urgent" }
+        if state.dayComplete == true { return "end_of_day" }
+        return state.current != nil ? "active" : "before"
+    }
+
+    private static func startFields(_ state: EventActivityAttributes.ContentState, scheduled: Bool, items: Int) -> LogFields {
+        let source = state.followsPlan == true ? "plan" : (state.followsHearts == true ? "hearts" : "event")
+        return ["mode": .string(mode(state)), "source": .string(source), "scheduled": .bool(scheduled), "items": .int(items)]
+    }
+
+    /// `live.start.failed` reason and the `perf_live_start_fail` detail: disabled (Live Activities
+    /// turned off for Attnd), limit (too many activities) or error.
+    private static func startFailureReason(_ error: Error) -> String {
+        guard let error = error as? ActivityAuthorizationError else { return "error" }
+        switch error {
+        case .denied:                                         return "disabled"
+        case .globalMaximumExceeded, .targetMaximumExceeded:  return "limit"
+        default:                                              return "error"
+        }
     }
 
     // MARK: Push tokens (API-011)
@@ -419,6 +463,9 @@ final class LiveFollowController {
         Task { [weak self] in
             for await state in activity.activityStateUpdates {
                 if state == .ended || state == .dismissed {
+                    if state == .dismissed {
+                        AppLog.notice(.live, "live.end", "Live Activity dismissed", ["reason": "user"])
+                    }
                     self?.activityDidEnd(id)
                     break
                 }
@@ -427,6 +474,7 @@ final class LiveFollowController {
     }
 
     private func register(_ token: Data, for activityId: String) {
+        AppLog.debug(.live, "live.token", "Live Activity push token", ["action": "received"])
         registeredActivityId = activityId
         appState?.setLiveActivityToken(token.map { String(format: "%02x", $0) }.joined())
     }
@@ -464,6 +512,13 @@ final class LiveFollowController {
     private func handle(_ action: LiveActivityAction) async {
         guard let appState else { return }
         await appState.restoreSavedEventIfNeeded()
+        let name: String
+        switch action {
+        case .heart:         name = "heart"
+        case .skip:          name = "skip"
+        case .dismissUrgent: name = "dismiss_urgent"
+        }
+        AppLog.info(.live, "live.action", "Live Activity button: \(name)", ["action": .string(name)])
         switch action {
         case .heart(let eventId, let itemId):
             guard appState.currentEvent?.id == eventId else { return }
@@ -515,6 +570,7 @@ final class LiveFollowController {
         }
         guard planned != lastReminders else { return }
         lastReminders = planned
+        AppLog.debug(.live, "live.reminder.scheduled", "\(planned.count) reminders scheduled", ["count": .int(planned.count)])
         await Self.replaceReminders(planned, eventId: bundle?.event.id)
     }
 
@@ -537,7 +593,11 @@ final class LiveFollowController {
             content.userInfo = [LiveFollowKeys.localKindKey: LiveFollowKeys.reminderCategory, LiveFollowKeys.localEventKey: eventId, LiveFollowKeys.localItemKey: reminder.itemId]
             let interval = max(1, reminder.fireDate.timeIntervalSinceNow)
             let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
-            try? await center.add(UNNotificationRequest(identifier: reminder.id, content: content, trigger: trigger))
+            do {
+                try await center.add(UNNotificationRequest(identifier: reminder.id, content: content, trigger: trigger))
+            } catch {
+                AppLog.caught(error, .live, "reminder_add")
+            }
         }
     }
 
@@ -584,7 +644,16 @@ final class LiveFollowController {
         let trigger = prompt.at.map { at in
             UNTimeIntervalNotificationTrigger(timeInterval: max(1, at.timeIntervalSinceNow), repeats: false)
         }
-        try? await center.add(UNNotificationRequest(identifier: "attnd.follow.\(prompt.eventId)", content: content, trigger: trigger))
+        do {
+            try await center.add(UNNotificationRequest(identifier: "attnd.follow.\(prompt.eventId)", content: content, trigger: trigger))
+            if let at = prompt.at {
+                AppLog.debug(.live, "live.wake.scheduled", "Tap-to-follow notification set", ["at": .string(ISODate.string(from: at)), "reason": "follow_prompt"])
+            } else {
+                AppLog.notice(.live, "live.arrival", "Arrival: tap-to-follow notification sent", ["action": "prompted"])
+            }
+        } catch {
+            AppLog.caught(error, .live, "follow_prompt_add")
+        }
     }
 
     nonisolated private static func allowsAlerts() async -> Bool {
@@ -598,6 +667,9 @@ final class LiveFollowController {
 
     /// "Tell me when I arrive" needs Always location; this asks for the upgrade.
     func requestAlwaysLocation() {
+        AppLog.notice(.location, "location.permission", "Asking for Always location", locationPermissionFields(
+            locationManager.authorizationStatus, precise: locationManager.accuracyAuthorization == .fullAccuracy, asked: true
+        ))
         locationManager.requestAlwaysAuthorization()
     }
 
@@ -624,6 +696,7 @@ final class LiveFollowController {
                 }
             } catch {
                 // The monitor stopped; it is reopened at the next launch.
+                AppLog.caught(error, .location, "venue_monitor")
             }
         }
     }
@@ -666,6 +739,10 @@ final class LiveFollowController {
     /// the activity is already running (in the foreground it simply starts).
     private func venueEvent(identifier: String, satisfied: Bool) async {
         guard satisfied, let appState else { return }
+        AppLog.notice(.live, "live.arrival", "Arrived at the venue", ["action": "entered"])
+        if UIApplication.shared.applicationState != .active {
+            AppLog.info(.background, "background.wake", "Venue region event", ["reason": "region"])
+        }
         await appState.restoreSavedEventIfNeeded()
         guard let bundle = appState.currentBundle,
               identifier.hasPrefix("venue-\(bundle.event.id)-"),
@@ -678,6 +755,7 @@ final class LiveFollowController {
         appState.markArrivalPrompted(today)
         forcedDay = (event.id, today)
         if UIApplication.shared.applicationState == .active {
+            AppLog.notice(.live, "live.arrival", "Arrived: following now", ["action": "started"])
             await update()
             return
         }
@@ -704,10 +782,18 @@ final class LiveFollowController {
     /// AttndApp's `.backgroundTask(.appRefresh(…))`: fresh content for the activity and reminders.
     static func performBackgroundRefresh() async {
         guard let appState = shared.appState, !ScreenshotMode.isActive else { return }
+        let started = ContinuousClock.now
+        AppLog.info(.background, "background.wake", "Background app refresh", ["reason": "app_refresh"])
+        AppLog.info(.background, "background.refresh.started", "Background app refresh", ["task": "bundle", "reason": "app_refresh"])
         await appState.restoreSavedEventIfNeeded()
-        await appState.refreshBundle(silent: true)
+        await appState.refreshBundle(silent: true, source: .poll)
         shared.pendingUpdate?.cancel()
         await shared.update()
+        let ms = (ContinuousClock.now - started).wholeMilliseconds
+        AppLog.info(.background, "background.refresh.finished", "Background app refresh done in \(ms) ms", [
+            "task": "bundle", "ms": .int(ms), "following": .bool(shared.isFollowing),
+        ])
+        AppLog.flush()
     }
 
     /// Asks for a background refresh in ~15 min while something on the Lock Screen depends on it.
@@ -720,7 +806,14 @@ final class LiveFollowController {
         let request = BGAppRefreshTaskRequest(identifier: LiveFollowKeys.refreshTaskIdentifier)
         request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
         // Fails in the simulator and when background refresh is off; nothing else to do then.
-        try? BGTaskScheduler.shared.submit(request)
+        do {
+            try BGTaskScheduler.shared.submit(request)
+            AppLog.debug(.background, "background.task.scheduled", "Background refresh requested in 15 min", [
+                "task": "app_refresh", "at": .string(ISODate.string(from: request.earliestBeginDate ?? .now)), "window_s": 0,
+            ])
+        } catch {
+            AppLog.caught(error, .background, "bg_refresh_submit", level: .debug)
+        }
     }
 }
 

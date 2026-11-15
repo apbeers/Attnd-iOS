@@ -10,6 +10,9 @@ struct AttndApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
+        // Logging first, so everything after it is captured (AppLog.swift).
+        AppLog.start()
+        LaunchTiming.appDidInit()
         // Start attestation in the background immediately so the JWT is ready
         // before the first API call, avoiding extra latency on the first screen load.
         AttestationManager.shared.warmup()

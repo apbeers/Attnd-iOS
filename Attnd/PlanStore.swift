@@ -106,30 +106,54 @@ extension AppState {
         planner.isPlanning = true
         planner.error = nil
         defer { planner.isPlanning = false }
+        AppLog.info(.planner, "planner.request", "Plan request", LogRedaction.textFields(trimmed))
         let now = Date.now
         let rules = PlanRequest.heuristic(trimmed, bundle: bundle, now: now)
-        let model = try? await EventAssistant.planPreferences(
-            trimmed, bundle: bundle, heartedItems: personal.heartedScheduleItems, now: now
-        )
+        let modelStarted = ContinuousClock.now
+        let model: PlanPreferences?
+        do {
+            model = try await EventAssistant.planPreferences(
+                trimmed, bundle: bundle, heartedItems: personal.heartedScheduleItems, now: now
+            )
+        } catch {
+            AppLog.caught(error, .planner, "plan_preferences", level: .notice)
+            model = nil
+        }
+        let modelMs = (ContinuousClock.now - modelStarted).wholeMilliseconds
+        AppLog.info(.planner, "planner.extract", "Preferences read in \(modelMs) ms", [
+            "ms": .int(modelMs), "ok": .bool(model != nil), "model": .string(model != nil ? "foundation_models" : "rules"),
+            "liked_tags": .int(model?.likedTags.count ?? rules.likedTags.count),
+            "disliked_tags": .int(model?.dislikedTags.count ?? rules.dislikedTags.count),
+            "days": .int(model?.days.count ?? rules.days.count),
+        ])
         // The user may have left or switched events while the model was reading.
         guard currentEvent?.id == bundle.event.id else { return nil }
         let preferences = PlanRequest.merge(model, rules)
+        // perf_planner_ms times the Planner run only (not the model's reading).
+        let signpost = AppSignpost.begin(.planner)
         let plan = makePlanner(bundle, preferences).plan(
             from: now,
             request: trimmed,
             createdAt: Date(timeIntervalSince1970: now.timeIntervalSince1970.rounded(.down))
         )
+        let ms = AppSignpost.end(signpost, ["items": .int(plan.itemIds.count)])
         if plan.isEmpty {
             planner.error = Self.nothingFitsMessage
         } else {
             planner.store(plan)
         }
+        PerfMetrics.shared.record(.perfPlannerMs, detail: PerfBucket.planner(ms: ms))
+        AppLog.info(.planner, "planner.run", "Plan with \(plan.itemIds.count) items in \(ms) ms", [
+            "ms": .int(ms), "items": .int(plan.itemIds.count), "days": .int(plan.days.count),
+            "pace": .string(String(describing: preferences.pace)),
+        ])
         return plan
     }
 
     /// "Re-plan from now" (also after a content change): the same preferences from the current time.
     func replanFromNow() {
         guard let bundle = currentBundle, let plan = planner.plan else { return }
+        AppLog.debug(.ui, "ui.action", "Re-plan from now", ["name": "replan"])
         let now = Date.now
         let replanned = makePlanner(bundle, plan.preferences).plan(
             from: now,
@@ -148,6 +172,7 @@ extension AppState {
     func swapPlanItem(_ oldId: Int, for newId: Int) {
         guard let bundle = currentBundle, let plan = planner.plan,
               let swapped = makePlanner(bundle, plan.preferences).swap(plan, oldId: oldId, newId: newId) else { return }
+        AppLog.info(.planner, "planner.swap", "Swapped a plan item", ["item_id": .int(newId), "replaced": .int(oldId)])
         planner.store(swapped)
     }
 

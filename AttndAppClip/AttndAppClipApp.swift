@@ -13,6 +13,8 @@ struct AttndAppClipApp: App {
     @State private var appState = AppState()
 
     init() {
+        AppLog.start()
+        LaunchTiming.appDidInit()
         AttestationManager.shared.warmup()
     }
 

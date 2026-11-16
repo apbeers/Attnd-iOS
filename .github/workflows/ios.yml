@@ -7,7 +7,7 @@
 #                       Debug copy: -Onone, DEBUG + DEV, continuous log upload; distribution-signed) and
 #                       sends it straight to TestFlight (internal testers get it once Apple has processed
 #                       it; nothing waits). main archives Release. Every archive's dSYMs are kept as the
-#                       artifact dsyms-<build> for 90 days (symbolicating MetricKit reports).
+#                       artifact dsyms-<build> for 30 days (symbolicating MetricKit reports).
 #   push to main      → the same two jobs, then "Submit for App Review" (Linux, needs Test and Archive):
 #                       store listing text (store/en-US) and App Review submission (released when approved).
 #                       A failing test blocks the release. Screenshots stay as last uploaded by the manual
@@ -15,6 +15,11 @@
 # Xcode's compilation cache (CAS) is kept between runs per job (actions/cache, keyed on the Xcode version;
 # only pushes save it). Mac minutes cost ~10x Linux minutes, so anything that only waits on Apple runs on Linux.
 # Docs-only commits don't run; a newer push to develop cancels the older run (main never cancels).
+#
+# LEAN MODE (early build-out, Nov 2026): on pushes to develop only "Archive & upload" runs. "Test" runs on
+# main (releases) and manual runs, or on every push when the repository variable CI_FULL is 'true'; the two
+# integration suites run only with CI_FULL. Pure logic is checked on Linux before pushing (CLAUDE.md, CI).
+# Full pipeline + how to restore it: attnd-web docs/CI_PIPELINES.md.
 #
 # Signing is automatic via an App Store Connect API key — see SETUP.md.
 # Version: <VERSION file>.<run number>; build number: run number (always increasing).
@@ -25,7 +30,7 @@ on:
     branches: [main, develop]
     # Screenshots have their own manual workflow (store-screenshots.yml). Listing text changes do run this
     # pipeline: a release to main publishes them.
-    paths-ignore: ['**/*.md', 'scripts/ci/screenshots.sh', 'scripts/ci/compose_screenshots.py',
+    paths-ignore: ['**/*.md', 'docs/**', 'scripts/ci/screenshots.sh', 'scripts/ci/compose_screenshots.py',
                    'scripts/ci/duo_hinge.m', 'store/en-US/captions.txt', '.github/workflows/store-*.yml']
   pull_request:
     paths-ignore: ['**/*.md', 'store/**', '.github/workflows/store-*.yml']
@@ -41,6 +46,7 @@ permissions:
 jobs:
   test:
     name: Test
+    if: vars.CI_FULL == 'true' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: ${{ vars.MACOS_RUNNER || 'xcode-27' }}
     timeout-minutes: 45
     env:
@@ -68,7 +74,7 @@ jobs:
       # Live API tests through the app's APIClient. Server and key reach the test process as
       # TEST_RUNNER_ATTND_IT_* (scripts/ci/test.sh). They never gate a release on main.
       - name: Integration · dev
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        if: ${{ vars.CI_FULL == 'true' && !cancelled() && steps.build.outcome == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
         continue-on-error: ${{ github.ref == 'refs/heads/main' }}
         env:
           ATTND_IT_SERVER: dev.attnd.app
@@ -76,7 +82,7 @@ jobs:
         run: bash scripts/ci/test.sh integration "Integration · dev"
       - name: Integration · prod
         id: prod
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && github.event_name != 'pull_request' }}
+        if: ${{ vars.CI_FULL == 'true' && !cancelled() && steps.build.outcome == 'success' && github.event_name != 'pull_request' }}
         continue-on-error: true
         env:
           ATTND_IT_SERVER: attnd.app
@@ -165,7 +171,7 @@ jobs:
           name: dsyms-${{ env.BUILD_NUMBER }}
           path: build/Attnd.xcarchive/dSYMs
           if-no-files-found: warn
-          retention-days: 90
+          retention-days: 30
       - name: Save compilation cache
         if: ${{ !cancelled() && steps.archive.outcome == 'success' }}
         uses: actions/cache/save@v6

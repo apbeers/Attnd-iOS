@@ -353,6 +353,8 @@ In Xcode, put them in the scheme's Test environment locally (never commit a key)
 
 ## CI/CD (`.github/workflows/ios.yml`)
 
+**Lean mode now (Nov 15, 2026, private repo minutes):** pushes to `develop` run only **Archive & upload**; the Test job runs on `main`, by hand (Run workflow) or with the repo variable `CI_FULL=true`, the integration suites only with `CI_FULL`. Batch commits and push when a change is ready to try on the phone; run the pure-logic tests in the Linux harness before pushing. Full pipeline below and how to restore it: attnd-web `docs/CI_PIPELINES.md`.
+
 | Trigger | What happens |
 |---------|--------------|
 | Every run | **Test** (Mac, `xcode-27`): `scripts/ci/test.sh build` builds for testing once (`build-for-testing`, generic simulator destination, so it never waits for a device) while the newest iPhone simulator boots in the background; then three suites run with `test-without-building` on that build and simulator (`-parallel-testing-enabled NO`): **Unit tests**, **Integration · dev** (`ATTND_IT_SERVER=dev.attnd.app`, key `secrets.ATTND_API_KEY`; same-repo PRs only; non-blocking on `main`) and **Integration · prod** (`attnd.app`, key `secrets.ATTND_PROD_CI_KEY`, a CI key production accepts only for DEMO; pushes only; always `continue-on-error`, a failure is a warning). Each suite is its own step with its own warnings and pass/fail summary (`scripts/ci/test_summary.py` fails a suite whose tests were all skipped). |

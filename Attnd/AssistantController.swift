@@ -437,7 +437,6 @@ final class AssistantController {
                 show(nil, [confirm])
             }
         case .newPlan(let plan):
-            appState.planner.error = nil
             appState.planner.apply(plan)
             AppLog.info(.planner, "plan.edit", "New plan from an inline action", [
                 "ops": "add", "source": "plan", "applied": true, "removed": 0,

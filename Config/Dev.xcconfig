@@ -1,8 +1,8 @@
 // Dev.xcconfig
 // Base build settings for the Dev configuration of the Attnd, AttndAppClip and AttndWidgets targets.
 //
-// Dev is a copy of Debug (-Onone, the DEBUG and DEV Swift conditions, assertions on, dSYMs kept)
-// for readable TestFlight builds: CI archives it for pushes to develop, distribution-signed, against
+// Dev is a copy of Debug (the DEBUG and DEV Swift conditions, assertions on, dSYMs kept) but optimised
+// for size (-Osize, set in the project for [config=Dev]) so TestFlight builds stay small: CI archives it for pushes to develop, distribution-signed, against
 // the dev server (ATTND_SERVER=dev.attnd.app on the command line). main archives Release.
 // DEV turns on continuous log upload (AppLog.swift). Same keys and SDK flags as Debug.
 

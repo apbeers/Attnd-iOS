@@ -1,14 +1,20 @@
 // AssistantController.swift
 // Attnd (app target only — not in the App Clip)
 //
-// The event assistant at runtime behind the My plan tab (plan tab spec, Nov 15, 2026; the
-// assistant spec's router, blocks, actions, edits, undo and live rules unchanged), matching
-// Android's `ui/assistant/AssistantController.kt`. One screen, no transcript:
+// The event assistant at runtime behind the plan panel (the floating "My plan" button over every
+// tab, PlanPanel.swift / AssistantView.swift; iOS since Nov 16, 2026 — Android keeps the plan tab
+// spec's My plan tab; the assistant spec's router, blocks, actions, edits, undo and live rules
+// are unchanged and shared). One panel, no transcript:
 //
-//   - Turns: every typed turn goes through `PlanProposals.swap`, the rule-based `AssistantRouter`
-//     or — when Apple Intelligence's on-device model is available and `AssistantFlow.path` says
-//     so — the model (`EventAssistant.assistantTurn`, streamed; any error or invalid output → the
-//     router's answer, `AssistantModel.resolve`).
+//   - The panel: `panelOpen` and `panelDetent` (collapsed / medium / large), shared by every tab.
+//     Opening an item collapses it (`collapsePanel`) so the item's own tab is in view; a proposal
+//     expands a collapsed panel so its preview shows.
+//   - Turns: no Search / Ask / Plan toggle. Every typed turn goes through `PlanProposals.swap`, the
+//     rule-based `AssistantRouter` or — when Apple Intelligence's on-device model is available and
+//     `AssistantFlow.path` says so — the model (`EventAssistant.assistantTurn`, streamed; any
+//     error or invalid output → the router's answer, `AssistantModel.resolve`).
+//   - Search results' inline actions ("Add to plan", "Plan around this"; `PlanPanel`) become
+//     proposals like typed edits (`addToPlan`, `planAround`).
 //   - Plan edits (router or model, pick chips, like clash, shared plan links) are not applied at
 //     once: they become `proposal` (PlanProposal.swift), previewed in the timeline (suggested /
 //     crossed-out rows, diff pill). An option row, the pill's Apply or a typed "do it" / "the
@@ -17,8 +23,6 @@
 //   - Everything else (questions, search, why-not, now/next, settings, likes) is the **answer
 //     card** (`answer`, the last turn only, its blocks compact above the input bar). The model's
 //     conversation history is kept as before (`pref.assistantConversation.<id>`).
-//   - Other tabs: the floating search button opens the same bar over the tab (`overlayOpen`,
-//     search-only answers); a plan edit typed there switches to My plan with the preview.
 //   - Live (§6): position samples while a screen tracks the location (never a new permission
 //     prompt) → auto check-off, skipped items; running late, gap fillers, organizer changes and
 //     the day's recap → `live` (`LiveHintRules`), shown in the timeline.
@@ -58,19 +62,29 @@ final class AssistantController {
 
     /// The answer card (nil: none shown).
     private(set) var answer: Turn?
-    /// The plan edit shown in the timeline, waiting to be applied (nil: none).
-    private(set) var proposal: PlanProposal?
+    /// The plan edit shown in the timeline, waiting to be applied (nil: none). A new one opens
+    /// the panel (at least medium), so its preview is in view.
+    private(set) var proposal: PlanProposal? {
+        didSet {
+            guard proposal != nil, oldValue != proposal, appState?.currentEvent != nil else { return }
+            panelOpen = true
+            if panelDetent == .collapsed { panelDetent = .medium }
+        }
+    }
     /// The Undo pill after a plan change (nil: none).
     private(set) var undoPill: UndoPill?
     /// The path of the turn being worked on (busy indicator in the input bar).
     private(set) var busy: TurnPath?
-    /// The input bar's chosen path (nil = automatic).
-    var forced: TurnPath?
     /// The input bar's text. A proposal stays while typing (so "the second one" can answer it);
     /// sending anything that isn't an answer to it clears it.
     var draft = ""
-    /// The search bar over another tab is open (the floating search button).
-    private(set) var overlayOpen = false
+    /// The plan panel is open (the floating "My plan" button), over whichever tab is shown.
+    private(set) var panelOpen = false
+    /// Its height; the panel's drag sets it.
+    var panelDetent: PlanPanelDetent = .medium
+    /// Incremented to put the keyboard down (an item opened from the panel).
+    private(set) var blurSerial = 0
+    @ObservationIgnored private var focusPending = false
     private(set) var live = LiveHints()
     /// Incremented to put the keyboard up (a request typed elsewhere, "Ask about this").
     private(set) var focusSerial = 0
@@ -105,11 +119,12 @@ final class AssistantController {
         dismissedSkips = []
         lateLoggedFor = nil
         busy = nil
-        forced = nil
         answer = nil
         proposal = nil
         undoPill = nil
-        overlayOpen = false
+        panelOpen = false
+        panelDetent = .medium
+        focusPending = false
         draft = ""
         guard eventId != nil, appState != nil, !ScreenshotMode.isActive else {
             live = LiveHints()
@@ -158,14 +173,33 @@ final class AssistantController {
         proposal = nil
     }
 
-    func openOverlay() {
-        overlayOpen = true
-        focusSerial += 1
+    /// The "My plan" button (and every "show my plan"): opens the panel; `detent` nil keeps an
+    /// open panel's height and opens a closed one at medium. Without a plan the keyboard comes up.
+    func openPanel(_ detent: PlanPanelDetent? = nil) {
+        if let detent {
+            panelDetent = detent
+        } else if !panelOpen {
+            panelDetent = .medium
+        }
+        if !panelOpen { AppLog.debug(.ui, "ui.screen", "Plan panel", ["name": "plan"]) }
+        panelOpen = true
+        if appState?.planner.hasPlan != true { focusInput() }
     }
 
-    func closeOverlay() {
-        guard overlayOpen else { return }
-        overlayOpen = false
+    /// The panel's × (or a drag down past its collapsed height). What was typed stays.
+    func closePanel() {
+        guard panelOpen else { return }
+        panelOpen = false
+        proposal = nil
+        blurSerial += 1
+    }
+
+    /// An item is opened from the panel (or a link, Siri, a notification): the panel shrinks to
+    /// its summary line and the keyboard goes down, so the item's tab is in view.
+    func collapsePanel() {
+        guard panelOpen else { return }
+        panelDetent = .collapsed
+        blurSerial += 1
     }
 
     /// The Undo pill's time is up (only the pill with `id`).
@@ -181,38 +215,9 @@ final class AssistantController {
 
     // MARK: - Turns
 
-    /// The input bar's intent chip for `text` (debounced by the screen).
-    func predict(_ text: String) -> TurnPath {
-        guard let ctx = context(), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return forced ?? .search }
-        if proposal != nil, case .apply = ProposalReply.parse(text, options: proposal?.options.count ?? 0) { return .plan }
-        if PlanProposals.swap(text, ctx) != nil { return .plan }
-        return AssistantFlow.path(AssistantRouter.route(text, ctx).intent, text, modelAvailable: ctx.modelAvailable, forced: forced)
-    }
-
-    /// Cycles the input bar's chip: automatic → Search → Ask (with the model) → Plan → automatic.
-    func cycleForced() {
-        let order: [TurnPath?] = modelAvailable ? [nil, .search, .ask, .plan] : [nil, .search, .plan]
-        let index = order.firstIndex(of: forced) ?? 0
-        forced = order[(index + 1) % order.count]
-    }
-
-    /// Enter / send on the bar over another tab: search answers there; a plan edit (or anything
-    /// for the plan) switches to My plan with its preview.
-    func submitFromOverlay(_ input: String) {
-        let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let ctx = context() else { return }
-        let routed = AssistantRouter.route(text, ctx)
-        let path = AssistantFlow.path(routed.intent, text, modelAvailable: ctx.modelAvailable, forced: forced)
-        if path == .plan || PlanProposals.swap(text, ctx) != nil {
-            closeOverlay()
-            appState?.showPlanTab()
-            submit(text)
-        } else {
-            submit(text, forced: path == .ask ? .ask : .search)
-        }
-    }
-
     /// Enter / send: answers a pending proposal ("do it", "the second one", "no"), or runs a turn.
+    /// The path is the app's choice (`AssistantFlow.path`); `overridden` is only for turns the app
+    /// starts itself (Ask about this, a question from onboarding).
     func submit(_ input: String, forced overridden: TurnPath? = nil) {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let ctx = context() else { return }
@@ -229,7 +234,7 @@ final class AssistantController {
                 clearProposal()
             }
         }
-        let path = overridden ?? forced
+        let path = overridden
         let started = ContinuousClock.now
         if text.isEmpty {
             finish(nil, AssistantRouter.route("", ctx).turn, .rules, .empty, started, ctx)
@@ -431,6 +436,15 @@ final class AssistantController {
             case .needsConfirmation(let confirm):
                 show(nil, [confirm])
             }
+        case .newPlan(let plan):
+            appState.planner.error = nil
+            appState.planner.apply(plan)
+            AppLog.info(.planner, "plan.edit", "New plan from an inline action", [
+                "ops": "add", "source": "plan", "applied": true, "removed": 0,
+                "added": .int(plan.itemIds.count), "moved": 0,
+            ])
+            refreshLive()
+            showUndo("Here's your plan: \(Planner.summary(plan, timeZone: appState.timeZone)).")
         case .plan(let plan):
             appState.planner.apply(plan)
             AppLog.notice(.ui, "share.opened", "Shared plan applied", [
@@ -459,6 +473,29 @@ final class AssistantController {
         guard let ctx = context(), let p = PlanProposals.from(action: .planEdit(ops, ctx.bundle), label: label, ctx) else { return }
         answer = nil
         proposal = p
+    }
+
+    /// A search result's "Add to plan" / a place's "Plan around this" (PlanPanel.swift): the
+    /// in-place proposal (add, replace on a clash, or a new plan), or a short answer.
+    func addToPlan(_ itemId: Int) {
+        guard let ctx = context() else { return }
+        inline(PlanPanel.addToPlan(itemId, ctx), "add_to_plan", itemId)
+    }
+
+    func planAround(_ locationId: Int) {
+        guard let ctx = context() else { return }
+        inline(PlanPanel.planAround(locationId, ctx), "plan_around", locationId)
+    }
+
+    private func inline(_ change: PanelPlanChange, _ name: String, _ id: Int) {
+        AppLog.debug(.ui, "ui.action", "Inline plan action", ["name": .string(name), "id": .int(id)])
+        switch change {
+        case .proposal(let p):
+            answer = nil
+            proposal = p
+        case .message(let message):
+            show(nil, [.text(message)])
+        }
     }
 
     /// A plan row's Swap: its alternatives as option rows under it.
@@ -918,13 +955,21 @@ final class AssistantController {
             submit(text, forced: modelAvailable ? .ask : nil)
         } else {
             draft = text
-            focusSerial += 1
+            focusInput()
         }
     }
 
-    /// Puts the keyboard up on My plan's bar.
+    /// Puts the keyboard up on the plan panel's bar (now, or as soon as the panel is shown).
     func focusInput() {
+        focusPending = true
         focusSerial += 1
+    }
+
+    /// The panel takes a pending keyboard request (true once per request).
+    func consumeFocusRequest() -> Bool {
+        guard focusPending, panelOpen else { return false }
+        focusPending = false
+        return true
     }
 
     // MARK: - Live (spec §6)
@@ -1010,10 +1055,10 @@ extension AppState {
         LikeSet(locations: personal.heartedLocations, scheduleItems: personal.heartedScheduleItems)
     }
 
-    /// The assistant runs (full app, not in screenshot mode): the My plan tab.
-    static var assistantEnabled: Bool { hasPlanTab }
+    /// The assistant runs (full app, not in screenshot mode): the plan panel.
+    static var assistantEnabled: Bool { hasPlanPanel }
 
-    /// `open(screen, id?)`: a manual screen (Map / Schedule / Locations open Explore on that view).
+    /// `open(screen, id?)`: a manual screen (its own tab; the plan panel collapses).
     func openAssistantScreen(_ screen: String, _ ref: EntityRef?) {
         func target(_ ref: EntityRef) -> SearchTarget {
             switch ref.kind {
@@ -1025,7 +1070,7 @@ extension AppState {
         func tab(_ tab: EventTab) {
             guard shows(tab) else { return }
             presentedSheet = nil
-            assistant.closeOverlay()
+            assistant.collapsePanel()
             select(tab)
         }
         switch screen {

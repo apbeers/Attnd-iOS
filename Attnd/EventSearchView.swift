@@ -280,7 +280,7 @@ struct EventSearchView: View {
             case .planned(let asked, let summary, let itemIds) where asked == query:
                 Text("Here's your plan: \(summary). It's in My plan.")
                     .textSelection(.enabled)
-                if appState.tabs.contains(.plan) {
+                if AppState.hasPlanPanel {
                     Button("Open My Plan", systemImage: "list.bullet.clipboard") {
                         openMyPlan()
                     }
@@ -337,7 +337,7 @@ struct EventSearchView: View {
     }
 
     #if !APP_CLIP
-    /// A plan request: the planner makes and stores the plan (the My plan tab); the answer
+    /// A plan request: the planner makes and stores the plan (the plan panel); the answer
     /// is its summary and items, with "Open My plan".
     private func plan(_ request: String) async {
         assistant = .planning(query: request)

@@ -8,7 +8,7 @@
 //   - AppState.makePlan: the on-device model reads the request into preferences
 //     (EventAssistant.planPreferences, validated against the bundle) merged with the plain-rule
 //     reading (PlanRequest.heuristic, which alone is used when the model fails); the
-//     deterministic Planner then schedules. Offered wherever the My plan tab exists
+//     deterministic Planner then schedules. Offered wherever the plan panel exists
 //     (`AppState.plannerAvailable`); without the model the plain-rule reading plans alone.
 //   - Every stored change updates the Live Activity and reminders (plan > hearts > now/next).
 //
@@ -142,10 +142,10 @@ final class PlanStore {
 extension AppState {
     static let nothingFitsMessage = "Nothing on the schedule fits that. Try another day or fewer limits."
 
-    /// The planner is offered (My plan, Ask plans, onboarding's plan chips) wherever the My plan
-    /// tab exists (plan tab spec): with Apple Intelligence the on-device model reads requests,
-    /// without it the plain-rule reading and the likes make the plan. Never in screenshot mode.
-    static var plannerAvailable: Bool { hasPlanTab }
+    /// The planner is offered (the plan panel, Ask plans, onboarding's plan chips) wherever the
+    /// plan panel exists: with Apple Intelligence the on-device model reads requests, without it
+    /// the plain-rule reading and the likes make the plan. Never in screenshot mode.
+    static var plannerAvailable: Bool { hasPlanPanel }
 
     /// A planned item changed or disappeared in a content update since the plan was made.
     var planChanged: Bool {
@@ -278,10 +278,11 @@ extension AppState {
         planner.apply(nil)
     }
 
-    /// Opens the My plan tab (after planning from Ask or onboarding), closing any sheet.
+    /// Opens the plan panel at half height (after planning from Ask or onboarding, the Live
+    /// Activity's plan link), closing any sheet.
     func showMyPlan() {
         guard currentEvent != nil else { return }
-        showPlanTab()
+        showPlanPanel(.medium)
     }
 
     /// An onboarding / plan-card example: a plan request plans (and opens My plan), the

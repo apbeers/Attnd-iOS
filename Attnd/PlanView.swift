@@ -1,8 +1,8 @@
 // PlanView.swift
 // Attnd (app target only — not in the App Clip)
 //
-// The My plan tab's timeline (plan tab spec, Nov 15, 2026), edited in place — the scrolling part
-// of `MyPlanScreen` (AssistantView.swift), never a conversation:
+// The plan timeline, edited in place — the scrolling body of the plan panel (AssistantView.swift,
+// medium and large heights), never a conversation:
 //   - Header: the request and summary, Share, Undo, Re-plan from Now, New Plan; a day switcher
 //     when the plan spans days.
 //   - "Your plan changed" (organizer changes) and the live hints (running late, gap fillers,
@@ -525,7 +525,7 @@ private struct LikedItemsList: View {
             CompactList(targets: items + places, title: "Your likes", limit: 6)
                 .blockCardBackground()
         } else {
-            Text("Like things in Explore and they're planned first.")
+            Text("Like things on the Map, Places or Schedule and they're planned first.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }

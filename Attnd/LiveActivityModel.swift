@@ -230,7 +230,7 @@ enum LiveActivityLink: Hashable, Sendable {
     case updates(notificationId: Int?)
     /// Open the app and start following on the Lock Screen (the "tap to follow" notification).
     case follow
-    /// The My plan tab (spec §6), when the activity follows the plan.
+    /// The plan panel (spec §6), when the activity follows the plan.
     case plan
 
     static let scheme = "attnd-live"

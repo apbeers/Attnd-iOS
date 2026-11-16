@@ -1,155 +1,406 @@
 // AssistantView.swift
 // Attnd (app target only — not in the App Clip)
 //
-// The My plan tab (plan tab spec, Nov 15, 2026): one screen that never turns into a conversation.
-//   - `MyPlanTab`: its own NavigationStack (`AppState.planPath`: details opened from the plan, the
-//     answer card and results), Options in the toolbar.
-//   - `MyPlanScreen`: the timeline (PlanView.swift) scrolling above the bottom area, which sits on
-//     the keyboard: the matches while typing, else the answer card (the last non-edit turn,
-//     ≤ a third of the screen, scrollable inside, swipe down or × to dismiss), the proposal pill
-//     ("−2 items, +1 lunch break" · Apply · ×), the Undo pill (~8 s) and the input bar
-//     ("Change your plan or search…", intent chip Searching… / Asking… / Editing plan…).
-//   - `SearchOverlay`: the same bar over the other tabs (the floating search button,
-//     `floatingSearchButton()` in ContentView.swift): search answers there; a plan edit switches
-//     to My plan with its preview.
-// Screenshot mode and the App Clip have no My plan tab (EventSearchView.swift's sheet instead).
+// The plan panel (iOS, Nov 16, 2026; Android keeps the shared plan tab spec's My plan tab): the
+// floating Liquid Glass "My plan" button (`sparkles`, bottom-trailing, on every tab; it replaced the
+// floating search button) opens a bottom panel over the current tab:
+//   - Three snapping heights (`PlanPanelDetent`, rules in PlanPanel.swift): collapsed (grabber,
+//     the one-line summary "Next: … · 7:00 PM · Main Stage" and the input bar), medium and large.
+//     The grabber / header drags and snaps (a fling below collapsed closes it; tap toggles
+//     collapsed ↔ medium; × closes). Collapsed and medium are Liquid Glass and the tab stays usable
+//     above the panel; large is opaque, like a full-height system sheet.
+//   - Body (medium / large): the plan timeline (PlanView.swift), previews of proposals in place.
+//   - Dock, on the keyboard: the results pane (search results while typing — the previous results
+//     stay until the next ones are ready, so it never blinks — with "Add to plan" / "Plan around
+//     this" inline; otherwise the last answer card), the proposal pill, the Undo pill and the input
+//     bar ("Change your plan or search…"). There is no Search / Ask / Plan toggle: the app decides.
+// Why a custom panel and not `.sheet` + `presentationDetents`: a sheet covers the tab bar (tabs
+// couldn't be switched with the plan open, and CLAUDE.md keeps the tab bar always visible), the
+// tabs already present Options / Tour / search as their one `.sheet(item:)` (a second sheet
+// can't be presented beside it), and links that switch tabs would have to dismiss and re-present
+// it. The panel lives in each tab's content above the tab bar, follows the keyboard through the
+// keyboard safe area, and its state (open, height, draft, proposal) is the AssistantController's,
+// so it is the same on every tab.
+// Screenshot mode and the App Clip have the floating search button and its sheet instead.
 
 import SwiftUI
 
-// MARK: - Tab
+// MARK: - Host (every tab)
 
-struct MyPlanTab: View {
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        @Bindable var state = appState
-        NavigationStack(path: $state.planPath) {
-            MyPlanScreen()
-                .navigationDestination(for: SearchTarget.self) { target in
-                    SearchDestinationView(target: target)
-                }
-                .navigationDestination(for: Location.self) { location in
-                    LocationDetailView(location: location)
-                }
-                .navigationDestination(for: HeartedListRoute.self) { _ in
-                    HeartedListView()
-                }
-        }
+extension View {
+    /// The floating "My plan" button, or the plan panel when it is open, over `tab`'s content.
+    func planPanel(tab: EventTab) -> some View {
+        modifier(PlanPanelModifier(tab: tab))
     }
 }
 
-struct MyPlanScreen: View {
+private struct PlanPanelModifier: ViewModifier {
+    let tab: EventTab
+
+    @Environment(AppState.self) private var appState
+    /// The collapsed panel's height without results or pills: the tab's content keeps that much
+    /// bottom safe area while the panel is open, so lists scroll clear of it.
+    @State private var reserved: CGFloat = 120
+
+    func body(content: Content) -> some View {
+        let open = appState.assistant.panelOpen
+        ZStack {
+            content
+                .safeAreaPadding(.bottom, open ? reserved : FloatingSearchButtonMetrics.reservedHeight)
+            ReservedRegionAvoiding {
+                if open {
+                    PlanPanelView(reserved: $reserved, isSelected: appState.selectedTab == tab)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                } else {
+                    VStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        HStack(spacing: 0) {
+                            Spacer(minLength: 0)
+                            FloatingPlanButton {
+                                appState.showPlanPanel()
+                            }
+                            .padding(.trailing, FloatingSearchButtonMetrics.trailingPadding)
+                            .padding(.bottom, FloatingSearchButtonMetrics.bottomPadding)
+                        }
+                    }
+                    // Stays put (under the keyboard) while a tab's own search field is typing.
+                    .ignoresSafeArea(.keyboard)
+                    .transition(.opacity)
+                }
+            }
+        }
+        .animation(.snappy, value: open)
+    }
+}
+
+/// A Liquid Glass circle with sparkles ("My plan" for VoiceOver).
+struct FloatingPlanButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label("My plan", systemImage: "sparkles")
+                .labelStyle(.iconOnly)
+                .font(.title3.weight(.semibold))
+                .frame(width: FloatingSearchButtonMetrics.size, height: FloatingSearchButtonMetrics.size)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.tint)
+        .glassEffect(.regular.interactive(), in: .circle)
+        .accessibilityLabel("My plan")
+        .accessibilityHint("Opens your plan. Type there to search, ask or change the plan.")
+        .keyboardShortcut("f", modifiers: .command)
+    }
+}
+
+// MARK: - Panel
+
+private struct PlanPanelView: View {
+    @Binding var reserved: CGFloat
+    /// Its tab is the shown one (every tab has its own panel view; only that one takes focus and
+    /// runs the live tasks).
+    let isSelected: Bool
+
     @Environment(AppState.self) private var appState
     @FocusState private var inputFocused: Bool
-    /// The draft the live results are for (debounced).
-    @State private var settledDraft = ""
-    @State private var predicted: TurnPath = .search
-    @State private var height: CGFloat = 600
+    /// Height available to the panel (the tab's content area above the tab bar or keyboard).
+    @State private var available: CGFloat = 700
+    /// The collapsed panel's own height (with whatever it shows).
+    @State private var collapsedHeight: CGFloat = 120
+    /// The panel's current height (for starting a drag).
+    @State private var panelHeight: CGFloat = 120
+    @State private var dragStart: CGFloat?
+    @State private var dragHeight: CGFloat?
+    /// The results pane: the last computed results and the text they are for.
+    @State private var results: [EventSearchResult] = []
+    @State private var resultsQuery: String?
 
     private var assistant: AssistantController { appState.assistant }
 
+    private var detent: PlanPanelDetent { assistant.panelDetent }
+
+    private var showsBody: Bool {
+        if let dragHeight { return dragHeight > collapsedHeight + 24 }
+        return detent != .collapsed
+    }
+
+    private var fixedHeight: CGFloat? {
+        if let dragHeight { return dragHeight }
+        guard detent != .collapsed else { return nil }
+        return CGFloat(PlanPanelLayout.height(detent, available: Double(available), collapsed: Double(collapsedHeight)))
+    }
+
     var body: some View {
-        ScrollView {
-            PlanTimeline()
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+            panel
+                .frame(maxWidth: 640)
+                .padding(.horizontal, 8)
+                .padding(.bottom, 4)
         }
-        .scrollDismissesKeyboard(.interactively)
-        .background(Color(.systemGroupedBackground))
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            AssistantBottomArea(
+        .frame(maxWidth: .infinity)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { available = $0 }
+        .modifier(PanelResultsTracking(results: $results, resultsQuery: $resultsQuery))
+        .modifier(PanelFocus(focused: $inputFocused, isSelected: isSelected))
+        .modifier(PanelLiveTasks(isSelected: isSelected, expanded: detent != .collapsed))
+    }
+
+    private var panel: some View {
+        let opaque = detent == .large && dragHeight == nil
+        return VStack(spacing: 0) {
+            PlanPanelHeader(collapsed: !showsBody, onToggle: toggle)
+                .gesture(dragGesture)
+            if showsBody {
+                ScrollView {
+                    PlanTimeline()
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                }
+                .scrollDismissesKeyboard(.interactively)
+                .frame(maxHeight: .infinity)
+                .transition(.opacity)
+            }
+            PlanPanelDock(
                 focused: $inputFocused,
-                predicted: predicted,
-                settledDraft: settledDraft,
-                maxCardHeight: height / 3,
+                results: results,
+                resultsQuery: resultsQuery,
+                maxPaneHeight: max(160, available / 3),
                 onSend: send
             )
         }
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
-        .navigationTitle("My Plan")
-        .navigationBarTitleDisplayMode(.inline)
-        .eventStatusBanners()
-        .optionsToolbarItem()
-        // Distances on cards and the live hints (only while already permitted).
-        .usesUserLocation(heading: true)
-        .modifier(AssistantDraftTracking(settledDraft: $settledDraft, predicted: $predicted))
-        .task {
-            // Live hints once a minute while the tab is shown.
-            while !Task.isCancelled {
-                assistant.refreshLive()
-                try? await Task.sleep(for: .seconds(60))
+        .frame(height: fixedHeight)
+        .modifier(PanelBackground(opaque: opaque))
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+            panelHeight = height
+            guard dragHeight == nil, detent == .collapsed else { return }
+            collapsedHeight = height
+            let plain = assistant.draft.isEmpty && assistant.answer == nil && assistant.proposal == nil && assistant.undoPill == nil
+            // + the panel's bottom padding.
+            if plain, abs(reserved - (height + 4)) > 0.5 { reserved = height + 4 }
+        }
+        .animation(dragHeight == nil ? Animation.snappy : nil, value: detent)
+        .accessibilityAction(named: detent == .large ? "Make smaller" : "Make bigger") {
+            assistant.panelDetent = detent == .collapsed ? .medium : detent == .medium ? .large : .medium
+        }
+    }
+
+    private var dragGesture: some Gesture {
+        DragGesture(minimumDistance: 6, coordinateSpace: .global)
+            .onChanged { value in
+                let start = dragStart ?? panelHeight
+                if dragStart == nil { dragStart = start }
+                dragHeight = CGFloat(PlanPanelLayout.dragHeight(
+                    start: Double(start), translation: Double(value.translation.height),
+                    available: Double(available), collapsed: Double(collapsedHeight)
+                ))
             }
-        }
-        // A shared plan link (API-015), once its event's content is shown.
-        .task(id: [appState.pendingSharedPlan?.payload, appState.currentEvent.map { String($0.id) }]) {
-            guard let shared = appState.pendingSharedPlan, appState.currentBundle != nil else { return }
-            appState.pendingSharedPlan = nil
-            assistant.openShared(shared)
-        }
-        .task {
-            // No plan yet: the input focused with the examples above it.
-            guard !appState.planner.hasPlan, assistant.proposal == nil, !ScreenshotMode.isActive else { return }
-            try? await Task.sleep(for: .milliseconds(450))
-            inputFocused = true
-        }
-        .onChange(of: assistant.focusSerial) {
-            guard appState.selectedTab == .plan else { return }
-            inputFocused = true
+            .onEnded { value in
+                let start = dragStart ?? panelHeight
+                let predicted = Double(start - value.predictedEndTranslation.height)
+                let snapped = PlanPanelLayout.snap(predicted: predicted, available: Double(available), collapsed: Double(collapsedHeight))
+                withAnimation(.snappy) {
+                    dragStart = nil
+                    dragHeight = nil
+                    if let snapped {
+                        assistant.panelDetent = snapped
+                        if snapped == .collapsed { inputFocused = false }
+                    } else {
+                        assistant.closePanel()
+                    }
+                }
+            }
+    }
+
+    private func toggle() {
+        withAnimation(.snappy) {
+            assistant.panelDetent = detent == .collapsed ? .medium : .collapsed
         }
     }
 
     private func send() {
         let text = assistant.draft
         assistant.draft = ""
-        settledDraft = ""
+        resultsQuery = nil
+        results = []
         assistant.submit(text)
     }
 }
 
-/// The intent chip and live results follow the typing, debounced; typing again hides the answer card.
-private struct AssistantDraftTracking: ViewModifier {
-    @Binding var settledDraft: String
-    @Binding var predicted: TurnPath
+/// Liquid Glass while the tab shows above it (collapsed, medium); opaque at full height.
+private struct PanelBackground: ViewModifier {
+    let opaque: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 28, style: .continuous)
+        if opaque {
+            content
+                .background(Color(.systemBackground), in: shape)
+                .clipShape(shape)
+                .shadow(color: .black.opacity(0.15), radius: 16, y: 2)
+        } else {
+            content
+                .clipShape(shape)
+                .glassEffect(.regular, in: shape)
+        }
+    }
+}
+
+/// The search results for the typed text, debounced; the previous ones stay until then.
+private struct PanelResultsTracking: ViewModifier {
+    @Binding var results: [EventSearchResult]
+    @Binding var resultsQuery: String?
+
+    @Environment(AppState.self) private var appState
+
+    func body(content: Content) -> some View {
+        let draft = appState.assistant.draft
+        content.task(id: draft) {
+            let query = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !query.isEmpty else {
+                resultsQuery = nil
+                results = []
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled, let index = appState.searchIndex else { return }
+            let found = Array(index.search(query, now: .now).prefix(8))
+            withAnimation(.snappy) {
+                results = found
+                resultsQuery = query
+            }
+        }
+    }
+}
+
+/// Keyboard up / down when the controller asks (a request typed elsewhere, opening without a
+/// plan; an item opened from the panel).
+private struct PanelFocus: ViewModifier {
+    var focused: FocusState<Bool>.Binding
+    let isSelected: Bool
 
     @Environment(AppState.self) private var appState
 
     func body(content: Content) -> some View {
         let assistant = appState.assistant
         content
-            .onChange(of: assistant.draft) { _, text in
-                if !text.isEmpty { assistant.dismissAnswer() }
+            .task(id: isSelected) {
+                guard isSelected else { return }
+                try? await Task.sleep(for: .milliseconds(350))
+                if !Task.isCancelled, assistant.consumeFocusRequest() { focused.wrappedValue = true }
             }
-            .task(id: assistant.draft) {
-                try? await Task.sleep(for: .milliseconds(300))
-                guard !Task.isCancelled else { return }
-                settledDraft = assistant.draft
-                predicted = assistant.predict(assistant.draft)
+            .onChange(of: assistant.focusSerial) {
+                if isSelected, assistant.consumeFocusRequest() { focused.wrappedValue = true }
+            }
+            .onChange(of: assistant.blurSerial) {
+                focused.wrappedValue = false
             }
     }
 }
 
-// MARK: - Bottom area (on the keyboard)
+/// While the panel is shown: live hints once a minute; distances (and live hints' position) while
+/// it is expanded and location is already permitted.
+private struct PanelLiveTasks: ViewModifier {
+    let isSelected: Bool
+    let expanded: Bool
 
-private struct AssistantBottomArea: View {
+    @Environment(AppState.self) private var appState
+
+    func body(content: Content) -> some View {
+        content
+            .usesUserLocation(heading: true, active: isSelected && expanded)
+            .task(id: isSelected) {
+                guard isSelected else { return }
+                while !Task.isCancelled {
+                    appState.assistant.refreshLive()
+                    try? await Task.sleep(for: .seconds(60))
+                }
+            }
+    }
+}
+
+// MARK: - Header
+
+private struct PlanPanelHeader: View {
+    let collapsed: Bool
+    let onToggle: () -> Void
+
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        let line = appState.currentBundle.map {
+            PlanPanel.summaryLine(plan: appState.planner.plan, $0, now: .now)
+        } ?? ""
+        VStack(spacing: 6) {
+            Capsule()
+                .fill(.tertiary)
+                .frame(width: 36, height: 5)
+                .padding(.top, 6)
+            HStack(spacing: 10) {
+                Image(systemName: "sparkles")
+                    .foregroundStyle(.tint)
+                    .font(.headline)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("My Plan")
+                        .font(.subheadline.weight(.semibold))
+                    Text(line)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Button {
+                    appState.assistant.closePanel()
+                } label: {
+                    Label("Close", systemImage: "xmark")
+                        .labelStyle(.iconOnly)
+                        .font(.subheadline.weight(.bold))
+                        .frame(width: 32, height: 32)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 14)
+        }
+        .padding(.bottom, 6)
+        .contentShape(.rect)
+        .onTapGesture(perform: onToggle)
+        .accessibilityElement(children: .contain)
+        .accessibilityHint(collapsed ? "Double-tap to show your plan." : "Double-tap to make the panel smaller.")
+    }
+}
+
+// MARK: - Dock (on the keyboard)
+
+private struct PlanPanelDock: View {
     var focused: FocusState<Bool>.Binding
-    let predicted: TurnPath
-    let settledDraft: String
-    let maxCardHeight: CGFloat
-    var onClose: (() -> Void)? = nil
+    let results: [EventSearchResult]
+    let resultsQuery: String?
+    let maxPaneHeight: CGFloat
     let onSend: () -> Void
 
     @Environment(AppState.self) private var appState
 
     var body: some View {
         let assistant = appState.assistant
-        let draft = settledDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let typing = !draft.isEmpty && assistant.draft.trimmingCharacters(in: .whitespacesAndNewlines) == draft
+        let pane = PlanPanel.pane(
+            draft: assistant.draft, resultsQuery: resultsQuery,
+            hasAnswer: assistant.answer != nil, proposalOptions: assistant.proposal?.options.count
+        )
         VStack(spacing: 8) {
-            if typing, assistant.proposal == nil {
-                LiveResults(query: draft, maxHeight: maxCardHeight)
-            } else if let answer = assistant.answer {
-                AnswerCard(turn: answer, maxHeight: maxCardHeight)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            switch pane {
+            case .results:
+                ResultsPane(results: results, query: resultsQuery ?? "", maxHeight: maxPaneHeight, focused: focused)
+                    .transition(.opacity)
+            case .answer:
+                if let answer = assistant.answer {
+                    AnswerCard(turn: answer, maxHeight: maxPaneHeight)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            case .none:
+                EmptyView()
             }
             if let proposal = assistant.proposal, let preview = assistant.preview {
                 ProposalPill(proposal: proposal, preview: preview)
@@ -157,10 +408,11 @@ private struct AssistantBottomArea: View {
             if let pill = assistant.undoPill {
                 UndoPillView(pill: pill)
             }
-            AssistantInputBar(focused: focused, predicted: predicted, onClose: onClose, onSend: onSend)
+            AssistantInputBar(focused: focused, onSend: onSend)
         }
-        .padding(.horizontal, 12)
-        .padding(.bottom, 8)
+        .padding(.horizontal, 10)
+        .padding(.bottom, 10)
+        .animation(.snappy, value: pane)
         .animation(.snappy, value: assistant.answer?.id)
         .animation(.snappy, value: assistant.proposal)
         .animation(.snappy, value: assistant.undoPill)
@@ -171,8 +423,6 @@ private struct AssistantBottomArea: View {
 
 struct AssistantInputBar: View {
     var focused: FocusState<Bool>.Binding
-    let predicted: TurnPath
-    var onClose: (() -> Void)? = nil
     let onSend: () -> Void
 
     @Environment(AppState.self) private var appState
@@ -181,29 +431,26 @@ struct AssistantInputBar: View {
         @Bindable var assistant = appState.assistant
         let busy = assistant.busy
         HStack(spacing: 8) {
-            IntentChip(path: busy ?? assistant.forced ?? predicted, isForced: assistant.forced != nil, isBusy: busy != nil) {
-                assistant.cycleForced()
+            if busy != nil {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel(busy == .ask ? "Thinking" : busy == .plan ? "Planning" : "Working")
             }
             TextField("Change your plan or search…", text: $assistant.draft)
                 .focused(focused)
                 .submitLabel(.send)
                 .onSubmit(onSend)
                 .onKeyPress(.escape) {
-                    guard assistant.proposal != nil else { return .ignored }
-                    assistant.clearProposal()
+                    if assistant.proposal != nil {
+                        assistant.clearProposal()
+                    } else {
+                        focused.wrappedValue = false
+                        assistant.panelDetent = .collapsed
+                    }
                     return .handled
                 }
                 .textInputAutocapitalization(.sentences)
                 .frame(minHeight: 36)
-            if let onClose {
-                Button(action: onClose) {
-                    Label("Close", systemImage: "xmark.circle.fill")
-                        .labelStyle(.iconOnly)
-                        .font(.title2)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-            }
             Button(action: onSend) {
                 Label("Send", systemImage: "arrow.up.circle.fill")
                     .labelStyle(.iconOnly)
@@ -220,48 +467,114 @@ struct AssistantInputBar: View {
     }
 }
 
-/// "Searching…" / "Asking…" / "Editing plan…": what the next turn will do. Tap chooses the path
-/// (automatic → Search → Ask → Plan).
-private struct IntentChip: View {
-    let path: TurnPath
-    let isForced: Bool
-    let isBusy: Bool
-    let onTap: () -> Void
+// MARK: - Results pane
+
+/// Results as you type (nothing is sent; Return runs the full turn), with inline plan actions.
+private struct ResultsPane: View {
+    let results: [EventSearchResult]
+    let query: String
+    let maxHeight: CGFloat
+    var focused: FocusState<Bool>.Binding
+
+    @Environment(AppState.self) private var appState
 
     var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 4) {
-                if isBusy {
-                    ProgressView().controlSize(.mini)
-                } else {
-                    Image(systemName: Self.symbol(path))
+        let ctx = appState.assistant.context()
+        ScrollView {
+            VStack(alignment: .leading, spacing: 6) {
+                if results.isEmpty {
+                    Text(appState.assistant.modelAvailable
+                         ? "Nothing matches “\(query)”. Press Return to ask."
+                         : "Nothing matches “\(query)”. Press Return to try it as a request.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                Text(path.label)
-                    .lineLimit(1)
+                ForEach(results) { result in
+                    let action = ctx.flatMap { ctx in Self.ref(result.target).flatMap { PlanPanel.resultAction($0, ctx) } }
+                    ResultLine(result: result, action: action, focused: focused)
+                    if result.id != results.last?.id { Divider() }
+                }
             }
-            .font(.caption.weight(.semibold))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(isForced ? AnyShapeStyle(TintShapeStyle().opacity(0.25)) : AnyShapeStyle(.quaternary), in: .capsule)
+            .padding(12)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(path.label)
-        .accessibilityHint(isForced ? "Chosen. Tap to choose another way to answer." : "Automatic. Tap to choose how to answer.")
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(maxHeight: maxHeight)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 22))
     }
 
-    static func symbol(_ path: TurnPath) -> String {
-        switch path {
-        case .search: return "magnifyingglass"
-        case .ask: return "sparkles"
-        case .plan: return "list.bullet.clipboard"
+    /// Search targets as assistant references (the event itself has no plan action).
+    static func ref(_ target: SearchTarget) -> EntityRef? {
+        switch target {
+        case .location(let id): return EntityRef(kind: .location, id: id)
+        case .scheduleItem(let id): return EntityRef(kind: .schedule, id: id)
+        case .notification(let id): return EntityRef(kind: .update, id: id)
+        case .event: return nil
+        }
+    }
+}
+
+private struct ResultLine: View {
+    let result: EventSearchResult
+    let action: PanelResultAction?
+    var focused: FocusState<Bool>.Binding
+
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button {
+                focused.wrappedValue = false
+                appState.open(result.target)
+            } label: {
+                HeartableResultRow(result: result)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .onScreenEntity(result.target)
+            if let action {
+                actionView(action)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func actionView(_ action: PanelResultAction) -> some View {
+        switch action {
+        case .inPlan:
+            Image(systemName: action.systemImage)
+                .foregroundStyle(.tint)
+                .accessibilityLabel(action.label)
+        case .addToPlan(let id):
+            Button(action.label, systemImage: action.systemImage) {
+                appState.assistant.draft = ""
+                appState.assistant.addToPlan(id)
+            }
+            .labelStyle(.iconOnly)
+            .font(.title3)
+            .buttonStyle(.plain)
+            .foregroundStyle(.tint)
+            .accessibilityLabel("\(action.label): \(result.title)")
+        case .planAround(let id):
+            Button(action.label, systemImage: action.systemImage) {
+                appState.assistant.draft = ""
+                appState.assistant.planAround(id)
+            }
+            .labelStyle(.iconOnly)
+            .font(.title3)
+            .buttonStyle(.plain)
+            .foregroundStyle(.tint)
+            .accessibilityLabel("\(action.label): \(result.title)")
         }
     }
 }
 
 // MARK: - Answer card
 
-/// The last non-edit turn, compact (≤ a third of the screen, scrollable inside). Swipe down or ×
-/// dismisses it; typing again hides it.
+/// The last non-edit turn, compact (≤ a third of the window, scrollable inside). Swipe down or ×
+/// dismisses it; results replace it while typing.
 private struct AnswerCard: View {
     let turn: AssistantController.Turn
     let maxHeight: CGFloat
@@ -288,10 +601,9 @@ private struct AnswerCard: View {
             }
             .scrollBounceBehavior(.basedOnSize)
         }
-        .frame(maxHeight: max(160, maxHeight))
+        .frame(maxHeight: maxHeight)
         .fixedSize(horizontal: false, vertical: true)
         .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 22))
-        .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
         .gesture(DragGesture(minimumDistance: 20).onEnded { value in
             if value.translation.height > 60 { appState.assistant.dismissAnswer() }
         })
@@ -304,10 +616,7 @@ private struct AnswerCardHandle: View {
 
     var body: some View {
         HStack {
-            Capsule()
-                .fill(.tertiary)
-                .frame(width: 36, height: 5)
-                .frame(maxWidth: .infinity)
+            Spacer(minLength: 0)
             Button {
                 appState.assistant.dismissAnswer()
             } label: {
@@ -320,45 +629,7 @@ private struct AnswerCardHandle: View {
             .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 8)
-        .padding(.top, 6)
-    }
-}
-
-/// Results as you type (nothing is sent; Return runs the full turn).
-private struct LiveResults: View {
-    let query: String
-    let maxHeight: CGFloat
-
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        if let index = appState.searchIndex {
-            let results = Array(index.search(query, now: .now).prefix(8))
-            if !results.isEmpty {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(results) { result in
-                            Button {
-                                appState.open(result.target)
-                            } label: {
-                                HeartableResultRow(result: result)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .contentShape(.rect)
-                            }
-                            .buttonStyle(.plain)
-                            .onScreenEntity(result.target)
-                            if result.id != results.last?.id { Divider() }
-                        }
-                    }
-                    .padding(12)
-                }
-                .scrollBounceBehavior(.basedOnSize)
-                .frame(maxHeight: max(160, maxHeight))
-                .fixedSize(horizontal: false, vertical: true)
-                .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 22))
-                .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
-            }
-        }
+        .padding(.top, 4)
     }
 }
 
@@ -436,51 +707,5 @@ private struct UndoPillView: View {
             guard !Task.isCancelled else { return }
             appState.assistant.expireUndo(pill.id)
         }
-    }
-}
-
-// MARK: - Over other tabs
-
-/// The floating search button's bar over a tab other than My plan: matches while typing, the
-/// answer card, and the bar itself (focused on open). A plan edit switches to My plan.
-struct SearchOverlay: View {
-    @Environment(AppState.self) private var appState
-    @FocusState private var inputFocused: Bool
-    @State private var settledDraft = ""
-    @State private var predicted: TurnPath = .search
-    @State private var height: CGFloat = 600
-
-    var body: some View {
-        let assistant = appState.assistant
-        VStack(spacing: 0) {
-            Spacer(minLength: 0)
-            AssistantBottomArea(
-                focused: $inputFocused,
-                predicted: predicted,
-                settledDraft: settledDraft,
-                maxCardHeight: height / 3,
-                onClose: { assistant.closeOverlay() },
-                onSend: send
-            )
-        }
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
-        .modifier(AssistantDraftTracking(settledDraft: $settledDraft, predicted: $predicted))
-        .task {
-            try? await Task.sleep(for: .milliseconds(150))
-            inputFocused = true
-        }
-        .onChange(of: assistant.focusSerial) { inputFocused = true }
-        .onChange(of: inputFocused) { _, focused in
-            // Keyboard down with nothing typed and nothing shown: the button comes back.
-            if !focused, assistant.draft.isEmpty, assistant.answer == nil { assistant.closeOverlay() }
-        }
-    }
-
-    private func send() {
-        let assistant = appState.assistant
-        let text = assistant.draft
-        assistant.draft = ""
-        settledDraft = ""
-        assistant.submitFromOverlay(text)
     }
 }

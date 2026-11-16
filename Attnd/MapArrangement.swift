@@ -45,7 +45,6 @@ struct MapTab: View {
         NavigationStack {
             MapView(cameraPosition: $cameraPosition, hasPositioned: $hasPositioned)
                 .eventStatusBanners()
-                .exploreSwitcher()
                 .optionsToolbarItem()
         }
     }
@@ -133,7 +132,7 @@ private struct MapLocationsPane: View {
         }
         .listStyle(.plain)
         .usesUserLocation(heading: true)
-        .navigationTitle("Locations")
+        .navigationTitle(appState.title(of: .locations))
         .navigationBarTitleDisplayMode(.inline)
         .refreshable { await appState.pullToRefresh() }
         .overlay {

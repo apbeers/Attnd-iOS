@@ -22,7 +22,6 @@ struct LocationsTab: View {
         NavigationSplitView {
             LocationsView(selection: $selection)
                 .eventStatusBanners()
-                .exploreSwitcher()
                 .optionsToolbarItem()
         } detail: {
             NavigationStack {
@@ -82,8 +81,8 @@ struct LocationsView: View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
             list(locations, now: context.date)
         }
-        .navigationTitle("Locations")
-        .modifier(SearchableIf(enabled: display.enableSearch, text: $searchText, prompt: "Search locations"))
+        .navigationTitle(appState.title(of: .locations))
+        .modifier(SearchableIf(enabled: display.enableSearch, text: $searchText, prompt: "Search \(appState.title(of: .locations).lowercased())"))
         .refreshable { await appState.pullToRefresh() }
         .usesUserLocation(heading: true)
     }

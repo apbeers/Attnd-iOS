@@ -11,7 +11,7 @@
 //   4. "Plan your day", only when Apple Intelligence's on-device model is available
 //      (`AppState.plannerAvailable`; never in the App Clip): example requests built from this
 //      event's tags (`PlanRequest.examples`, the same as Android's). A plan chip makes the plan
-//      and opens the My plan tab (spec §6); the question chip opens Ask with it.
+//      and opens the plan panel (spec §6); the question chip opens Ask with it.
 
 import CoreLocation
 import SwiftUI
@@ -170,7 +170,7 @@ struct OnboardingView: View {
                 .foregroundStyle(.secondary)
             ForEach(examples) { example in
                 Button {
-                    // A plan opens the My plan tab, the question opens Ask (either replaces this sheet).
+                    // A plan opens the plan panel, the question opens Ask (either replaces this sheet).
                     appState.useExample(example)
                 } label: {
                     Label(example.text, systemImage: example.isPlan ? "sparkles" : "bubble.left")

@@ -9,7 +9,7 @@
 // grouped by ScheduleGrouping) and `enable_search`. All times are shown in the
 // event's time zone. Countdown labels update live via TimelineView.
 //
-// In the full app it is one of Explore's views (Map | Schedule | Places); My plan is its own tab.
+// In the full app the floating "My plan" button sits over it (the plan panel, AssistantView.swift).
 
 import SwiftUI
 
@@ -23,7 +23,6 @@ struct ScheduleTab: View {
         NavigationSplitView {
             ScheduleView(selection: $selection)
                 .eventStatusBanners()
-                .exploreSwitcher()
                 // After the filter menu, in its own glass group.
                 .optionsToolbarItem(separated: true)
         } detail: {
@@ -137,7 +136,7 @@ struct ScheduleView: View {
     /// The Hearted chip appears once something is hearted (or while it is on); not in My plan.
     private var showsHeartedChip: Bool { !inPlan && (appState.hasHearts || heartedOnly) }
 
-    /// My plan has its own tab now (plan tab spec); the Schedule list never shows it.
+    /// The plan is the plan panel's (AssistantView.swift); the Schedule list never shows it.
     private var inPlan: Bool { false }
 
     @ViewBuilder

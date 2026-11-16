@@ -2,7 +2,7 @@
 // Attnd (app target only — not in the App Clip; pure, unit tested in PlanProposalTests — same
 // rules and cases as Android's `domain/PlanProposal.kt`)
 //
-// The My plan tab edits the plan in place (plan tab spec, Nov 15, 2026): a turn that would change
+// The plan panel edits the plan in place (plan tab spec, Nov 15, 2026; on iOS the panel of the "My plan" button): a turn that would change
 // the plan is not applied at once but shown as a **proposal** in the timeline:
 //   - `PlanProposals.from(routed:)` / `from(actions:)` / `from(chip:)` / `shared` / `swap`
 //     turn the router's or the model's plan edits, a chip (like clash: "Add to plan instead of
@@ -24,6 +24,8 @@ enum ProposalApply: Hashable, Sendable {
     case action(AssistantAction)
     /// A whole plan (shared plan links: "Use this plan", "Merge with mine").
     case plan(Plan)
+    /// A new plan made for an inline action without a plan ("Plan around this", PlanPanel.swift).
+    case newPlan(Plan)
 }
 
 struct ProposalOption: Hashable, Sendable {

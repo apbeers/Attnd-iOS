@@ -63,18 +63,6 @@ extension EventTab {
     var screenName: String { self == .notifications ? "updates" : rawValue }
 }
 
-extension AppTab {
-    /// The display tab a `tab_view` count and `ui.screen` name stand for (Explore: its view;
-    /// My plan: none, the server accepts only the event tabs).
-    func eventTab(explore view: ExploreView) -> EventTab? {
-        switch self {
-        case .plan: return nil
-        case .explore: return view.eventTab
-        case .event(let tab): return tab
-        }
-    }
-}
-
 /// Why the bundle is refetched (`net.bundle.applied` / `not_modified` `source`).
 enum RefreshSource: String, Sendable {
     case join, foreground, poll, push, pull
@@ -111,36 +99,18 @@ final class AppState {
 
     // MARK: - Navigation
 
-    /// The selected tab (TabLayout: My plan, Explore, Flyer, Updates; the old tabs in screenshot mode).
-    var selectedTab: AppTab = .explore {
+    /// The selected tab (TabLayout: the event's own tabs, `display.tabs`). The plan is the
+    /// floating "My plan" button's panel over every tab (PlanPanel.swift), not a tab.
+    var selectedTab: EventTab = .map {
         didSet {
             guard oldValue != selectedTab else { return }
             // The first tab is counted in `apply` once the bundle has chosen it.
-            if hasAppliedDefaultTab, let tab = selectedTab.eventTab(explore: exploreView) {
-                track(.tabView, detail: tab.rawValue)
+            if hasAppliedDefaultTab {
+                track(.tabView, detail: selectedTab.rawValue)
             }
-            let name = selectedTab.eventTab(explore: exploreView)?.screenName ?? "plan"
-            AppLog.debug(.ui, "ui.screen", "Tab \(name)", ["name": .string(name)])
+            AppLog.debug(.ui, "ui.screen", "Tab \(selectedTab.screenName)", ["name": .string(selectedTab.screenName)])
         }
     }
-
-    /// The Explore tab's view (Map | Schedule | Places), remembered per event. Switching it counts
-    /// a `tab_view` with the old tab names (map / schedule / locations) while Explore is shown.
-    var exploreView: ExploreView = .map {
-        didSet {
-            guard oldValue != exploreView else { return }
-            if let id = currentEvent?.id, !ScreenshotMode.isActive {
-                UserDefaults.standard.set(exploreView.rawValue, forKey: Keys.exploreView(id))
-            }
-            if selectedTab == .explore {
-                if hasAppliedDefaultTab { track(.tabView, detail: exploreView.eventTab.rawValue) }
-                AppLog.debug(.ui, "ui.screen", "Explore \(exploreView.eventTab.screenName)", ["name": .string(exploreView.eventTab.screenName)])
-            }
-        }
-    }
-
-    /// My plan's navigation stack (details opened from the plan, its answer card and results).
-    var planPath = NavigationPath()
 
     /// The search or Options sheet over the tabs (nil: none). Opening Options counts a
     /// `tab_view` "options", as the Options tab did.
@@ -226,6 +196,10 @@ final class AppState {
     @ObservationIgnored private var liveActivityToken: String?
     /// False while `liveActivityToken` hasn't reached the server yet.
     @ObservationIgnored private var liveActivityTokenSynced = true
+    /// The last `POST devices/` failed (offline, server down): sent again after the next
+    /// successful bundle refresh, so an opt-out made offline reaches the server without a relaunch.
+    @ObservationIgnored private var deviceSyncPending = false
+    @ObservationIgnored private var sendingLeaves = false
 
     /// The App Clip can't receive pushes; it always uses the 60 s poll.
     static let isAppClip = Bundle.main.bundleIdentifier?.hasSuffix(".clip") ?? false
@@ -259,6 +233,14 @@ final class AppState {
     private var savedEventCode: String? {
         get { UserDefaults.standard.string(forKey: Keys.savedEventCode) }
         set { UserDefaults.standard.set(newValue, forKey: Keys.savedEventCode) }
+    }
+
+    /// Events left while `POST leave/` couldn't be sent (offline, server down). Kept until the
+    /// server accepted it (the server only detaches the device from that event, so a late leave
+    /// never affects a newer join); rejoining the event drops it.
+    private var pendingLeaveEventIds: [Int] {
+        get { UserDefaults.standard.array(forKey: Keys.pendingLeaves) as? [Int] ?? [] }
+        set { UserDefaults.standard.set(newValue, forKey: Keys.pendingLeaves) }
     }
 
     // MARK: - Private bookkeeping
@@ -314,10 +296,10 @@ final class AppState {
         static let dismissedUpdateVersion = "pref.dismissedUpdateVersion"
         /// The onboarding cards were shown (or skipped) once on this device.
         static let onboardingSeen = "pref.onboardingSeen"
+        /// Event ids whose `POST leave/` is still to be sent.
+        static let pendingLeaves = "pref.pendingLeaves"
         /// `EventPersonalState` JSON (hearts, Updates seen) for one event.
         static func personal(_ eventId: Int) -> String { "pref.event.\(eventId)" }
-        /// The Explore tab's last view (map / schedule / places) for one event.
-        static func exploreView(_ eventId: Int) -> String { "pref.exploreView.\(eventId)" }
     }
 
     // MARK: - Init
@@ -382,16 +364,19 @@ final class AppState {
 
     var timeZone: TimeZone { currentEvent?.timeZone ?? .current }
 
-    /// The tab bar (TabLayout.swift): My plan (full app, not in screenshot mode), Explore (Map |
-    /// Schedule | Places; screenshot mode keeps the old separate tabs), Flyer, Updates.
+    /// The tab bar (TabLayout.swift): the event's own tabs (`display.tabs`, ≤ 5).
     var tabLayout: TabLayout {
-        TabLayout.resolve(display, hasFlyer: currentEvent?.flyerUrl != nil, plan: Self.hasPlanTab, explore: !ScreenshotMode.isActive)
+        TabLayout.resolve(display, hasFlyer: currentEvent?.flyerUrl != nil)
     }
 
-    var tabs: [AppTab] { tabLayout.tabs }
+    var tabs: [EventTab] { tabLayout.tabs }
 
-    /// The My plan tab exists: the full app, not in screenshot mode (with or without the model).
-    static var hasPlanTab: Bool {
+    /// The tab's title ("Places" for Locations; "Locations" in screenshot mode).
+    func title(of tab: EventTab) -> String { TabLayout.title(tab, screenshotMode: ScreenshotMode.isActive) }
+
+    /// The floating "My plan" button and its panel exist: the full app, not in screenshot mode
+    /// (with or without the model). The App Clip and screenshot mode have the search button.
+    static var hasPlanPanel: Bool {
         #if APP_CLIP
         return false
         #else
@@ -399,21 +384,20 @@ final class AppState {
         #endif
     }
 
-    /// `tab` (Map, Schedule, Locations, Flyer, Updates) is reachable: a tab or an Explore view.
-    func shows(_ tab: EventTab) -> Bool { tabLayout.place(of: tab) != nil }
+    /// `tab` (Map, Places, Schedule, Flyer, Updates) is one of the tabs.
+    func shows(_ tab: EventTab) -> Bool { tabLayout.contains(tab) }
 
-    /// Shows `tab`: its own tab, or Explore on its view. Returns false when it is hidden.
+    /// Selects `tab`. Returns false when `display.tabs` hides it.
     @discardableResult
     func select(_ tab: EventTab) -> Bool {
-        guard let place = tabLayout.place(of: tab) else { return false }
-        if let view = place.view { exploreView = view }
-        selectedTab = place.tab
+        guard shows(tab) else { return false }
+        selectedTab = tab
         return true
     }
 
-    /// Whether `tab`'s view is on screen now.
+    /// Whether `tab` is on screen now.
     func isShowing(_ tab: EventTab) -> Bool {
-        selectedTab.eventTab(explore: exploreView) == tab
+        selectedTab == tab
     }
 
     /// `display.accent_color`, falling back to the event's. nil → views use the
@@ -449,6 +433,7 @@ final class AppState {
         }
         Task { await syncDevice() }
         Task { await checkForUpdate() }
+        Task { await sendPendingLeaves() }
         await restoreSavedEventIfNeeded()
         if currentEvent != nil {
             if let event = currentEvent {
@@ -630,6 +615,7 @@ final class AppState {
             deleteSavedEvent()
         }
         AppLog.notice(.lifecycle, "lifecycle.event.joined", "Joined event \(event.id)", ["event_id": .int(event.id), "via": .string(via)])
+        if pendingLeaveEventIds.contains(event.id) { pendingLeaveEventIds.removeAll { $0 == event.id } }
         savedEventCode = event.eventCode
         currentEvent = event
         loadPersonalState(for: event.id)
@@ -657,11 +643,48 @@ final class AppState {
         usage.flush()
         savedEventCode = nil
         if let event = currentEvent {
-            Task { _ = try? await APIClient.shared.leaveEvent(eventId: event.id, deviceId: self.deviceId) }
+            // Queued, so a leave made offline still reaches the server (no pushes for an event
+            // the user left); sent now, and again at launch / after a refresh until it succeeds.
+            if !pendingLeaveEventIds.contains(event.id) { pendingLeaveEventIds.append(event.id) }
+            Task { await self.sendPendingLeaves() }
         }
         currentEvent = nil
         resetContent()
         deleteSavedEvent()
+    }
+
+    /// Sends the queued `POST leave/`s; each one the server accepted (or answered 404) is dropped.
+    func sendPendingLeaves() async {
+        guard !sendingLeaves, !ScreenshotMode.isActive else { return }
+        sendingLeaves = true
+        defer { sendingLeaves = false }
+        for eventId in pendingLeaveEventIds where eventId != currentEvent?.id {
+            do {
+                _ = try await APIClient.shared.leaveEvent(eventId: eventId, deviceId: deviceId)
+                pendingLeaveEventIds.removeAll { $0 == eventId }
+            } catch APIError.notFound, APIError.badRequest {
+                // The event is gone (or the server refuses it): nothing left to leave.
+                pendingLeaveEventIds.removeAll { $0 == eventId }
+            } catch {
+                AppLog.caught(error, .net, "leave", level: .notice)
+                return
+            }
+        }
+    }
+
+    /// Server work that failed offline, sent once the server answers again (a bundle refresh
+    /// succeeded): the join, a device registration, queued leaves.
+    private func retryPendingServerWork(eventId: Int) {
+        if joinedEventId != eventId {
+            Task { await self.ensureJoined() }
+        }
+        if deviceSyncPending {
+            deviceSyncPending = false
+            Task { await self.syncDevice() }
+        }
+        if !pendingLeaveEventIds.isEmpty {
+            Task { await self.sendPendingLeaves() }
+        }
     }
 
     /// The event is gone (404 from the bundle): forget it and return to the launch screen.
@@ -695,7 +718,6 @@ final class AppState {
         mapFocusLocationId = nil
         searchText = ""
         searchPath = NavigationPath()
-        planPath = NavigationPath()
         focusRequest = nil
         presentedSheet = nil
         searchIndex = nil
@@ -773,9 +795,7 @@ final class AppState {
                 }
                 if imagesIncomplete { scheduleImageSync() }
             }
-            if joinedEventId != eventId {
-                Task { await self.ensureJoined() }
-            }
+            retryPendingServerWork(eventId: eventId)
         } catch APIError.notFound {
             // The event was deleted or unpublished: the only error that drops the saved copy.
             AppSignpost.end(signpost, ["error": "not_found"])
@@ -803,15 +823,8 @@ final class AppState {
         notifications = bundle.notifications
 
         let layout = tabLayout
-        // Explore's view: the one remembered for this event, else default_tab's, else the first.
-        let remembered = isFirstApply && !ScreenshotMode.isActive
-            ? UserDefaults.standard.string(forKey: Keys.exploreView(bundle.event.id)).flatMap(ExploreView.init(rawValue:))
-            : Optional(exploreView)
-        if let view = layout.exploreView(remembered: remembered), view != exploreView {
-            exploreView = view
-        }
-        if pendingNotificationsEventId == bundle.event.id, layout.tabs.contains(.event(.notifications)) {
-            selectedTab = .event(.notifications)
+        if pendingNotificationsEventId == bundle.event.id, layout.contains(.notifications) {
+            selectedTab = .notifications
             hasAppliedDefaultTab = true
         } else if !hasAppliedDefaultTab {
             selectedTab = layout.defaultTab
@@ -821,9 +834,9 @@ final class AppState {
             selectedTab = layout.defaultTab
         }
         pendingNotificationsEventId = nil
-        if isFirstApply, hasAppliedDefaultTab, let tab = selectedTab.eventTab(explore: exploreView) {
+        if isFirstApply, hasAppliedDefaultTab {
             // The tab the event opens on (later changes are counted in selectedTab's didSet).
-            track(.tabView, detail: tab.rawValue)
+            track(.tabView, detail: selectedTab.rawValue)
         }
         // New images download first; files the new content no longer uses are deleted after.
         scheduleImageSync()
@@ -861,7 +874,8 @@ final class AppState {
     /// Shows one item: in its own tab when that tab is visible (Locations / Schedule select
     /// it, Updates scrolls to and highlights it; the event opens Options), closing any sheet;
     /// otherwise in the search sheet with the item pushed on its stack, so hidden tabs
-    /// (`display.tabs`) work too (Back returns to the search results).
+    /// (`display.tabs`) work too (Back returns to the search results). An open plan panel
+    /// collapses to its summary line, so the item is in view.
     func navigate(to target: SearchTarget) {
         guard currentEvent != nil else { return }
         let tab: EventTab
@@ -874,7 +888,7 @@ final class AppState {
             return
         }
         #if !APP_CLIP
-        assistant.closeOverlay()
+        assistant.collapsePanel()
         #endif
         if shows(tab) {
             presentedSheet = nil
@@ -886,17 +900,9 @@ final class AppState {
         }
     }
 
-    /// A tap on an item inside the app (cards, results, plan rows): on My plan its detail is
-    /// pushed on My plan's own stack (the plan stays one Back away); elsewhere `navigate(to:)`.
+    /// A tap on an item inside the app (cards, results, plan rows in the plan panel): its own
+    /// tab (the panel collapses), or the search sheet for a hidden tab — `navigate(to:)`.
     func open(_ target: SearchTarget) {
-        if selectedTab == .plan, presentedSheet == nil, currentEvent != nil {
-            if case .event = target {
-                presentedSheet = .options
-            } else {
-                planPath.append(target)
-            }
-            return
-        }
         navigate(to: target)
     }
 
@@ -908,11 +914,11 @@ final class AppState {
         searchText = query
         autoAskQuery = ask && Self.assistantAvailable ? query : nil
         #if !APP_CLIP
-        // My plan's input bar is the full app's search: the text goes into it, or runs at once
-        // when it was to be asked.
-        if Self.hasPlanTab {
+        // The plan panel's input bar is the full app's search: the text goes into it, or runs at
+        // once when it was to be asked.
+        if Self.hasPlanPanel {
             autoAskQuery = nil
-            showPlanTab()
+            showPlanPanel(.collapsed)
             assistant.request(query, send: ask)
             return
         }
@@ -946,7 +952,7 @@ final class AppState {
         guard let name, !name.isEmpty else { return }
         AppLog.debug(.ui, "ui.action", "Ask about this", ["name": "ask_about", "id": .string(target.reference)])
         #if !APP_CLIP
-        if Self.hasPlanTab {
+        if Self.hasPlanPanel {
             let ref: EntityRef?
             switch target {
             case .location(let id):     ref = EntityRef(kind: .location, id: id)
@@ -954,7 +960,7 @@ final class AppState {
             case .notification(let id): ref = EntityRef(kind: .update, id: id)
             case .event:                ref = nil
             }
-            showPlanTab()
+            showPlanPanel(.collapsed)
             if let ref {
                 assistant.askAbout(ref)
             } else {
@@ -966,14 +972,14 @@ final class AppState {
         showSearch(name)
     }
 
-    /// The floating search button: opens the search sheet on its results (the last query
-    /// stays, like the old search tab), with the field focused.
+    /// The floating search button (App Clip, screenshot mode): opens the search sheet on its
+    /// results (the last query stays, like the old search tab), with the field focused. In the
+    /// full app the floating button is "My plan" and opens the plan panel instead.
     func openSearch() {
         guard currentEvent != nil else { return }
         #if !APP_CLIP
-        // The full app: the same input bar as My plan, over the current tab (search-only answers).
-        if Self.hasPlanTab {
-            assistant.openOverlay()
+        if Self.hasPlanPanel {
+            showPlanPanel()
             return
         }
         #endif
@@ -981,16 +987,15 @@ final class AppState {
         presentedSheet = .search
     }
 
-    /// The My plan tab, back at its root, any sheet closed (no-op without it).
-    func showPlanTab() {
-        guard tabs.contains(.plan) else { return }
+    #if !APP_CLIP
+    /// Opens the plan panel over the current tab (any sheet closed; no-op without the panel).
+    /// `detent` nil: medium when it was closed, else it stays as it is.
+    func showPlanPanel(_ detent: PlanPanelDetent? = nil) {
+        guard Self.hasPlanPanel, currentEvent != nil else { return }
         presentedSheet = nil
-        planPath = NavigationPath()
-        #if !APP_CLIP
-        assistant.closeOverlay()
-        #endif
-        selectedTab = .plan
+        assistant.openPanel(detent)
     }
+    #endif
 
     /// "Show on Map" in a location's detail: the Map tab, focused on that pin (any sheet closes).
     func showOnMap(locationId: Int) {
@@ -998,7 +1003,7 @@ final class AppState {
         mapFocusLocationId = locationId
         presentedSheet = nil
         #if !APP_CLIP
-        assistant.closeOverlay()
+        assistant.collapsePanel()
         #endif
         select(.map)
     }
@@ -1017,14 +1022,17 @@ final class AppState {
     /// keeps the plan in `pendingSharedPlan` for the assistant. On failure the user stays where
     /// they are.
     func handleDeepLink(_ url: URL) async {
+        // A link that launched the app: the saved event first, so a link to the event already
+        // joined works offline (`join(code:)` needs no lookup then).
+        await restoreSavedEventIfNeeded()
         if let shared = SharedPlanLink.parse(url) {
             AppLog.info(.lifecycle, "lifecycle.deep_link", "Opened by a shared plan link", ["kind": "open", "target": "/p/{code}/{payload}/"])
             guard await join(code: shared.eventCode, via: "link") else { return }
             #if !APP_CLIP
             if let payload = shared.payload {
                 pendingSharedPlan = PendingSharedPlan(eventCode: shared.eventCode, payload: payload, receivedAt: .now)
-                // My plan shows it as a proposal ("Use This Plan" / "Merge with Mine").
-                showPlanTab()
+                // The plan panel shows it as a proposal ("Use This Plan" / "Merge with Mine").
+                showPlanPanel(.medium)
             }
             #endif
             return
@@ -1121,6 +1129,7 @@ final class AppState {
                 liveActivityToken: change
             )
             if change != .unchanged, liveActivityToken == token { liveActivityTokenSynced = true }
+            deviceSyncPending = false
             AppLog.info(.net, "net.device.registered", "Device registered", [
                 "status": 200, "has_push_token": .bool(pushToken != nil), "subscribed": .bool(notificationsEnabled),
                 "has_live_activity_token": .bool(liveActivityToken != nil),
@@ -1129,7 +1138,9 @@ final class AppState {
                 AppLog.info(.live, "live.token", "Live Activity token sent", ["action": .string(token == nil ? "cleared" : "sent"), "status": 200])
             }
         } catch {
-            // Retried with the next registration (launch, token change, Live Activity update).
+            // Retried with the next registration (launch, token change, Live Activity update) or
+            // after the next successful bundle refresh.
+            deviceSyncPending = true
             AppLog.caught(error, .push, "device_registration")
         }
     }

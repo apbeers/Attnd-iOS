@@ -110,6 +110,32 @@ done < <(find build/ipa-check/Payload \( -name '*.app' -o -name '*.appex' \) -ty
 [ "$bad" = 0 ] || exit 1
 echo "Distribution signature OK (no get-task-allow) for $configuration"
 
+# 1b. Size report (informational, never fails the build): what is in the .ipa and how big each part is,
+#     plus Apple's App Thinning Size Report (per-device download/install sizes) from a thinned ad-hoc export.
+python3 scripts/ci/size_report.py "$ipa" build/ipa-check/Payload "$configuration" || true
+cat > build/ThinningOptions.plist <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>method</key><string>release-testing</string>
+  <key>teamID</key><string>${APPLE_TEAM_ID:-GQQX4L6TE2}</string>
+  <key>signingStyle</key><string>automatic</string>
+  <key>thinning</key><string>&lt;thin-for-all-variants&gt;</string>
+  <key>compileBitcode</key><false/>
+</dict></plist>
+PLIST
+if xcodebuild -exportArchive -archivePath build/Attnd.xcarchive -exportPath build/export-thin \
+     -exportOptionsPlist build/ThinningOptions.plist "${auth[@]}" > build/thinning.log 2>&1; then
+  report="build/export-thin/App Thinning Size Report.txt"
+  if [ -f "$report" ]; then
+    echo "::group::App Thinning Size Report"; cat "$report"; echo "::endgroup::"
+    { echo "### App Thinning Size Report ($configuration)"; echo '```'; head -c 60000 "$report"; echo '```'; } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+  fi
+else
+  echo "::warning title=Size report::Thinned export failed (see build/thinning.log); the .ipa breakdown above still applies"
+  tail -20 build/thinning.log
+fi
+
 # 2. destination=upload sends the build straight to App Store Connect.
 write_export_options upload
 xcodebuild -exportArchive -archivePath build/Attnd.xcarchive -exportPath build/export \

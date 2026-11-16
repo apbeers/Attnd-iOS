@@ -87,6 +87,14 @@ final class AppState {
     private(set) var locations: [Location] = []
     private(set) var schedule: [ScheduleItem] = []
     private(set) var notifications: [AppNotification] = []
+    /// API-017: ticket sales (bought on the web only; `ticketAction` for the Get tickets row).
+    private(set) var ticketSales: TicketSales?
+
+    /// The Get tickets row for the current event (none in screenshot mode).
+    var ticketAction: TicketSalesAction {
+        guard !ScreenshotMode.isActive else { return .none }
+        return TicketSalesAction.of(ticketSales, eventURL: currentEvent?.ticketsUrl)
+    }
 
     // MARK: - Loading
 
@@ -176,6 +184,12 @@ final class AppState {
     /// The event assistant (AssistantController.swift, spec §1–8): the conversation, its actions
     /// and live hints. The floating button opens it (the search sheet in screenshot mode).
     let assistant = AssistantController()
+
+    /// My tickets (API-017, TicketsStore.swift): works without joining any event.
+    let tickets = TicketsStore()
+
+    /// Door mode (API-017): offline ticket scanning for door staff.
+    let door: DoorController
     #endif
 
     // MARK: - Device
@@ -315,6 +329,9 @@ final class AppState {
             defaults.set(newId, forKey: Keys.deviceId)
             deviceId = newId
         }
+        #if !APP_CLIP
+        door = DoorController(deviceId: deviceId)
+        #endif
         // Screenshot mode: no blue dot and no push (property observers don't run in init,
         // so the stored preferences are left untouched).
         let isScreenshot = ScreenshotMode.isActive
@@ -711,6 +728,7 @@ final class AppState {
         locations = []
         schedule = []
         notifications = []
+        ticketSales = nil
         loadError = nil
         refreshProblem = nil
         lastRefreshed = nil
@@ -821,6 +839,7 @@ final class AppState {
         locations = bundle.locations
         schedule = bundle.schedule
         notifications = bundle.notifications
+        ticketSales = bundle.tickets
 
         let layout = tabLayout
         if pendingNotificationsEventId == bundle.event.id, layout.contains(.notifications) {
@@ -865,7 +884,8 @@ final class AppState {
             categories: categories,
             locations: locations,
             schedule: schedule,
-            notifications: notifications
+            notifications: notifications,
+            tickets: ticketSales
         )
     }
 

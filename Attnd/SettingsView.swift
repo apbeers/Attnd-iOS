@@ -60,8 +60,16 @@ struct SettingsView: View {
                     if let website = event.websiteUrl {
                         EventWebsiteLink(url: website)
                     }
+                    GetTicketsRow(action: appState.ticketAction)
                 }
             }
+
+            #if !APP_CLIP
+            // MARK: - Tickets (API-017): My tickets and door mode, for any event
+            if !ScreenshotMode.isActive {
+                TicketsSection()
+            }
+            #endif
 
             // MARK: - Location
             Section("Location") {
@@ -358,6 +366,65 @@ struct EventWebsiteLink: View {
         .accessibilityHint("Opens the event's website in Safari")
     }
 }
+
+/// Get tickets (API-017): the event's ticket page in Safari (`Link` → `openURL`), never an
+/// in-app purchase; prices are all-in. Otherwise the sales state ("Sold out"). Nothing for
+/// events without Attnd ticketing.
+struct GetTicketsRow: View {
+    let action: TicketSalesAction
+
+    var body: some View {
+        switch action {
+        case let .buy(url, detail):
+            Link(destination: url) {
+                LabeledContent {
+                    if let detail { Text(detail) }
+                } label: {
+                    Label("Get Tickets", systemImage: "ticket")
+                }
+            }
+            .accessibilityHint("Opens the ticket page in Safari")
+        case let .status(text, url?):
+            Link(destination: url) {
+                LabeledContent {
+                    Text("View")
+                } label: {
+                    Label(text, systemImage: "ticket")
+                }
+            }
+            .accessibilityHint("Opens the ticket page in Safari")
+        case let .status(text, nil):
+            Label(text, systemImage: "ticket")
+                .foregroundStyle(.secondary)
+        case .none:
+            EmptyView()
+        }
+    }
+}
+
+#if !APP_CLIP
+/// Options → My Tickets and Scan Tickets (door mode). Also on the launch screen.
+struct TicketsSection: View {
+    var body: some View {
+        Section {
+            NavigationLink {
+                MyTicketsView()
+            } label: {
+                Label("My Tickets", systemImage: "ticket")
+            }
+            NavigationLink {
+                DoorModeView()
+            } label: {
+                Label("Scan Tickets", systemImage: "qrcode.viewfinder")
+            }
+        } header: {
+            Text("Tickets")
+        } footer: {
+            Text("Tickets bought with your email, also offline. Scan Tickets is for door staff.")
+        }
+    }
+}
+#endif
 
 #Preview {
     NavigationStack {

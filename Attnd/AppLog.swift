@@ -85,7 +85,7 @@ enum LogLevel: Int, Sendable, Hashable, Comparable, CaseIterable, Codable {
 }
 
 enum LogCategory: String, Sendable, Hashable, CaseIterable, Codable {
-    case net, push, background, live, location, map, planner, assistant, search, storage, ui, perf, auth, lifecycle, logging
+    case net, push, background, live, location, map, planner, assistant, search, storage, ui, perf, auth, lifecycle, logging, tickets
 }
 
 /// One field value. Literals work directly (`["status": 304, "ok": true]`); variables use the cases.

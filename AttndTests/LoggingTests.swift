@@ -121,7 +121,7 @@ final class LoggingTests: XCTestCase {
         XCTAssertTrue(LogLevel.warning > .info)
         XCTAssertEqual(LogCategory.allCases.map(\.rawValue), [
             "net", "push", "background", "live", "location", "map", "planner", "assistant", "search", "storage", "ui",
-            "perf", "auth", "lifecycle", "logging",
+            "perf", "auth", "lifecycle", "logging", "tickets",
         ])
         XCTAssertEqual(record(seq: 1).compactFields, "ms=182 not_modified=true status=304")
     }

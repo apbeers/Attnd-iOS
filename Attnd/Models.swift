@@ -43,6 +43,8 @@ struct Event: Identifiable, Hashable, Sendable {
     var joinUrl: URL? = nil
     /// API-016: the event's website (Attnd Studio). Only absolute `https` URLs; nil when there is none.
     var websiteUrl: URL? = nil
+    /// API-017: the event's ticket page (bought on the web only), or nil. See `TicketSales`.
+    var ticketsUrl: URL? = nil
 
     /// The event's own time zone. All event times are displayed in it.
     var timeZone: TimeZone {
@@ -66,6 +68,7 @@ extension Event: Decodable {
         case contentVersion = "content_version"
         case joinUrl = "join_url"
         case websiteUrl = "website_url"
+        case ticketsUrl = "tickets_url"
     }
 
     init(from decoder: Decoder) throws {
@@ -91,6 +94,7 @@ extension Event: Decodable {
         contentVersion = c.lenient(Int.self, .contentVersion) ?? 0
         joinUrl = c.url(.joinUrl)
         websiteUrl = c.httpsURL(.websiteUrl)
+        ticketsUrl = c.httpsURL(.ticketsUrl)
     }
 }
 
@@ -394,11 +398,13 @@ struct EventBundle: Hashable, Sendable {
     var locations: [Location] = []
     var schedule: [ScheduleItem] = []
     var notifications: [AppNotification] = []
+    /// API-017: ticket sales on the web (nil: the event doesn't sell tickets through Attnd).
+    var tickets: TicketSales? = nil
 }
 
 extension EventBundle: Decodable {
     private enum CodingKeys: String, CodingKey {
-        case event, display, categories, locations, schedule, notifications
+        case event, display, categories, locations, schedule, notifications, tickets
         case schemaVersion = "schema_version"
         case contentVersion = "content_version"
         case updatedAt = "updated_at"
@@ -415,6 +421,53 @@ extension EventBundle: Decodable {
         locations = c.lossyArray(Location.self, .locations)
         schedule = c.lossyArray(ScheduleItem.self, .schedule)
         notifications = c.lossyArray(AppNotification.self, .notifications)
+        tickets = c.lenient(TicketSales.self, .tickets)
+    }
+}
+
+// MARK: - Ticket sales (API-017)
+
+/// `bundle.tickets`: whether the event's tickets can be bought (on the website only; the app
+/// never sells). Prices are all-in (the buyer's fee included): show `priceText` as is.
+struct TicketSales: Hashable, Sendable {
+    enum State: String, Sendable { case open, paused, soldOut = "sold_out", cancelled, ended, closed, off }
+
+    var onSale: Bool = false
+    /// The raw `state` (nil when missing); `state` is nil for values this build doesn't know.
+    var stateRaw: String? = nil
+    var soldOut: Bool = false
+    var url: URL? = nil
+    var minPriceCents: Int? = nil
+    var maxPriceCents: Int? = nil
+    var currency: String? = nil
+    var priceText: String? = nil
+    var pricesIncludeFees: Bool = true
+
+    var state: State? { stateRaw.flatMap(State.init(rawValue:)) }
+}
+
+extension TicketSales: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case state, url, currency
+        case onSale = "on_sale"
+        case soldOut = "sold_out"
+        case minPriceCents = "min_price_cents"
+        case maxPriceCents = "max_price_cents"
+        case priceText = "price_text"
+        case pricesIncludeFees = "prices_include_fees"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        onSale = c.lenient(Bool.self, .onSale) ?? false
+        stateRaw = c.nonEmptyString(.state)
+        soldOut = c.lenient(Bool.self, .soldOut) ?? false
+        url = c.httpsURL(.url)
+        minPriceCents = c.lenient(Int.self, .minPriceCents)
+        maxPriceCents = c.lenient(Int.self, .maxPriceCents)
+        currency = c.nonEmptyString(.currency)
+        priceText = c.nonEmptyString(.priceText)
+        pricesIncludeFees = c.lenient(Bool.self, .pricesIncludeFees) ?? true
     }
 }
 

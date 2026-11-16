@@ -180,6 +180,23 @@
         { "path": "PlanProposal.swift", "target-membership": [ "Attnd/compile-sources" ] },
         { "path": "PlanPanel.swift", "target-membership": [ "Attnd/compile-sources" ] },
         {
+          "path": "Tickets.swift",
+          "target-membership": [
+            "Attnd/compile-sources",
+            "AttndAppClip/compile-sources",
+          ],
+        }, {
+          "path": "TicketCrypto.swift",
+          "target-membership": [
+            "Attnd/compile-sources",
+            "AttndAppClip/compile-sources",
+          ],
+        },
+        { "path": "TicketsAPI.swift", "target-membership": [ "Attnd/compile-sources" ] },
+        { "path": "TicketsStore.swift", "target-membership": [ "Attnd/compile-sources" ] },
+        { "path": "TicketsView.swift", "target-membership": [ "Attnd/compile-sources" ] },
+        { "path": "DoorModeView.swift", "target-membership": [ "Attnd/compile-sources" ] },
+        {
           "path": "APIClient.swift",
           "target-membership": [
             "Attnd/compile-sources",
@@ -299,6 +316,7 @@
         { "path": "AssistantFlowTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "PlanProposalTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "PlanPanelTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
+        { "path": "TicketsTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "TabLayoutTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
       ],
     }, {

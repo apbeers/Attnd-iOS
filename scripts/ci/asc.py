@@ -5,9 +5,9 @@ App Store Connect automation for CI (App Store Connect API, no fastlane).
     asc.py testflight --version 2.0.57 --build 57 [--group "Internal"]
         Wait for the uploaded build to finish processing, then add it to a TestFlight group.
 
-    asc.py release --version 2.0.57 --build 57 --whats-new "..."
-        Wait for processing, point the App Store version at this build, set release notes,
-        and submit it for App Review (released automatically after approval).
+    asc.py release --version 2.0.57 --build 57 --whats-new "..." [--submit]
+        Wait for processing, point the App Store version at this build and set release notes;
+        with --submit also submit it for App Review (released automatically after approval).
 
     asc.py metadata [--store store] [--locale en-US] [--version 2.0] [--dry-run]
         Validate the listing text in store/<locale>/ and set it on the editable App Store version:
@@ -174,6 +174,11 @@ def release(args, app):
                 'attributes': {'whatsNew': args.whats_new[:4000]}}})
             if status >= 300:  # the very first version of an app has no "What's New"
                 print(f'Skipping release notes for {loc["attributes"]["locale"]}: {status}')
+
+    if not args.submit:
+        print(f'{args.version} ({args.build}) is attached to the App Store version with its listing; not submitted '
+              '(the owner submits it in App Store Connect: Add for Review, then Submit to App Review).')
+        return
 
     # Find or create a review submission, add the version, submit.
     open_subs = must('GET', '/v1/reviewSubmissions', {'filter[app]': app, 'filter[platform]': 'IOS',
@@ -525,6 +530,8 @@ def main():
         return check()
     parser = argparse.ArgumentParser()
     parser.add_argument('command', choices=['testflight', 'release', 'metadata', 'screenshots'])
+    parser.add_argument('--submit', action='store_true',
+                        help='release: also submit for App Review (default: prepare the version only)')
     parser.add_argument('--version', default='',
                         help='testflight/release: the build\'s version; metadata/screenshots: only used to '
                              'create a version when none is editable')

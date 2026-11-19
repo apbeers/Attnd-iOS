@@ -8,8 +8,10 @@
 #                       sends it straight to TestFlight (internal testers get it once Apple has processed
 #                       it; nothing waits). main archives Release. Every archive's dSYMs are kept as the
 #                       artifact dsyms-<build> for 30 days (symbolicating MetricKit reports).
-#   push to main      → the same two jobs, then "Submit for App Review" (Linux, needs Test and Archive):
-#                       store listing text (store/en-US) and App Review submission (released when approved).
+#   push to main      → the same two jobs, then "Prepare App Store release" (Linux, needs Test and Archive):
+#                       store listing text (store/en-US), the build attached to the editable App Store version
+#                       and What's New. It does NOT submit: the owner presses Submit in App Store Connect
+#                       (repo variable APP_REVIEW_SUBMIT=true makes CI submit, released when approved).
 #                       A failing test blocks the release. Screenshots stay as last uploaded by the manual
 #                       store-screenshots.yml.
 # Xcode's compilation cache (CAS) is kept between runs per job (actions/cache, keyed on the Xcode version;
@@ -177,7 +179,7 @@ jobs:
 
   # Releases only. Waiting on Apple's processing and submitting for review needs no Mac.
   publish:
-    name: Submit for App Review
+    name: Prepare App Store release
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     needs: [test, archive]
     runs-on: ubuntu-26.04
@@ -210,8 +212,9 @@ jobs:
           REVIEW_CONTACT_PHONE: ${{ vars.REVIEW_CONTACT_PHONE }}
           REVIEW_CONTACT_EMAIL: ${{ vars.REVIEW_CONTACT_EMAIL }}
         run: python scripts/ci/asc.py metadata --version "$MARKETING_VERSION"
-      - name: Submit for App Review
+      - name: Attach the build (submit only with APP_REVIEW_SUBMIT)
         env:
           # Empty: What's New comes from store/en-US/release_notes.txt (set by the step above).
           WHATS_NEW: ${{ vars.WHATS_NEW }}
-        run: python scripts/ci/asc.py release --version "$MARKETING_VERSION" --build "$BUILD_NUMBER" --whats-new "$WHATS_NEW"
+          SUBMIT: ${{ vars.APP_REVIEW_SUBMIT == 'true' && '--submit' || '' }}
+        run: python scripts/ci/asc.py release --version "$MARKETING_VERSION" --build "$BUILD_NUMBER" --whats-new "$WHATS_NEW" $SUBMIT

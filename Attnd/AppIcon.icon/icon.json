@@ -1,14 +1,21 @@
 {
   "fill" : {
-    "solid" : "srgb:0.26275,0.12157,0.52549,1.00000"
+    "solid" : "display-p3:0.26275,0.12157,0.52549,1.00000"
   },
   "groups" : [
     {
       "layers" : [
         {
-          "glass" : true,
+          "fill" : "automatic",
           "image-name" : "A.svg",
-          "name" : "A"
+          "name" : "A",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              0,
+              -34
+            ]
+          }
         }
       ],
       "shadow" : {
@@ -17,11 +24,14 @@
       },
       "translucency" : {
         "enabled" : true,
-        "value" : 0.5
+        "value" : 0.3
       }
     }
   ],
   "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
     "squares" : "shared"
   }
 }

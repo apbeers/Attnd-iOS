@@ -27,12 +27,12 @@ IGNORED = {"application-identifier", "com.apple.developer.team-identifier", "key
            "get-task-allow", "beta-reports-active"}
 # Capability names for the error message.
 NAMES = {
-    "com.apple.security.application-groups": "App Groups",
     "aps-environment": "Push Notifications",
     "com.apple.developer.associated-domains": "Associated Domains",
     "com.apple.developer.usernotifications.time-sensitive": "Time Sensitive Notifications",
     "com.apple.developer.devicecheck.appattest-environment": "App Attest",
     "com.apple.developer.parent-application-identifiers": "App Clip (parent application)",
+    "com.apple.developer.on-demand-install-capable": "On Demand Install Capable (App Clip extension)",
 }
 
 

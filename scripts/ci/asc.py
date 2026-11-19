@@ -512,7 +512,7 @@ def check():
         sys.exit('App Store Connect rejected the key (401). Check: the Issuer ID matches the key, the Key ID is right, '
                  'the key is a TEAM key (not an Individual key), and it was not revoked.')
     if status == 403:
-        sys.exit('The App Store Connect key works but lacks access (403). It needs the Admin role for cloud signing.')
+        sys.exit('The App Store Connect key works but lacks access (403). It needs the Admin role.')
     if status >= 300:
         sys.exit(f'App Store Connect check failed ({status}): {data.get("_error", "")[:300]}')
     if not data.get('data'):
@@ -520,42 +520,9 @@ def check():
     print('App Store Connect key OK; app', data['data'][0]['attributes'].get('name'))
 
 
-def revoke_ci_dev_certs(older_than_minutes):
-    """Revoke the Apple Development certificates that CI runners created ("Created via API"). Every fresh
-    runner without a stored certificate mints one, and Apple's per-account limit fills up. Distribution
-    certificates and certificates made in Xcode or the portal are never touched. The API has no creation
-    date, so age = now - (expiration - 1 year); recent ones are kept so a concurrent run isn't broken."""
-    certs = must('GET', '/v1/certificates', {
-        'filter[certificateType]': 'DEVELOPMENT,IOS_DEVELOPMENT', 'limit': 200})['data']
-    now = datetime.datetime.now(datetime.timezone.utc)
-    revoked = kept = 0
-    for cert in certs:
-        attrs = cert['attributes']
-        label = f"{attrs.get('name', '?')} [{attrs.get('certificateType')}] expires {attrs.get('expirationDate')}"
-        if 'Created via API' not in (attrs.get('displayName') or '') + (attrs.get('name') or ''):
-            continue
-        expires = attrs.get('expirationDate')
-        if expires and older_than_minutes:
-            created = datetime.datetime.fromisoformat(expires.replace('Z', '+00:00')) - datetime.timedelta(days=365)
-            if now - created < datetime.timedelta(minutes=older_than_minutes):
-                print(f'Keeping (recent): {label}')
-                kept += 1
-                continue
-        status, data = call('DELETE', f"/v1/certificates/{cert['id']}")
-        if status >= 300:
-            print(f'::warning::Could not revoke {label}: {status} {data.get("_error", "")[:200]}')
-            continue
-        print(f'Revoked: {label}')
-        revoked += 1
-    print(f'Revoked {revoked} CI development certificate(s), kept {kept} recent one(s)')
-
-
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == 'check':
         return check()
-    if len(sys.argv) > 1 and sys.argv[1] == 'revoke-ci-dev-certs':
-        minutes = int(sys.argv[2]) if len(sys.argv) > 2 else 90
-        return revoke_ci_dev_certs(minutes)
     parser = argparse.ArgumentParser()
     parser.add_argument('command', choices=['testflight', 'release', 'metadata', 'screenshots'])
     parser.add_argument('--version', default='',

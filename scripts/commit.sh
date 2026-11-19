@@ -2,7 +2,7 @@
 # Stage all changes and commit locally. Does NOT push.
 # Usage: bash scripts/commit.sh "your commit message"
 # Note: iOS git index.lock is held by Xcode when the project is open.
-# If this fails, close Xcode first or use scripts/push.command which handles both.
+# If this fails, close Xcode first.
 set -e
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
@@ -22,4 +22,4 @@ git --no-optional-locks add -A
 git --no-optional-locks commit -m "$1"
 echo ""
 echo "Committed: $(git --no-optional-locks rev-parse --short HEAD) — $1"
-echo "Run scripts/push.command to push to GitHub."
+echo "Push with: git push origin develop (or bash scripts/push.sh)."

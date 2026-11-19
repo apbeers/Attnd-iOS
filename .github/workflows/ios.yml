@@ -21,7 +21,8 @@
 # integration suites run only with CI_FULL. Pure logic is checked on Linux before pushing (CLAUDE.md, CI).
 # Full pipeline + how to restore it: attnd-web docs/CI_PIPELINES.md.
 #
-# Signing is automatic via an App Store Connect API key — see SETUP.md.
+# Signing is manual: the stored Apple Distribution certificate and App Store profiles (IOS_DIST_CERT_*,
+# IOS_PROFILE_*_B64); the App Store Connect API key uploads. See attnd-web SETUP.md.
 # Version: <VERSION file>.<run number>; build number: run number (always increasing).
 name: iOS
 
@@ -148,20 +149,9 @@ jobs:
           echo "$RUNNER_TEMP/asc/bin" >> "$GITHUB_PATH"
       - name: Check App Store Connect key
         run: python scripts/ci/asc.py check
-      # Without the stored development certificate (SETUP.md 3e) each runner mints a new one and Apple's
-      # limit fills up: revoke earlier CI-created ones (only "Created via API" development certificates
-      # older than 90 min; never distribution or hand-made ones).
-      - name: Free development certificate slots
-        env:
-          IOS_DEV_CERT_P12_BASE64: ${{ secrets.IOS_DEV_CERT_P12_BASE64 }}
-        run: |
-          if [ -n "$IOS_DEV_CERT_P12_BASE64" ]; then echo "Stored certificate in use; nothing to revoke"; exit 0; fi
-          python scripts/ci/asc.py revoke-ci-dev-certs 90
       - name: Archive & upload
         id: archive
         env:
-          IOS_DEV_CERT_P12_BASE64: ${{ secrets.IOS_DEV_CERT_P12_BASE64 }}
-          IOS_DEV_CERT_PASSWORD: ${{ secrets.IOS_DEV_CERT_PASSWORD }}
           IOS_DIST_CERT_P12_BASE64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
           IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
           IOS_PROFILE_APP_B64: ${{ secrets.IOS_PROFILE_APP_B64 }}

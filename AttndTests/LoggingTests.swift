@@ -121,7 +121,7 @@ final class LoggingTests: XCTestCase {
         XCTAssertTrue(LogLevel.warning > .info)
         XCTAssertEqual(LogCategory.allCases.map(\.rawValue), [
             "net", "push", "background", "live", "location", "map", "planner", "assistant", "search", "storage", "ui",
-            "perf", "auth", "lifecycle", "logging", "tickets",
+            "perf", "auth", "lifecycle", "logging",
         ])
         XCTAssertEqual(record(seq: 1).compactFields, "ms=182 not_modified=true status=304")
     }
@@ -239,7 +239,7 @@ final class LoggingTests: XCTestCase {
         XCTAssertEqual(store.lastSequence(), 0)
         let padding = String(repeating: "x", count: 600)
         let count = 2_500
-        for seq in 1...count { store.append(record(seq: seq, msg: padding), persist: true) }
+        for seq in 1...count { store.append(record(seq: seq, msg: padding)) }
         // Rotated once past ~1 MB: both files exist, together ≤ ~2 MB, the newest lines kept.
         let previous = try XCTUnwrap(store.previousURL)
         XCTAssertTrue(FileManager.default.fileExists(atPath: previous.path))
@@ -252,37 +252,44 @@ final class LoggingTests: XCTestCase {
         XCTAssertEqual(LogStore(directory: store.directory).lastSequence(), count)
     }
 
-    func testStore_PreRollAndPendingUploads() throws {
+    func testStore_PendingUploadsStartWithDebugMode() throws {
         let store = try makeStore()
         let stamp = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
         let old = stamp.format(Date.now.addingTimeInterval(-3600))
-        store.append(record(seq: 1, level: .warning, ts: old), persist: true)
-        store.append(record(seq: 2, level: .warning), persist: true)
-        store.append(record(seq: 3, level: .info), persist: false)   // pre-roll only
-        XCTAssertEqual(store.records().map(\.seq), [1, 2, 3])
+        store.append(record(seq: 1, level: .error, ts: old))
+        store.append(record(seq: 2, level: .error, ts: old))
+        XCTAssertEqual(store.records().map(\.seq), [1, 2])
 
-        // Debug mode: the last 5 minutes (disk + pre-roll), then everything new.
-        let since = stamp.format(Date.now.addingTimeInterval(-LogPolicy.preRollSeconds))
-        store.flushPreRoll(since: since)
+        // Debug mode: only what is captured from the moment it is turned on (no pre-roll).
+        let since = stamp.format(Date.now)
         store.beginPending(after: 0, since: since)
-        XCTAssertEqual(store.batch().map(\.seq), [2, 3])
-        store.append(record(seq: 4), persist: true)
-        XCTAssertEqual(store.batch().map(\.seq), [2, 3, 4])
-        XCTAssertEqual(store.batch(maxEntries: 2).map(\.seq), [2, 3])
+        XCTAssertTrue(store.batch().isEmpty)
+        store.append(record(seq: 3))
+        store.append(record(seq: 4))
+        XCTAssertEqual(store.batch().map(\.seq), [3, 4])
+        XCTAssertEqual(store.batch(maxEntries: 1).map(\.seq), [3])
         store.acknowledge(through: 3)
         XCTAssertEqual(store.batch().map(\.seq), [4])
         // Lines are the stored JSON.
         let line = try XCTUnwrap(store.batch().first?.line)
         XCTAssertEqual(try JSONDecoder().decode(LogRecord.self, from: line).seq, 4)
         store.endPending()
-        store.append(record(seq: 5), persist: true)
+        store.append(record(seq: 5))
         XCTAssertTrue(store.batch().isEmpty)
+        XCTAssertEqual(store.records().map(\.seq), [1, 2, 3, 4, 5])
+    }
+
+    func testPolicy_ReleaseKeepsErrorsOnly() {
+        XCTAssertEqual(LogPolicy.captureLevel(developerBuild: false), .error)
+        XCTAssertEqual(LogPolicy.captureLevel(developerBuild: true), .debug)
+        XCTAssertTrue(LogLevel.fault >= LogPolicy.captureLevel(developerBuild: false))
+        XCTAssertFalse(LogLevel.warning >= LogPolicy.captureLevel(developerBuild: false))
     }
 
     func testStore_BatchRespectsByteLimit() throws {
         let store = try makeStore()
         store.beginPending(after: 0, since: nil)
-        for seq in 1...10 { store.append(record(seq: seq, msg: String(repeating: "y", count: 1_000)), persist: true) }
+        for seq in 1...10 { store.append(record(seq: seq, msg: String(repeating: "y", count: 1_000))) }
         let lineBytes = try XCTUnwrap(store.batch().first?.line.count)
         XCTAssertEqual(store.batch(maxBytes: lineBytes * 3 + 3).count, 3)
         // One oversized line still goes alone rather than blocking the queue.

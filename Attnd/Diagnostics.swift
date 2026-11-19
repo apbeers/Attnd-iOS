@@ -2,8 +2,8 @@
 // Attnd (app + App Clip)
 //
 // The pieces behind AppLog (AppLog.swift):
-//   - LogStore: the ring buffer on disk (JSON lines, two files of ~1 MB, newest kept), the
-//     5-minute in-memory pre-roll of records below the disk level, and the lines waiting for upload.
+//   - LogStore: the ring buffer on disk (JSON lines, two files of ~1 MB, newest kept) and the
+//     lines waiting for upload. Every captured record is kept on disk (no in-memory pre-roll).
 //   - LogUploader: batches (≤ 500 entries, ≤ 256 KB), gzip, `POST /api/v2/diagnostics/logs/`
 //     (API-013), honouring 429 `Retry-After`; only in Dev builds and debug mode.
 //   - Gzip (RFC 1952 around the system's raw DEFLATE), DebugCode (`D-XXXXX`).
@@ -19,7 +19,6 @@ final class LogStore: @unchecked Sendable {
 
     /// Each of the two files; together ~2 MB.
     static let maxFileBytes = 1_000_000
-    static let maxPreRoll = 1_500
     static let maxPending = 20_000
     static let earlyUploadCount = 200
 
@@ -37,14 +36,11 @@ final class LogStore: @unchecked Sendable {
     let directory: URL?
     private var handle: FileHandle?
     private var currentBytes = 0
-    /// Records captured below the disk level (production `info`), last 5 minutes: debug mode's pre-roll.
-    private var preRoll: [LogRecord] = []
     private var pending: [PendingLine] = []
     private var collectsPending = false
     private var uploadNudged = false
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
-    private let stamp = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
 
     init(directory: URL?) {
         self.directory = directory
@@ -55,16 +51,7 @@ final class LogStore: @unchecked Sendable {
 
     // MARK: Writing
 
-    func append(_ record: LogRecord, persist: Bool) {
-        guard persist else {
-            preRoll.append(record)
-            trimPreRoll()
-            return
-        }
-        write(record)
-    }
-
-    private func write(_ record: LogRecord) {
+    func append(_ record: LogRecord) {
         guard var line = try? encoder.encode(record) else { return }
         line.append(0x0A)
         if currentBytes + line.count > Self.maxFileBytes { rotate() }
@@ -120,21 +107,6 @@ final class LogStore: @unchecked Sendable {
         try? FileManager.default.moveItem(at: current, to: previous)
     }
 
-    private func trimPreRoll() {
-        if preRoll.count > Self.maxPreRoll { preRoll.removeFirst(preRoll.count - Self.maxPreRoll) }
-        let cutoff = stamp.format(Date.now.addingTimeInterval(-LogPolicy.preRollSeconds))
-        if let first = preRoll.first, first.ts < cutoff {
-            preRoll.removeAll { $0.ts < cutoff }
-        }
-    }
-
-    /// Debug mode started: the pre-roll since `since` goes to disk (and so to the upload).
-    func flushPreRoll(since: String) {
-        let records = preRoll.filter { $0.ts >= since }
-        preRoll = []
-        for record in records { write(record) }
-    }
-
     // MARK: Reading
 
     /// The seq of the newest line on disk (0 when there is none), read from the file's tail.
@@ -165,13 +137,12 @@ final class LogStore: @unchecked Sendable {
         }
     }
 
-    /// Disk and pre-roll, oldest first.
+    /// Everything on disk, oldest first.
     func records() -> [LogRecord] {
         var bySeq: [Int: LogRecord] = [:]
         for line in diskLines() {
             if let record = try? decoder.decode(LogRecord.self, from: line) { bySeq[record.seq] = record }
         }
-        for record in preRoll where bySeq[record.seq] == nil { bySeq[record.seq] = record }
         return bySeq.values.sorted { $0.seq < $1.seq }
     }
 
@@ -283,7 +254,7 @@ actor LogUploader {
     func start() {
         guard loop == nil else { return }
         loop = Task {
-            // The first batch (pre-roll, or what an earlier launch left) goes out soon.
+            // The first batch (what an earlier launch left) goes out soon.
             try? await Task.sleep(for: .seconds(5))
             while !Task.isCancelled {
                 await self.uploadPending()

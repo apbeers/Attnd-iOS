@@ -69,13 +69,6 @@ struct LaunchScreen: View {
                         }
                     }
                 }
-
-                #if !APP_CLIP
-                // My tickets and door mode work without joining an event (API-017).
-                if !ScreenshotMode.isActive {
-                    TicketsSection()
-                }
-                #endif
             }
             .listStyle(.insetGrouped)
             .disabled(isJoining)

@@ -180,23 +180,6 @@
         { "path": "PlanProposal.swift", "target-membership": [ "Attnd/compile-sources" ] },
         { "path": "PlanPanel.swift", "target-membership": [ "Attnd/compile-sources" ] },
         {
-          "path": "Tickets.swift",
-          "target-membership": [
-            "Attnd/compile-sources",
-            "AttndAppClip/compile-sources",
-          ],
-        }, {
-          "path": "TicketCrypto.swift",
-          "target-membership": [
-            "Attnd/compile-sources",
-            "AttndAppClip/compile-sources",
-          ],
-        },
-        { "path": "TicketsAPI.swift", "target-membership": [ "Attnd/compile-sources" ] },
-        { "path": "TicketsStore.swift", "target-membership": [ "Attnd/compile-sources" ] },
-        { "path": "TicketsView.swift", "target-membership": [ "Attnd/compile-sources" ] },
-        { "path": "DoorModeView.swift", "target-membership": [ "Attnd/compile-sources" ] },
-        {
           "path": "APIClient.swift",
           "target-membership": [
             "Attnd/compile-sources",
@@ -316,8 +299,25 @@
         { "path": "AssistantFlowTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "PlanProposalTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "PlanPanelTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
-        { "path": "TicketsTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "TabLayoutTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
+      ],
+    }, {
+      "kind": "group",
+      "path": "Parked",
+      "children": [
+        {
+          "kind": "group",
+          "path": "Tickets",
+          "children": [
+            { "path": "Tickets.swift" },
+            { "path": "TicketCrypto.swift" },
+            { "path": "TicketsAPI.swift" },
+            { "path": "TicketsStore.swift" },
+            { "path": "TicketsView.swift" },
+            { "path": "DoorModeView.swift" },
+            { "path": "TicketsTests.swift" },
+          ],
+        },
       ],
     }, {
       "kind": "group",

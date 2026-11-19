@@ -21,11 +21,12 @@
 // Levels (`LogPolicy`):
 //   - Debug and Dev builds: `debug`, kept on disk. Dev builds (the `Dev` configuration, develop →
 //     TestFlight) also upload continuously under one persistent debug code per install.
-//   - Production: `info` is captured into a 5-minute in-memory pre-roll only, `warning` and above
-//     are kept on disk; nothing is uploaded.
+//   - Production (Release): errors only (`error` and `fault`) are captured and kept on disk; there
+//     is no in-memory pre-roll and nothing is uploaded.
 //   - Debug mode (production, user-started from Options → About & support, 10 minutes): `debug`,
-//     kept and uploaded under a random code `D-XXXXX`, starting with the previous 5 minutes; it
-//     turns itself off at the stored expiry, also across restarts. Never linked to the device id.
+//     kept and uploaded under a random code `D-XXXXX`, from the moment it is turned on (nothing
+//     from before); it turns itself off at the stored expiry, also across restarts. Never linked
+//     to the device id.
 //   - Screenshot mode: logs locally only, never uploads.
 
 import Foundation
@@ -85,7 +86,7 @@ enum LogLevel: Int, Sendable, Hashable, Comparable, CaseIterable, Codable {
 }
 
 enum LogCategory: String, Sendable, Hashable, CaseIterable, Codable {
-    case net, push, background, live, location, map, planner, assistant, search, storage, ui, perf, auth, lifecycle, logging, tickets
+    case net, push, background, live, location, map, planner, assistant, search, storage, ui, perf, auth, lifecycle, logging
 }
 
 /// One field value. Literals work directly (`["status": 304, "ok": true]`); variables use the cases.
@@ -249,15 +250,16 @@ enum LogPolicy {
     /// Search, Ask and plan text may be logged (Debug and Dev builds only; production logs lengths).
     static var logsUserText: Bool { isDeveloperBuild }
 
-    /// Levels without debug mode: (captured, kept on disk).
-    static var baseLevels: (capture: LogLevel, persist: LogLevel) {
-        isDeveloperBuild ? (.debug, .debug) : (.info, .warning)
+    /// The level captured (and kept on disk) without debug mode: `debug` in Debug and Dev builds,
+    /// errors only (`error`, `fault`) in production. Everything captured is kept on disk.
+    static func captureLevel(developerBuild: Bool) -> LogLevel {
+        developerBuild ? .debug : .error
     }
 
-    /// Debug mode lasts this long.
+    static var baseLevel: LogLevel { captureLevel(developerBuild: isDeveloperBuild) }
+
+    /// Debug mode lasts this long. It captures from the moment it is turned on (no pre-roll).
     static let debugModeDuration: TimeInterval = 10 * 60
-    /// Debug mode starts with this much of what came before (the in-memory pre-roll).
-    static let preRollSeconds: TimeInterval = 5 * 60
 }
 
 /// What every record says about the build and device (no identifiers).
@@ -495,8 +497,8 @@ final class LogCore: @unchecked Sendable {
 
     private struct State {
         var seq: Int
-        var capture: LogLevel
-        var persist: LogLevel
+        /// Captured (and kept on disk) at this level and above.
+        var level: LogLevel
         var foreground = true
         var net = "none"
         var eventId: Int?
@@ -530,8 +532,7 @@ final class LogCore: @unchecked Sendable {
     init(directory: URL? = LogStore.defaultDirectory) {
         let store = LogStore(directory: directory)
         self.store = store
-        let levels = LogPolicy.baseLevels
-        state = State(seq: store.lastSequence(), capture: levels.capture, persist: levels.persist)
+        state = State(seq: store.lastSequence(), level: LogPolicy.baseLevel)
         var loggers: [LogCategory: Logger] = [:]
         for category in LogCategory.allCases {
             loggers[category] = Logger(subsystem: AppLog.subsystem, category: category.rawValue)
@@ -544,7 +545,7 @@ final class LogCore: @unchecked Sendable {
     // MARK: Capture
 
     func isEnabled(_ level: LogLevel) -> Bool {
-        lock.withLock { level >= state.capture }
+        lock.withLock { level >= state.level }
     }
 
     func emit(_ level: LogLevel, _ cat: LogCategory, _ event: String, _ msg: String, _ fields: LogFields) {
@@ -560,17 +561,16 @@ final class LogCore: @unchecked Sendable {
         }
         let env = environment
         let stamp = timestamp.format(now)
-        let (record, persist) = lock.withLock { () -> (LogRecord, Bool) in
+        let record = lock.withLock { () -> LogRecord in
             state.seq += 1
-            let record = LogRecord(
+            return LogRecord(
                 ts: stamp, monoMs: mono, seq: state.seq, level: level, cat: cat, event: event, msg: text, f: clean,
                 app: env.app, build: env.build, os: env.os, model: env.model,
                 state: state.foreground ? "fg" : "bg", net: state.net, eventId: state.eventId, diag: state.session?.code
             )
-            return (record, level >= state.persist)
         }
         systemLog(record)
-        queue.async { self.store.append(record, persist: persist) }
+        queue.async { self.store.append(record) }
     }
 
     private func systemLog(_ record: LogRecord) {
@@ -671,7 +671,8 @@ final class LogCore: @unchecked Sendable {
         if let status = debugStatus { return status }
         let code = DebugCode.generate()
         let until = now.addingTimeInterval(LogPolicy.debugModeDuration)
-        let since = now.addingTimeInterval(-LogPolicy.preRollSeconds)
+        // From now on only: production keeps no pre-roll of what came before.
+        let since = now
         let defaults = UserDefaults.standard
         defaults.set(code, forKey: Keys.debugCode)
         defaults.set(until.timeIntervalSince1970, forKey: Keys.debugUntil)
@@ -695,9 +696,7 @@ final class LogCore: @unchecked Sendable {
         lock.withLock {
             state.session = nil
             state.debugUntil = nil
-            let levels = LogPolicy.baseLevels
-            state.capture = levels.capture
-            state.persist = levels.persist
+            state.level = LogPolicy.baseLevel
         }
         clearDebugDefaults()
         Task.detached(priority: .utility) {
@@ -716,13 +715,11 @@ final class LogCore: @unchecked Sendable {
         lock.withLock {
             state.session = session
             state.debugUntil = until
-            state.capture = .debug
-            state.persist = .debug
+            state.level = .debug
         }
         let cursor = Self.cursor
         let sinceStamp = since.map { timestamp.format($0) }
         queue.async {
-            if let sinceStamp { self.store.flushPreRoll(since: sinceStamp) }
             self.store.beginPending(after: cursor, since: sinceStamp)
         }
         Task.detached(priority: .utility) { await LogUploader.shared.start() }
@@ -757,7 +754,7 @@ final class LogCore: @unchecked Sendable {
         }
     }
 
-    /// Everything on disk plus the in-memory pre-roll, oldest first (the viewer).
+    /// Everything on disk, oldest first (the viewer).
     func records() async -> [LogRecord] {
         await onQueue { $0.records() }
     }

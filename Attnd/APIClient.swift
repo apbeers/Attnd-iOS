@@ -32,9 +32,6 @@ enum APIError: LocalizedError, Sendable {
     case networkError(String)
     /// 410 / 426: this build's API version is retired. The app shows the update screen.
     case updateRequired
-    /// 401 `buyer_token_invalid` / `door_token_invalid` (API-017): sign in to My tickets or
-    /// door mode again. The app's own authentication is fine, so there is no re-attest.
-    case ticketSignInExpired
 
     var errorDescription: String? {
         switch self {
@@ -46,7 +43,6 @@ enum APIError: LocalizedError, Sendable {
         case .decodingError(let m): return "Unexpected response from the server: \(m)"
         case .networkError(let m):  return "Network error: \(m)"
         case .updateRequired:       return "This version of Attnd is no longer supported. Please update."
-        case .ticketSignInExpired:  return "Please sign in again."
         }
     }
 
@@ -61,7 +57,6 @@ enum APIError: LocalizedError, Sendable {
         case .decodingError:         return "decoding"
         case .networkError:          return "network"
         case .updateRequired:        return "update_required"
-        case .ticketSignInExpired:   return "token_invalid"
         }
     }
 }
@@ -386,11 +381,6 @@ final class APIClient: Sendable {
             return (data, http)
 
         case 401:
-            // A ticket buyer / door token the server no longer accepts (API-017): not the app's auth.
-            if let code = (try? JSONDecoder().decode([String: String].self, from: data))?["error"],
-               code == "buyer_token_invalid" || code == "door_token_invalid" {
-                throw APIError.ticketSignInExpired
-            }
             // Token expired or invalid — invalidate and retry once.
             guard !isRetry else { throw APIError.unauthorized }
             AppLog.info(.net, "net.request.retry", "\(method) \(template): 401, re-attesting", [

@@ -3,8 +3,7 @@
 //
 // Options → About & support (shared logging spec §2–3):
 //   - Dev builds: "Logs" (the viewer) and the install's debug code (always uploading).
-//   - Production: "Recent Logs" (what the ring buffer keeps: warnings and errors, plus the last
-//     5 minutes in memory) and "Turn On Debug Logging for 10 Minutes": a consent line, then the
+//   - Production: "Recent Logs" (what the ring buffer keeps: errors only) and "Turn On Debug Logging for 10 Minutes": a consent line, then the
 //     debug code `D-XXXXX` with Copy, a countdown and Turn Off. It turns itself off after 10
 //     minutes, also across restarts (LogCore).
 //   - The viewer: filters by level, category and text, errors only; Share exports the shown

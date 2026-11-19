@@ -487,7 +487,6 @@ struct EventInfoView: View {
                     if let website = event.websiteUrl {
                         EventWebsiteLink(url: website)
                     }
-                    GetTicketsRow(action: appState.ticketAction)
                 }
                 if !event.description.isEmpty {
                     Section("About") {

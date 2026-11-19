@@ -1,13 +1,24 @@
 #!/usr/bin/env bash
 # Archive the app (with its App Clip and the AttndWidgets Live Activity extension) and upload it to App
-# Store Connect. Signing is automatic using an App Store Connect API key: profiles are managed by Xcode
+# Store Connect.
+#
+# MANUAL SIGNING (since Nov 19, 2026; used whenever IOS_DIST_CERT_P12_BASE64 is set): the archive and the
+# export are signed with the stored Apple Distribution certificate and three App Store profiles
+# (IOS_PROFILE_APP_B64, IOS_PROFILE_WIDGETS_B64, IOS_PROFILE_CLIP_B64; scripts/ci/signing_profiles.py checks
+# and installs them). Needed because automatic signing with the API key fails ("Authentication failed")
+# as soon as the entitlements have the App Group. Renewal: attnd-web SETUP.md (iOS signing). The API key is
+# then only used for the upload.
+#
+# AUTOMATIC SIGNING (fallback without those secrets; the App Group and WeatherKit entitlements are removed
+# for that build, so the widget shows its empty state and weather is off) using an App Store Connect API key: profiles are managed by Xcode
 # (-allowProvisioningUpdates also registers new App IDs and capabilities, e.g. com.arcu.Attnd.widgets and
 # Time Sensitive Notifications) and the upload is signed with a cloud-managed distribution certificate. The archive step needs an Apple Development
 # certificate; one stored certificate (IOS_DEV_CERT_P12_BASE64 + IOS_DEV_CERT_PASSWORD secrets) is
 # imported into a throwaway keychain so Xcode reuses it. Without it, every fresh runner would mint a new
 # "Created via API" development certificate, and Apple's per-account limit fills up after a few dozen runs.
 #
-# Env: ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8 (contents of AuthKey_XXXX.p8)
+# Env: IOS_DIST_CERT_P12_BASE64, IOS_DIST_CERT_PASSWORD, IOS_PROFILE_{APP,WIDGETS,CLIP}_B64 (manual signing)
+#      ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8 (contents of AuthKey_XXXX.p8)
 #      IOS_DEV_CERT_P12_BASE64, IOS_DEV_CERT_PASSWORD (the stored Apple Development certificate)
 #      BUILD_NUMBER, MARKETING_VERSION, ATTND_SERVER (host, e.g. attnd.app)
 #      CONFIGURATION: Dev (develop → TestFlight: -Onone, DEBUG + DEV, readable crash logs, continuous
@@ -25,17 +36,26 @@ cd "$(dirname "$0")/../.."
 keychain="$RUNNER_TEMP/attnd-signing.keychain-db"
 cleanup() {
   security delete-keychain "$keychain" 2>/dev/null || true
-  rm -f "$RUNNER_TEMP/dev-cert.p12" "${key_path:-}"
+  rm -f "$RUNNER_TEMP/dev-cert.p12" "$RUNNER_TEMP/dist-cert.p12" "${key_path:-}"
 }
 trap cleanup EXIT
-if [ -n "${IOS_DEV_CERT_P12_BASE64:-}" ]; then
+manual=0
+[ -n "${IOS_DIST_CERT_P12_BASE64:-}" ] && manual=1
+if [ -n "${IOS_DEV_CERT_P12_BASE64:-}" ] || [ "$manual" = 1 ]; then
   keychain_password=$(uuidgen)
-  printf '%s' "$IOS_DEV_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/dev-cert.p12"
   security create-keychain -p "$keychain_password" "$keychain"
   security set-keychain-settings -lut 21600 "$keychain"
   security unlock-keychain -p "$keychain_password" "$keychain"
-  security import "$RUNNER_TEMP/dev-cert.p12" -k "$keychain" -P "${IOS_DEV_CERT_PASSWORD:-}" \
-    -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/productbuild
+  if [ -n "${IOS_DEV_CERT_P12_BASE64:-}" ]; then
+    printf '%s' "$IOS_DEV_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/dev-cert.p12"
+    security import "$RUNNER_TEMP/dev-cert.p12" -k "$keychain" -P "${IOS_DEV_CERT_PASSWORD:-}" \
+      -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/productbuild
+  fi
+  if [ "$manual" = 1 ]; then
+    printf '%s' "$IOS_DIST_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/dist-cert.p12"
+    security import "$RUNNER_TEMP/dist-cert.p12" -k "$keychain" -P "${IOS_DIST_CERT_PASSWORD:-}" \
+      -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/productbuild
+  fi
   security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" > /dev/null
   # Search our keychain first, then the existing ones.
   security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
@@ -46,11 +66,26 @@ fi
 
 key_path="$RUNNER_TEMP/AuthKey_${ASC_KEY_ID}.p8"
 printf '%s\n' "$ASC_KEY_P8" > "$key_path"
-auth=(-allowProvisioningUpdates -authenticationKeyPath "$key_path"
-      -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID")
+auth=(-authenticationKeyPath "$key_path" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID")
+signing=()
+mkdir -p build
+if [ "$manual" = 1 ]; then
+  echo "Manual signing: Apple Distribution + App Store profiles"
+  python3 scripts/ci/signing_profiles.py build
+  signing=(-xcconfig build/Signing.xcconfig)
+  # The checked-in entitlements say aps-environment=development (local Xcode runs); an App Store
+  # profile only allows production, and the export would switch it anyway.
+  /usr/libexec/PlistBuddy -c 'Set :aps-environment production' Attnd/Attnd.entitlements
+else
+  echo "::warning title=Signing::IOS_DIST_CERT_P12_BASE64 is not set: automatic signing, without the App Group and WeatherKit entitlements (widget empty, no weather in this build)"
+  for f in Attnd/Attnd.entitlements AttndWidgets/AttndWidgets.entitlements; do
+    /usr/libexec/PlistBuddy -c 'Delete :com.apple.security.application-groups' "$f" 2>/dev/null || true
+    /usr/libexec/PlistBuddy -c 'Delete :com.apple.developer.weatherkit' "$f" 2>/dev/null || true
+  done
+  auth=(-allowProvisioningUpdates "${auth[@]}")
+fi
 
 # Both xcodebuild runs are logged for the warnings summary (annotations only; never fails the job).
-mkdir -p build
 log=build/xcodebuild-archive.log
 : > "$log"
 trap 'python3 scripts/ci/warnings.py "$log" "Archive & upload" || true; cleanup' EXIT
@@ -65,7 +100,7 @@ configuration=${CONFIGURATION:-Release}
 case "$configuration" in Dev|Release) ;; *) echo "CONFIGURATION must be Dev or Release" >&2; exit 2 ;; esac
 echo "Archiving $MARKETING_VERSION ($BUILD_NUMBER), $configuration, for server ${ATTND_SERVER:-attnd.app}"
 xcodebuild archive -project Attnd.xcodeproj -scheme Attnd -configuration "$configuration" \
-  -destination 'generic/platform=iOS' -archivePath build/Attnd.xcarchive "${auth[@]}" \
+  -destination 'generic/platform=iOS' -archivePath build/Attnd.xcarchive "${auth[@]}" ${signing[@]+"${signing[@]}"} \
   CURRENT_PROJECT_VERSION="$BUILD_NUMBER" MARKETING_VERSION="$MARKETING_VERSION" \
   ATTND_SERVER="${ATTND_SERVER:-attnd.app}" ATTND_API_KEY= COMPILER_INDEX_STORE_ENABLE=NO ${cache[@]+"${cache[@]}"} 2>&1 | tee -a "$log"
 
@@ -74,6 +109,19 @@ xcodebuild archive -project Attnd.xcodeproj -scheme Attnd -configuration "$confi
 ls build/Attnd.xcarchive/dSYMs/*.dSYM > /dev/null 2>&1 || echo "::warning::The archive has no dSYMs"
 
 write_export_options() {
+if [ "$manual" = 1 ]; then
+  python3 - "$1" <<'PY'
+import plistlib, sys, os
+opts = {"method": "app-store-connect", "destination": sys.argv[1],
+        "teamID": os.environ.get("APPLE_TEAM_ID", "GQQX4L6TE2"), "signingStyle": "manual",
+        "signingCertificate": "Apple Distribution",
+        "provisioningProfiles": plistlib.load(open("build/export-profiles.plist", "rb")),
+        "uploadSymbols": True, "manageAppVersionAndBuildNumber": False,
+        "testFlightInternalTestingOnly": os.environ.get("TESTFLIGHT_INTERNAL_ONLY", "false") == "true"}
+plistlib.dump(opts, open("build/ExportOptions.plist", "wb"))
+PY
+  return
+fi
 cat > build/ExportOptions.plist <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -113,6 +161,9 @@ echo "Distribution signature OK (no get-task-allow) for $configuration"
 # 1b. Size report (informational, never fails the build): what is in the .ipa and how big each part is,
 #     plus Apple's App Thinning Size Report (per-device download/install sizes) from a thinned ad-hoc export.
 python3 scripts/ci/size_report.py "$ipa" build/ipa-check/Payload "$configuration" || true
+# Apple's per-device report needs an ad hoc (release-testing) export; with manual signing there is no ad hoc
+# profile, so only the .ipa breakdown above is reported.
+if [ "$manual" = 0 ]; then
 cat > build/ThinningOptions.plist <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -134,6 +185,7 @@ if xcodebuild -exportArchive -archivePath build/Attnd.xcarchive -exportPath buil
 else
   echo "::warning title=Size report::Thinned export failed (see build/thinning.log); the .ipa breakdown above still applies"
   tail -20 build/thinning.log
+fi
 fi
 
 # 2. destination=upload sends the build straight to App Store Connect.

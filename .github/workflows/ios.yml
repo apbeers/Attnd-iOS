@@ -162,6 +162,11 @@ jobs:
         env:
           IOS_DEV_CERT_P12_BASE64: ${{ secrets.IOS_DEV_CERT_P12_BASE64 }}
           IOS_DEV_CERT_PASSWORD: ${{ secrets.IOS_DEV_CERT_PASSWORD }}
+          IOS_DIST_CERT_P12_BASE64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
+          IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          IOS_PROFILE_APP_B64: ${{ secrets.IOS_PROFILE_APP_B64 }}
+          IOS_PROFILE_WIDGETS_B64: ${{ secrets.IOS_PROFILE_WIDGETS_B64 }}
+          IOS_PROFILE_CLIP_B64: ${{ secrets.IOS_PROFILE_CLIP_B64 }}
         run: bash scripts/ci/archive_upload.sh
       # dSYMs of this build (app, App Clip, widgets) for symbolicating crash / hang reports (API-013).
       - name: Keep dSYMs

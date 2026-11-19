@@ -6,11 +6,11 @@
 # export are signed with the stored Apple Distribution certificate and three App Store profiles
 # (IOS_PROFILE_APP_B64, IOS_PROFILE_WIDGETS_B64, IOS_PROFILE_CLIP_B64; scripts/ci/signing_profiles.py checks
 # and installs them). Needed because automatic signing with the API key fails ("Authentication failed")
-# as soon as the entitlements have the App Group. Renewal: attnd-web SETUP.md (iOS signing). The API key is
+# with some capabilities (it did on the App Group, since removed). Renewal: attnd-web SETUP.md (iOS signing). The API key is
 # then only used for the upload.
 #
-# AUTOMATIC SIGNING (fallback without those secrets; the App Group and WeatherKit entitlements are removed
-# for that build, so the widget shows its empty state and weather is off) using an App Store Connect API key: profiles are managed by Xcode
+# AUTOMATIC SIGNING (fallback without those secrets; the WeatherKit entitlement is removed for that build,
+# so weather is off) using an App Store Connect API key: profiles are managed by Xcode
 # (-allowProvisioningUpdates also registers new App IDs and capabilities, e.g. com.arcu.Attnd.widgets and
 # Time Sensitive Notifications) and the upload is signed with a cloud-managed distribution certificate. The archive step needs an Apple Development
 # certificate; one stored certificate (IOS_DEV_CERT_P12_BASE64 + IOS_DEV_CERT_PASSWORD secrets) is
@@ -77,7 +77,7 @@ if [ "$manual" = 1 ]; then
   # profile only allows production, and the export would switch it anyway.
   /usr/libexec/PlistBuddy -c 'Set :aps-environment production' Attnd/Attnd.entitlements
 else
-  echo "::warning title=Signing::IOS_DIST_CERT_P12_BASE64 is not set: automatic signing, without the App Group and WeatherKit entitlements (widget empty, no weather in this build)"
+  echo "::warning title=Signing::IOS_DIST_CERT_P12_BASE64 is not set: automatic signing, without the WeatherKit entitlement (no weather in this build)"
   for f in Attnd/Attnd.entitlements AttndWidgets/AttndWidgets.entitlements; do
     /usr/libexec/PlistBuddy -c 'Delete :com.apple.security.application-groups' "$f" 2>/dev/null || true
     /usr/libexec/PlistBuddy -c 'Delete :com.apple.developer.weatherkit' "$f" 2>/dev/null || true

@@ -110,14 +110,7 @@
             "Attnd/compile-sources",
             "AttndWidgets/compile-sources",
           ],
-        }, {
-          "path": "PlanWidgetModel.swift",
-          "target-membership": [
-            "Attnd/compile-sources",
-            "AttndWidgets/compile-sources",
-          ],
         },
-        { "path": "PlanWidgetSync.swift", "target-membership": [ "Attnd/compile-sources" ] },
         {
           "kind": "group",
           "path": "Components",

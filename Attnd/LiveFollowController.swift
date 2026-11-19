@@ -27,8 +27,6 @@
 //   or content change.
 // Arrival: with "Tell me when I arrive" (Always location), a CLMonitor circle around the venue
 //   sends the "tap to follow" notification once per event day.
-// Widget: every update also rewrites the "Now / Next in my plan" widget's App Group file when
-//   it changed (PlanWidgetSync.swift).
 // Background app refresh (`com.arcu.Attnd.refresh`, AttndApp `.backgroundTask`): refreshes the
 //   bundle and the activity while one is running or reminders are pending.
 //
@@ -161,13 +159,6 @@ final class LiveFollowController {
     /// in line with the joined event. Safe in the background (it never starts an activity there).
     func update() async {
         guard let appState, !ScreenshotMode.isActive else { return }
-        // The "Now / Next in my plan" widget follows the same changes (it only rewrites on a change).
-        PlanWidgetSync.update(
-            bundle: appState.currentBundle,
-            liked: appState.personal.heartedScheduleItems,
-            plan: appState.planner.plan,
-            accentHex: appState.accentHex
-        )
         let activities = Activity<EventActivityAttributes>.activities
         for activity in activities {
             observe(activity)

@@ -215,7 +215,8 @@ final class AppState {
         LiveRefreshPolicy.interval(
             canReceivePush: LiveRefreshPolicy.canReceivePush(
                 pushToken: pushToken,
-                registrationFailed: pushRegistrationFailed
+                registrationFailed: pushRegistrationFailed,
+                silentPushAllowed: LiveRefreshPolicy.declaresSilentPush(Bundle.main.infoDictionary)
             ),
             lastRefreshFailed: refreshProblem != nil
         )

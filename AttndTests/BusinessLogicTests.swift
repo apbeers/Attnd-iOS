@@ -258,6 +258,14 @@ final class BusinessLogicTests: XCTestCase {
         XCTAssertFalse(LiveRefreshPolicy.canReceivePush(pushToken: "ff00", registrationFailed: true))
     }
 
+    func testCanReceivePush_NeedsTheBackgroundMode() {
+        // The App Clip can't declare UIBackgroundModes, so it keeps the 60 s poll even with a token.
+        XCTAssertFalse(LiveRefreshPolicy.canReceivePush(pushToken: "ff00", registrationFailed: false, silentPushAllowed: false))
+        XCTAssertTrue(LiveRefreshPolicy.declaresSilentPush(["UIBackgroundModes": ["remote-notification"]]))
+        XCTAssertFalse(LiveRefreshPolicy.declaresSilentPush([:]))
+        XCTAssertFalse(LiveRefreshPolicy.declaresSilentPush(nil))
+    }
+
     func testContentUpdated_RefreshesOnlyForNewerVersions() {
         XCTAssertTrue(ContentUpdatePolicy.shouldRefresh(pushedVersion: 16, currentVersion: 15))
         XCTAssertFalse(ContentUpdatePolicy.shouldRefresh(pushedVersion: 15, currentVersion: 15))

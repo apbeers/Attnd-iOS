@@ -9,8 +9,7 @@
 //     checked for its alphabet and length. `/p/<code>/<payload>/qr.svg` is the server's QR
 //     image, never ours.
 //   - PendingSharedPlan: a shared plan link the app opened, kept on AppState until the
-//     assistant shows it ("Use this plan" / "Merge with mine"). Not in the App Clip, which
-//     only joins the event.
+//     assistant shows it ("Use this plan" / "Merge with mine").
 //   - QRCode: a QR image of a string (Core Image).
 //   - ShareCard (`share` block): the QR code of a link plus the system share sheet (ShareLink).
 
@@ -64,7 +63,7 @@ enum SharedPlanLink {
     }
 }
 
-/// A shared plan link the app was opened with (full app only), waiting for the assistant.
+/// A shared plan link the app was opened with, waiting for the assistant.
 struct PendingSharedPlan: Hashable, Sendable {
     var eventCode: String
     /// The link's payload, unread (the domain share codec decodes it).

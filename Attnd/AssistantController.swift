@@ -1018,7 +1018,7 @@ extension AppState {
         LikeSet(locations: personal.heartedLocations, scheduleItems: personal.heartedScheduleItems)
     }
 
-    /// The assistant runs (full app, not in screenshot mode, with the on-device model): the plan page.
+    /// The assistant runs (not in screenshot mode, with the on-device model): the plan page.
     static var assistantEnabled: Bool { hasPlanPanel }
 
     /// `open(screen, id?)`: a manual screen (its own tab; the plan panel collapses).

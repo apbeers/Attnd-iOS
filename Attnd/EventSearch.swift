@@ -110,7 +110,7 @@ struct EventSearchResult: Identifiable, Hashable, Sendable {
 }
 
 /// An answer from the on-device model ("Ask about this event"): the text plus the items it
-/// is based on, so people can jump to them. Built in the app (not the App Clip).
+/// is based on, so people can jump to them.
 struct EventAssistantAnswer: Hashable, Sendable {
     var text: String
     var sources: [SearchTarget]

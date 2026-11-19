@@ -174,7 +174,7 @@ enum DeepLink {
 /// How often an open app re-checks the bundle while the scene is active. A silent
 /// `content_updated` push does the real work; the timer is only a fallback.
 enum LiveRefreshPolicy {
-    /// No push token (not registered, registration failed, or the App Clip, which can't get pushes).
+    /// No push token (not registered, or registration failed).
     static let withoutPush: Duration = .seconds(60)
     /// Push works: a slow safety poll in case a silent push is dropped or throttled.
     static let withPush: Duration = .seconds(5 * 60)
@@ -186,9 +186,9 @@ enum LiveRefreshPolicy {
         return canReceivePush ? withPush : withoutPush
     }
 
-    /// Silent pushes can reach this install only with a token, a working registration, and not in the App Clip.
-    static func canReceivePush(pushToken: String?, registrationFailed: Bool, isAppClip: Bool) -> Bool {
-        guard !isAppClip, !registrationFailed, let pushToken else { return false }
+    /// Silent pushes can reach this install only with a token and a working registration.
+    static func canReceivePush(pushToken: String?, registrationFailed: Bool) -> Bool {
+        guard !registrationFailed, let pushToken else { return false }
         return !pushToken.isEmpty
     }
 }

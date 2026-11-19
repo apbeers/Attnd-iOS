@@ -1,5 +1,9 @@
 // AttndApp.swift
-// Attnd
+// Attnd + AttndAppClip
+//
+// The entry point of both the app and the App Clip (the same sources since Nov 19, 2026: the App
+// Clip is launched by a Universal Link, which arrives through `onContinueUserActivity` like the
+// app's).
 
 import SwiftUI
 

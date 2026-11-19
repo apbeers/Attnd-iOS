@@ -251,13 +251,11 @@ final class BusinessLogicTests: XCTestCase {
         XCTAssertEqual(LiveRefreshPolicy.interval(canReceivePush: false, lastRefreshFailed: true), .seconds(15))
     }
 
-    func testCanReceivePush_NeedsTokenRegistrationAndFullApp() {
-        XCTAssertTrue(LiveRefreshPolicy.canReceivePush(pushToken: "ff00", registrationFailed: false, isAppClip: false))
-        XCTAssertFalse(LiveRefreshPolicy.canReceivePush(pushToken: nil, registrationFailed: false, isAppClip: false))
-        XCTAssertFalse(LiveRefreshPolicy.canReceivePush(pushToken: "", registrationFailed: false, isAppClip: false))
-        XCTAssertFalse(LiveRefreshPolicy.canReceivePush(pushToken: "ff00", registrationFailed: true, isAppClip: false))
-        XCTAssertFalse(LiveRefreshPolicy.canReceivePush(pushToken: "ff00", registrationFailed: false, isAppClip: true),
-                       "the App Clip can't get pushes")
+    func testCanReceivePush_NeedsTokenAndRegistration() {
+        XCTAssertTrue(LiveRefreshPolicy.canReceivePush(pushToken: "ff00", registrationFailed: false))
+        XCTAssertFalse(LiveRefreshPolicy.canReceivePush(pushToken: nil, registrationFailed: false))
+        XCTAssertFalse(LiveRefreshPolicy.canReceivePush(pushToken: "", registrationFailed: false))
+        XCTAssertFalse(LiveRefreshPolicy.canReceivePush(pushToken: "ff00", registrationFailed: true))
     }
 
     func testContentUpdated_RefreshesOnlyForNewerVersions() {

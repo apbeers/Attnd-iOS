@@ -664,7 +664,7 @@ struct LocationDetailView: View {
                     }
 
                     if !ScreenshotMode.isActive, appState.hasAssistant {
-                        // Assistant spec §8: the plan page's assistant (the App Clip: its search sheet).
+                        // Assistant spec §8: the plan page's assistant (only with the on-device model).
                         Button {
                             appState.askAbout(.location(location.id))
                         } label: {

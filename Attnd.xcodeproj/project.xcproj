@@ -96,19 +96,23 @@
             "AttndAppClip/compile-sources",
           ],
         },
-        { "path": "MetricKitReporter.swift", "target-membership": [ "Attnd/compile-sources" ] },
-        { "path": "AppDelegate.swift", "target-membership": [ "Attnd/compile-sources" ] },
+        { "path": "MetricKitReporter.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
+        { "path": "AppDelegate.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
         {
           "path": "LiveActivityModel.swift",
           "target-membership": [
             "Attnd/compile-sources",
+            "AttndAppClip/compile-sources",
             "AttndWidgets/compile-sources",
+            "AttndClipWidgets/compile-sources",
           ],
         }, {
           "path": "LiveActivityIntents.swift",
           "target-membership": [
             "Attnd/compile-sources",
+            "AttndAppClip/compile-sources",
             "AttndWidgets/compile-sources",
+            "AttndClipWidgets/compile-sources",
           ],
         },
         {
@@ -136,8 +140,8 @@
             },
           ],
         },
-        { "path": "LiveFollowLogic.swift", "target-membership": [ "Attnd/compile-sources" ] },
-        { "path": "LiveFollowController.swift", "target-membership": [ "Attnd/compile-sources" ] },
+        { "path": "LiveFollowLogic.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
+        { "path": "LiveFollowController.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
         {
           "path": "OnboardingView.swift",
           "target-membership": [
@@ -255,7 +259,7 @@
             "AttndAppClip/compile-sources",
           ],
         },
-        { "path": "AttndApp.swift", "target-membership": [ "Attnd/compile-sources" ] },
+        { "path": "AttndApp.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
         {
           "path": "ContentView.swift",
           "target-membership": [
@@ -345,6 +349,7 @@
       "path": "AttndWidgets",
       "target-membership": [
         "AttndWidgets",
+        "AttndClipWidgets",
       ],
       "membership-exceptions": [
         {
@@ -352,6 +357,14 @@
           "exclusions": [
             "Info.plist",
             "AttndWidgets.entitlements",
+            "AttndClipWidgets.entitlements",
+          ],
+        }, {
+          "target": "AttndClipWidgets",
+          "exclusions": [
+            "Info.plist",
+            "AttndWidgets.entitlements",
+            "AttndClipWidgets.entitlements",
           ],
         },
       ],
@@ -363,6 +376,7 @@
         { "path": "<PRODUCTS>/AttndTests.xctest", "id": "49CC000227800000A0000002", "type": "wrapper.cfbundle", "index": false },
         { "path": "<PRODUCTS>/AttndAppClip.app", "id": "49DD95262FA559F6002F90DE", "type": "wrapper.application", "index": false, "target-membership": [ { "build-phase": "Attnd/copy/Embed App Clips", "header-preservation": "remove-on-copy" } ] },
         { "path": "<PRODUCTS>/AttndWidgets.appex", "id": "49EE10022FB5A00000A0B002", "type": "wrapper.app-extension", "index": false, "target-membership": [ { "build-phase": "Attnd/copy/Embed Foundation Extensions", "header-preservation": "remove-on-copy" } ] },
+        { "path": "<PRODUCTS>/AttndClipWidgets.appex", "id": "49EE10042FC1A00000A0C002", "type": "wrapper.app-extension", "index": false, "target-membership": [ { "build-phase": "AttndAppClip/copy/Embed Foundation Extensions", "header-preservation": "remove-on-copy" } ] },
       ],
     },
   ],
@@ -465,10 +479,18 @@
         { "name": "Dev", "file": "Config/Dev.xcconfig" },
         { "name": "Release", "file": "Config/Release.xcconfig" },
       ],
+      "dependencies": [
+        "AttndClipWidgets",
+      ],
       "build-phases": [
         "compile-sources",
         "frameworks",
         "resources",
+        {
+          "kind": "copy",
+          "name": "Embed Foundation Extensions",
+          "bundle-base-path": "plugins-directory",
+        },
       ],
       "build-settings": {
         "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon",
@@ -483,7 +505,6 @@
         "INFOPLIST_FILE": "AttndAppClip/Info.plist",
         "INFOPLIST_KEY_CFBundleDisplayName": "Attnd",
         "INFOPLIST_KEY_LSApplicationCategoryType": "public.app-category.entertainment",
-        "INFOPLIST_KEY_NSLocationWhenInUseUsageDescription": "Attnd uses your location to show events near you.",
         "INFOPLIST_KEY_UIApplicationSceneManifest_Generation": "YES",
         "INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents": "YES",
         "INFOPLIST_KEY_UILaunchScreen_Generation": "YES",
@@ -493,7 +514,6 @@
           "$(inherited)",
           "@executable_path/Frameworks",
         ],
-        "LM_SKIP_METADATA_EXTRACTION": "YES",
         "LOCALIZATION_PREFERS_STRING_CATALOGS": "YES",
         "MARKETING_VERSION": "1.0.44",
         "PRODUCT_BUNDLE_IDENTIFIER": "com.arcu.Attnd.clip",
@@ -503,8 +523,6 @@
         "SUPPORTS_MACCATALYST": "NO",
         "SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD": "NO",
         "SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD": "NO",
-        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "APP_CLIP $(inherited)",
-        "SWIFT_ACTIVE_COMPILATION_CONDITIONS[config=Debug]": "DEBUG APP_CLIP $(inherited)",
         "SWIFT_EMIT_LOC_STRINGS": "YES",
         "SWIFT_VERSION": "6.0",
         "TARGETED_DEVICE_FAMILY": "1",
@@ -540,6 +558,47 @@
         ],
         "MARKETING_VERSION": "1.0.44",
         "PRODUCT_BUNDLE_IDENTIFIER": "com.arcu.Attnd.widgets",
+        "PRODUCT_NAME": "$(TARGET_NAME)",
+        "SKIP_INSTALL": "YES",
+        "SUPPORTED_PLATFORMS": "iphoneos iphonesimulator",
+        "SUPPORTS_MACCATALYST": "NO",
+        "SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD": "NO",
+        "SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD": "NO",
+        "SWIFT_EMIT_LOC_STRINGS": "YES",
+        "SWIFT_VERSION": "6.0",
+        "TARGETED_DEVICE_FAMILY": "1",
+      },
+    }, {
+      "name": "AttndClipWidgets",
+      "id": "49EE10032FC1A00000A0C001",
+      "product": "Products/AttndClipWidgets.appex",
+      "product-type": "app-extension",
+      "specialized-configurations": [
+        { "name": "Debug", "file": "Config/Debug.xcconfig" },
+        { "name": "Dev", "file": "Config/Dev.xcconfig" },
+        { "name": "Release", "file": "Config/Release.xcconfig" },
+      ],
+      "build-phases": [
+        "compile-sources",
+        "frameworks",
+        "resources",
+      ],
+      "build-settings": {
+        "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME": "AccentColor",
+        "CODE_SIGN_ENTITLEMENTS": "AttndWidgets/AttndClipWidgets.entitlements",
+        "CODE_SIGN_STYLE": "Automatic",
+        "CURRENT_PROJECT_VERSION": "44",
+        "GENERATE_INFOPLIST_FILE": "YES",
+        "INFOPLIST_FILE": "AttndWidgets/Info.plist",
+        "INFOPLIST_KEY_CFBundleDisplayName": "Attnd",
+        "IPHONEOS_DEPLOYMENT_TARGET": "26.0",
+        "LD_RUNPATH_SEARCH_PATHS": [
+          "$(inherited)",
+          "@executable_path/Frameworks",
+          "@executable_path/../../Frameworks",
+        ],
+        "MARKETING_VERSION": "1.0.44",
+        "PRODUCT_BUNDLE_IDENTIFIER": "com.arcu.Attnd.clip.widgets",
         "PRODUCT_NAME": "$(TARGET_NAME)",
         "SKIP_INSTALL": "YES",
         "SUPPORTED_PLATFORMS": "iphoneos iphonesimulator",

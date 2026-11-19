@@ -1,5 +1,5 @@
 // AppDelegate.swift
-// Attnd
+// Attnd + AttndAppClip
 //
 // UIKit hooks SwiftUI doesn't cover: APNs registration and push delivery.
 // Installed with @UIApplicationDelegateAdaptor in AttndApp. Owns the AppState
@@ -11,7 +11,7 @@
 //     the event with a token, opted in or not (API-007). Refetch the bundle when its
 //     content_version is newer, after a random 0–10 s delay.
 //
-// The app registers with APNs at every launch, whatever the notification opt-in:
+// The app and the App Clip register with APNs at every launch, whatever the notification opt-in:
 // silent pushes need no permission. The opt-in only controls alerts (`subscribed`).
 //
 // The app's own local notifications (reminders before hearted items, "tap to follow on your

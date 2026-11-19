@@ -20,6 +20,17 @@
 	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.arcu.Attnd.clip.live</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>attnd-live</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
@@ -31,12 +42,20 @@
 	<key>NSAppClip</key>
 	<dict>
 		<key>NSAppClipRequestEphemeralUserNotification</key>
-		<false/>
+		<true/>
 		<key>NSAppClipRequestLocationConfirmation</key>
 		<false/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Scan an event QR code to join instantly</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Attnd uses your location while you use the app to find events near you and to show how far away places at your event are, which way they are and how long the walk takes.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

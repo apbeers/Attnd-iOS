@@ -507,7 +507,7 @@ struct SettingCard: View {
     }
 }
 
-/// A `SettingCard` wired to AppState: Follow on Lock Screen (full app only), and the
+/// A `SettingCard` wired to AppState: Follow on Lock Screen, and the
 /// notification opt-in, which also carries reminders on iOS (asks for permission when needed).
 struct AppSettingCard: View {
     let kind: SettingCardKind
@@ -518,13 +518,9 @@ struct AppSettingCard: View {
     var body: some View {
         switch kind {
         case .followLockScreen:
-            #if APP_CLIP
-            EmptyView()
-            #else
             SettingCard(kind: kind, isOn: appState.followsOnLockScreen) { on in
                 appState.setFollowOnLockScreen(on)
             }
-            #endif
         case .reminders, .notifications:
             SettingCard(kind: kind, isOn: appState.notificationsEnabled, isBusy: busy) { on in
                 busy = true

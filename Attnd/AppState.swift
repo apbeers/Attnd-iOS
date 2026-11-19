@@ -10,7 +10,7 @@
 // `content_updated` push announces a newer content_version (after a random
 // 0–10 s delay) or a notification push arrives, and by ContentView's slow poll
 // while the scene is active (`LiveRefreshPolicy`: every 60 s without a push
-// token, e.g. the App Clip; a 5-minute safety poll with one).
+// token; a 5-minute safety poll with one).
 //
 // Offline (API-007): every applied bundle is saved to Application Support
 // (`EventStore`, raw JSON + ETag + last refresh) and restored at launch before
@@ -210,16 +210,12 @@ final class AppState {
     @ObservationIgnored private var deviceSyncPending = false
     @ObservationIgnored private var sendingLeaves = false
 
-    /// The App Clip can't receive pushes; it always uses the 60 s poll.
-    static let isAppClip = Bundle.main.bundleIdentifier?.hasSuffix(".clip") ?? false
-
     /// How often ContentView re-checks the bundle while active (API-007).
     var liveRefreshInterval: Duration {
         LiveRefreshPolicy.interval(
             canReceivePush: LiveRefreshPolicy.canReceivePush(
                 pushToken: pushToken,
-                registrationFailed: pushRegistrationFailed,
-                isAppClip: Self.isAppClip
+                registrationFailed: pushRegistrationFailed
             ),
             lastRefreshFailed: refreshProblem != nil
         )
@@ -1102,10 +1098,10 @@ final class AppState {
         return granted
     }
 
-    /// Called at every launch of the full app (AppDelegate), whatever the notification
+    /// Called at every launch (AppDelegate; the app and the App Clip), whatever the notification
     /// opt-in: silent `content_updated` pushes keep the event live without polling (API-007).
     func registerForRemoteNotifications() {
-        guard !ScreenshotMode.isActive, !Self.isAppClip else { return }
+        guard !ScreenshotMode.isActive else { return }
         UIApplication.shared.registerForRemoteNotifications()
     }
 
@@ -1394,7 +1390,6 @@ final class AppState {
         UserDefaults.standard.set(true, forKey: Keys.onboardingSeen)
     }
 
-    #if !APP_CLIP
     /// Links from the Live Activity and the app's notifications (`attnd-live://…`): an item's
     /// detail, the map at a location (with the walking route), Updates at a notification, or
     /// "follow" (start the Live Activity). Links for another event are ignored.
@@ -1424,13 +1419,10 @@ final class AppState {
             showMyPlan()
         }
     }
-    #endif
 
     /// The Live Activity and reminders follow the content.
     private func liveFollowNeedsUpdate() {
-        #if !APP_CLIP
         LiveFollowController.shared.setNeedsUpdate()
-        #endif
     }
 
     // MARK: - Usage (API-005)

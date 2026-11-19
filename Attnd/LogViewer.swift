@@ -50,7 +50,7 @@ struct DiagnosticsRows: View {
                 } label: {
                     Label("Turn Off Debug Logging", systemImage: "stop.circle")
                 }
-            } else if !LogEnvironment.current.isAppClip {
+            } else {
                 Button {
                     LogCore.shared.startDebugMode()
                     refresh()

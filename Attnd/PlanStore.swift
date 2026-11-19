@@ -133,10 +133,8 @@ final class PlanStore {
                 UserDefaults.standard.removeObject(forKey: Self.key(eventId))
             }
         }
-        // The Live Activity and reminders follow the plan (the app only; the App Clip has neither).
-        #if !APP_CLIP
+        // The Live Activity and reminders follow the plan.
         LiveFollowController.shared.setNeedsUpdate()
-        #endif
     }
 }
 
@@ -146,7 +144,7 @@ extension AppState {
     static let nothingFitsMessage = "Nothing on the schedule fits that. Try another day or fewer limits."
 
     /// The planner is offered (the plan page, Ask plans, onboarding's plan chips) only where the
-    /// plan page exists: the full app with Apple Intelligence's on-device model (planner_view_spec
+    /// plan page exists: Apple Intelligence's on-device model (planner_view_spec
     /// §1; no model → no planner UI at all). Never in screenshot mode.
     static var plannerAvailable: Bool { hasPlanPanel }
 

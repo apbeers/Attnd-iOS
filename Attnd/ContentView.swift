@@ -9,7 +9,7 @@
 // in screenshot mode the floating search button and its sheet instead. Options is a toolbar item on each tab's
 // root screen.
 // It also drives bundle refreshes (on becoming active, plus a slow poll while
-// active: every 60 s without a push token, e.g. the App Clip; a 5-minute safety
+// active: every 60 s without a push token; a 5-minute safety
 // poll when silent `content_updated` pushes can arrive; 15 s after a failure) and
 // applies the event's accent colour, falling back to the brand purple asset
 // colour (AccentColor).
@@ -257,7 +257,7 @@ struct ContentView: View {
         // Fallback poll while the scene is active and an event is joined (ContentView
         // only exists then); silent `content_updated` pushes do the real work (API-007).
         // The interval (`LiveRefreshPolicy`) restarts the loop when it changes: 60 s
-        // without a push token (always in the App Clip), 5 min with one, 15 s while
+        // without a push token, 5 min with one, 15 s while
         // the last refresh failed. Silent: no spinners.
         .task(id: LivePollKey(phase: scenePhase, eventId: appState.currentEvent?.id, interval: appState.liveRefreshInterval)) {
             guard scenePhase == .active, appState.currentEvent != nil else { return }

@@ -1,5 +1,5 @@
 // MetricKitReporter.swift
-// Attnd (app target only — not the App Clip or the widget extension)
+// Attnd (app + App Clip; not the widget extensions)
 //
 // MetricKit (shared logging spec §6):
 //   - Diagnostic payloads (crashes, hangs, CPU / disk-write exceptions, launch diagnostics) are
@@ -11,10 +11,8 @@
 //     artifacts). Kinds: crash, hang, cpu, disk_write, launch. Each request is written to
 //     `Application Support/attnd-logs/reports/` first and deleted once the server has it, so a
 //     failed upload is retried at the next launch (at most 20 kept).
-//   - Daily metric payloads become the API-014 perf counts: time to first draw →
-//     `perf_launch_cold`, resume time → `perf_launch_warm` (one count per histogram bucket,
-//     bucketed like `PerfBucket.launch`), sent with the next usage batch of a joined event.
-//     The full app's launch buckets come only from here (LaunchTiming logs its own measurement).
+//   - Daily metric payloads are not used: the API-014 launch counts come from LaunchTiming in
+//     the app and the App Clip alike (one measurement for both since Nov 19, 2026).
 //
 // Nothing here runs in screenshot mode. MetricKit delivers payloads at most once a day (crash
 // and hang diagnostics at the next launch); Xcode's Debug → Simulate MetricKit Payloads tests it.
@@ -38,20 +36,6 @@ final class MetricKitReporter: NSObject, MXMetricManagerSubscriber, @unchecked S
     }
 
     // MARK: MXMetricManagerSubscriber
-
-    func didReceive(_ payloads: [MXMetricPayload]) {
-        for payload in payloads {
-            let at = payload.timeStampEnd
-            var counts: [(UsageMetric, String, Int)] = []
-            if let launch = payload.applicationLaunchMetrics {
-                counts += Self.launchCounts(launch.histogrammedTimeToFirstDraw, metric: .perfLaunchCold)
-                counts += Self.launchCounts(launch.histogrammedApplicationResumeTime, metric: .perfLaunchWarm)
-            }
-            for (metric, detail, count) in counts {
-                PerfMetrics.shared.record(metric, detail: detail, at: at, count: count)
-            }
-        }
-    }
 
     func didReceive(_ payloads: [MXDiagnosticPayload]) {
         var reports: [Data] = []
@@ -79,20 +63,7 @@ final class MetricKitReporter: NSObject, MXMetricManagerSubscriber, @unchecked S
         }
     }
 
-    // MARK: Payload → reports / counts
-
-    /// One count per histogram bucket that has launches, at the bucket's midpoint.
-    static func launchCounts(_ histogram: MXHistogram<UnitDuration>, metric: UsageMetric) -> [(UsageMetric, String, Int)] {
-        var counts: [String: Int] = [:]
-        for case let bucket as MXHistogramBucket<UnitDuration> in histogram.bucketEnumerator {
-            guard bucket.bucketCount > 0 else { continue }
-            let start = bucket.bucketStart.converted(to: .milliseconds).value
-            let end = bucket.bucketEnd.converted(to: .milliseconds).value
-            let ms = Int(((start + end) / 2).rounded())
-            counts[PerfBucket.launch(ms: ms), default: 0] += bucket.bucketCount
-        }
-        return counts.keys.sorted().map { (metric, $0, counts[$0] ?? 0) }
-    }
+    // MARK: Payload → reports
 
     /// One request body: `{"platform":"ios","app":…,"build":…,"os":…,"model":…,"reports":[{…}]}`.
     static func reportBody(kind: String, diagnostic: MXDiagnostic, at: Date) -> Data? {

@@ -666,8 +666,7 @@ final class LogCore: @unchecked Sendable {
     /// Options → "Turn on debug logging for 10 minutes" (production builds).
     @discardableResult
     func startDebugMode(now: Date = .now) -> DebugModeStatus? {
-        // The App Clip uploads only as a Dev build (API-013).
-        guard !LogPolicy.isDevBuild, !ScreenshotMode.isActive, !environment.isAppClip else { return debugStatus }
+        guard !LogPolicy.isDevBuild, !ScreenshotMode.isActive else { return debugStatus }
         if let status = debugStatus { return status }
         let code = DebugCode.generate()
         let until = now.addingTimeInterval(LogPolicy.debugModeDuration)
@@ -819,8 +818,8 @@ extension Duration {
 
 /// Cold launch = process start (or the App's init when iOS pre-warmed the process) → first
 /// frame of the root view; warm launch = the scene leaving the background → active.
-/// Logged as `lifecycle.launch`; in the App Clip also counted as `perf_launch_cold` /
-/// `perf_launch_warm` (the full app takes those from MetricKit, MetricKitReporter.swift).
+/// Logged as `lifecycle.launch` and counted as `perf_launch_cold` / `perf_launch_warm` (API-014;
+/// the app and the App Clip alike).
 @MainActor
 enum LaunchTiming {
     private static var signpost: AppSignpost.Interval?
@@ -848,9 +847,7 @@ enum LaunchTiming {
         signpost = nil
         AppLog.info(.lifecycle, "lifecycle.launch", "Cold launch in \(ms) ms",
                     ["kind": "cold", "ms": .int(ms), "prewarmed": .bool(isPrewarmed)])
-        if LogEnvironment.current.isAppClip {
-            PerfMetrics.shared.record(.perfLaunchCold, detail: PerfBucket.launch(ms: ms))
-        }
+        PerfMetrics.shared.record(.perfLaunchCold, detail: PerfBucket.launch(ms: ms))
     }
 
     /// The scene phase changed (AppRootView).
@@ -876,9 +873,7 @@ enum LaunchTiming {
         AppLog.info(.lifecycle, "lifecycle.foreground", "Back in the foreground",
                     ["since_bg_s": .int(backgroundAt.map { Int(Date.now.timeIntervalSince($0)) } ?? 0)])
         AppLog.info(.lifecycle, "lifecycle.launch", "Warm launch in \(ms) ms", ["kind": "warm", "ms": .int(ms)])
-        if LogEnvironment.current.isAppClip {
-            PerfMetrics.shared.record(.perfLaunchWarm, detail: PerfBucket.launch(ms: ms))
-        }
+        PerfMetrics.shared.record(.perfLaunchWarm, detail: PerfBucket.launch(ms: ms))
     }
 
     /// iOS may start the process ahead of the user's tap ("pre-warming").

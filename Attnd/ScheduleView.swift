@@ -9,7 +9,7 @@
 // grouped by ScheduleGrouping) and `enable_search`. All times are shown in the
 // event's time zone. Countdown labels update live via TimelineView.
 //
-// In the full app the floating "My plan" button sits over it (the plan panel, AssistantView.swift).
+// With the on-device model the floating "My plan" button sits over it (AssistantView.swift).
 
 import SwiftUI
 

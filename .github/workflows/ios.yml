@@ -167,6 +167,7 @@ jobs:
           IOS_PROFILE_APP_B64: ${{ secrets.IOS_PROFILE_APP_B64 }}
           IOS_PROFILE_WIDGETS_B64: ${{ secrets.IOS_PROFILE_WIDGETS_B64 }}
           IOS_PROFILE_CLIP_B64: ${{ secrets.IOS_PROFILE_CLIP_B64 }}
+          IOS_PROFILE_CLIP_WIDGETS_B64: ${{ secrets.IOS_PROFILE_CLIP_WIDGETS_B64 }}
         run: bash scripts/ci/archive_upload.sh
       # dSYMs of this build (app, App Clip, widgets) for symbolicating crash / hang reports (API-013).
       - name: Keep dSYMs

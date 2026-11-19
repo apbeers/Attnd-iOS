@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Manual App Store signing for CI (macOS runner).
 
-Reads the three App Store provisioning profiles (base64 in IOS_PROFILE_APP_B64, IOS_PROFILE_WIDGETS_B64,
-IOS_PROFILE_CLIP_B64), installs them where Xcode looks, checks that every entitlement each target asks for
+Reads the four App Store provisioning profiles (base64 in IOS_PROFILE_APP_B64, IOS_PROFILE_WIDGETS_B64,
+IOS_PROFILE_CLIP_B64, IOS_PROFILE_CLIP_WIDGETS_B64), installs them where Xcode looks, checks that every entitlement each target asks for
 is in its profile (so a capability missing on the App ID fails here with a clear message instead of deep in
 xcodebuild), and writes:
   build/Signing.xcconfig        -xcconfig for the archive: Apple Distribution + the profile per target
@@ -18,6 +18,9 @@ TARGETS = {
     "Attnd": ("com.arcu.Attnd", "Attnd/Attnd.entitlements", "IOS_PROFILE_APP_B64"),
     "AttndAppClip": ("com.arcu.Attnd.clip", "AttndAppClip/AttndAppClip.entitlements", "IOS_PROFILE_CLIP_B64"),
     "AttndWidgets": ("com.arcu.Attnd.widgets", "AttndWidgets/AttndWidgets.entitlements", "IOS_PROFILE_WIDGETS_B64"),
+    # The App Clip's own Live Activity extension (an App Clip may embed only extensions prefixed by its id).
+    "AttndClipWidgets": ("com.arcu.Attnd.clip.widgets", "AttndWidgets/AttndClipWidgets.entitlements",
+                         "IOS_PROFILE_CLIP_WIDGETS_B64"),
 }
 # Keys Xcode or the profile handle itself; never in a capability check.
 IGNORED = {"application-identifier", "com.apple.developer.team-identifier", "keychain-access-groups",

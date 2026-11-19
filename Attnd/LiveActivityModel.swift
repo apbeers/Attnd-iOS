@@ -1,11 +1,11 @@
 // LiveActivityModel.swift
-// Attnd (app) + AttndWidgets (widget extension)
+// Attnd, AttndAppClip + AttndWidgets, AttndClipWidgets (widget extensions)
 //
 // The Live Activity's data ("Follow on Lock Screen", shared spec §8) and its internal links.
-// Compiled into both the app (which starts and updates the activity, LiveFollowController)
-// and the widget extension (which draws it, AttndWidgets/EventLiveActivity.swift). Not in
-// the App Clip: App Clips may only offer Live Activities through a widget extension of their
-// own, and this one belongs to the full app.
+// Compiled into the app and the App Clip (which start and update the activity,
+// LiveFollowController) and their widget extensions (which draw it,
+// AttndWidgets/EventLiveActivity.swift): an App Clip may offer Live Activities only through a
+// widget extension of its own, so the clip embeds AttndClipWidgets (the same sources).
 //
 // ContentState: EVERY field is optional (API-011). An urgent announcement's ActivityKit push
 // replaces the whole content state with `{"urgent": {...}}` only, decoded with a default

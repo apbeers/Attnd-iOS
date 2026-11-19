@@ -7,7 +7,7 @@
 //
 //   1. What you can do: map, schedule, live updates, search, hearts.
 //   2. Location: walk times, the compass arrow, what's nearby → the permission prompt.
-//   3. Notifications (full app): set-time changes and reminders for hearts → the prompt.
+//   3. Notifications: set-time changes and reminders for hearts → the prompt.
 //   4. "Plan your day", only when Apple Intelligence's on-device model is available
 //      (`AppState.plannerAvailable`; app and App Clip): example requests built from this
 //      event's tags (`PlanRequest.examples`, the same as Android's). A plan chip makes the plan
@@ -33,8 +33,7 @@ struct OnboardingView: View {
     }
 
     private var cards: [Card] {
-        var cards: [Card] = [.intro, .location]
-        if !AppState.isAppClip { cards.append(.notifications) }
+        var cards: [Card] = [.intro, .location, .notifications]
         if hasPlanCard { cards.append(.plan) }
         return cards
     }

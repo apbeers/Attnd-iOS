@@ -83,15 +83,13 @@ struct SettingsView: View {
             } footer: {
                 if notificationPermissionDenied {
                     Text("Notification permission was denied. Enable it in Settings → Attnd.")
-                } else if !AppState.isAppClip {
+                } else {
                     Text("Organizer updates, and a reminder 15 minutes before anything you've liked.")
                 }
             }
 
-            #if !APP_CLIP
-            // MARK: - Follow on Lock Screen (Live Activity) + arrival
+            // MARK: - Follow on Lock Screen (Live Activity)
             LiveFollowSection()
-            #endif
 
             // MARK: - Tour (onboarding)
             Section {
@@ -221,7 +219,6 @@ struct SettingsView: View {
     }
 }
 
-#if !APP_CLIP
 // MARK: - Follow on Lock Screen
 
 /// "Follow on Lock Screen" (the event's Live Activity) for this event, "Start Now" before it
@@ -274,7 +271,6 @@ private struct LiveFollowSection: View {
         }
     }
 }
-#endif
 
 // MARK: - Internal test build warning
 

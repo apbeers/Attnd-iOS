@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Archive the app (with its App Clip and the AttndWidgets Live Activity extension) and upload it to App
-# Store Connect.
+# Archive the app (with its App Clip and their Live Activity extensions, AttndWidgets and
+# AttndClipWidgets) and upload it to App Store Connect.
 #
 # MANUAL SIGNING (since Nov 19, 2026; used whenever IOS_DIST_CERT_P12_BASE64 is set): the archive and the
-# export are signed with the stored Apple Distribution certificate and three App Store profiles
-# (IOS_PROFILE_APP_B64, IOS_PROFILE_WIDGETS_B64, IOS_PROFILE_CLIP_B64; scripts/ci/signing_profiles.py checks
+# export are signed with the stored Apple Distribution certificate and four App Store profiles
+# (IOS_PROFILE_APP_B64, IOS_PROFILE_WIDGETS_B64, IOS_PROFILE_CLIP_B64, IOS_PROFILE_CLIP_WIDGETS_B64;
+# scripts/ci/signing_profiles.py checks
 # and installs them). Needed because automatic signing with the API key fails ("Authentication failed")
 # with some capabilities (it did on the App Group, since removed). Renewal: attnd-web SETUP.md (iOS signing). The API key is
 # then only used for the upload.
@@ -16,7 +17,7 @@
 # imported into a throwaway keychain so Xcode reuses it. Without it, every fresh runner would mint a new
 # "Created via API" development certificate, and Apple's per-account limit fills up after a few dozen runs.
 #
-# Env: IOS_DIST_CERT_P12_BASE64, IOS_DIST_CERT_PASSWORD, IOS_PROFILE_{APP,WIDGETS,CLIP}_B64 (manual signing)
+# Env: IOS_DIST_CERT_P12_BASE64, IOS_DIST_CERT_PASSWORD, IOS_PROFILE_{APP,WIDGETS,CLIP,CLIP_WIDGETS}_B64 (manual signing)
 #      ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8 (contents of AuthKey_XXXX.p8)
 #      IOS_DEV_CERT_P12_BASE64, IOS_DEV_CERT_PASSWORD (the stored Apple Development certificate)
 #      BUILD_NUMBER, MARKETING_VERSION, ATTND_SERVER (host, e.g. attnd.app)
@@ -74,10 +75,12 @@ if [ "$manual" = 1 ]; then
   signing=(-xcconfig build/Signing.xcconfig)
   # The checked-in entitlements say aps-environment=development (local Xcode runs); an App Store
   # profile only allows production, and the export would switch it anyway.
-  /usr/libexec/PlistBuddy -c 'Set :aps-environment production' Attnd/Attnd.entitlements
+  for f in Attnd/Attnd.entitlements AttndAppClip/AttndAppClip.entitlements; do
+    /usr/libexec/PlistBuddy -c 'Set :aps-environment production' "$f"
+  done
 else
   echo "::warning title=Signing::IOS_DIST_CERT_P12_BASE64 is not set: automatic signing via the API key"
-  for f in Attnd/Attnd.entitlements AttndWidgets/AttndWidgets.entitlements; do
+  for f in Attnd/Attnd.entitlements AttndAppClip/AttndAppClip.entitlements AttndWidgets/AttndWidgets.entitlements AttndWidgets/AttndClipWidgets.entitlements; do
     /usr/libexec/PlistBuddy -c 'Delete :com.apple.security.application-groups' "$f" 2>/dev/null || true
   done
   auth=(-allowProvisioningUpdates "${auth[@]}")

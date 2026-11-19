@@ -1,5 +1,5 @@
 // LiveActivityIntents.swift
-// Attnd (app) + AttndWidgets (widget extension)
+// Attnd, AttndAppClip + AttndWidgets, AttndClipWidgets (widget extensions)
 //
 // The Live Activity's buttons (Lock Screen and the expanded Dynamic Island): Heart the
 // current item, Skip the next one, Dismiss an urgent announcement. "Show on map" is a `Link`

@@ -109,6 +109,12 @@ actor AttestationManager {
         inflightTask = nil
     }
 
+    /// Drops the stored JWT before switching servers (each server signs its own tokens).
+    func clearToken() {
+        KeychainHelper.delete(key: jwtKeychainKey)
+        inflightTask = nil
+    }
+
     /// Eagerly start attestation in the background so the first API call is instant.
     /// Errors are silently ignored — the API call will retry.
     nonisolated func warmup() {

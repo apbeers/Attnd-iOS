@@ -77,19 +77,70 @@ extension Notification.Name {
     static let attndUpdateRequired = Notification.Name("com.arcu.attnd.updateRequired")
 }
 
+// MARK: - Server switch
+
+/// TestFlight (and Xcode) installs can switch between the production and dev servers in Options
+/// (owner, Nov 19, 2026: testing on the Release build that TestFlight installs after a release).
+/// App Store installs always use the build's server. App Review installs look exactly like TestFlight
+/// ones (a sandbox receipt), so a Release build still starts on production there: the build decides
+/// the default, the switch only overrides it.
+enum ServerSwitch {
+    static let productionHost = "attnd.app"
+    static let devHost = "dev.attnd.app"
+    static let choiceKey = "pref.serverChoice"
+
+    enum Choice: String, CaseIterable, Sendable {
+        case production, dev
+        var host: String { self == .production ? ServerSwitch.productionHost : ServerSwitch.devHost }
+        var title: String { self == .production ? "Production" : "Dev" }
+    }
+
+    /// A TestFlight or Xcode install. `appStoreReceiptURL` ends in `sandboxReceipt` outside the App
+    /// Store; it is read through KVC because the property is deprecated (iOS 18) and its replacement,
+    /// `AppTransaction`, is async, while the host must be known before the first request.
+    static let isSwitchable: Bool = {
+        #if DEBUG
+        return true
+        #else
+        return (Bundle.main.value(forKey: "appStoreReceiptURL") as? URL)?.lastPathComponent == "sandboxReceipt"
+        #endif
+    }()
+
+    static var storedChoice: Choice? {
+        UserDefaults.standard.string(forKey: choiceKey).flatMap(Choice.init(rawValue:))
+    }
+
+    /// Pure (unit-tested): the build's host unless the install is switchable and a choice was made.
+    static func host(buildHost: String, switchable: Bool, choice: Choice?) -> String {
+        guard switchable, let choice else { return buildHost }
+        return choice.host
+    }
+
+    /// The choice the current host corresponds to (what Options shows).
+    static func current(host: String) -> Choice { host == productionHost ? .production : .dev }
+}
+
 // MARK: - APIClient
 
 final class APIClient: Sendable {
 
     static let shared = APIClient()
 
-    /// Host of the Attnd server, from the ATTND_SERVER build setting (Info.plist).
-    /// Builds from the develop branch point at the dev server; everything else uses attnd.app.
-    static let serverHost: String = {
+    /// The build's own server, from the ATTND_SERVER build setting (Info.plist): Dev builds (develop)
+    /// the dev server, Release builds (main) attnd.app.
+    static let buildServerHost: String = {
         let host = (Bundle.main.object(forInfoDictionaryKey: "ATTND_SERVER") as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return host.isEmpty || host.hasPrefix("$(") ? "attnd.app" : host
+        return host.isEmpty || host.hasPrefix("$(") ? ServerSwitch.productionHost : host
     }()
+
+    /// The server this launch talks to: the build's, unless a test install chose another one in
+    /// Options (`ServerSwitch`). Fixed for the process; a switch applies at the next launch.
+    static let serverHost: String = ServerSwitch.host(
+        buildHost: buildServerHost,
+        switchable: ServerSwitch.isSwitchable,
+        choice: ServerSwitch.storedChoice
+    )
 
     /// The API version this build speaks.
     static let apiVersion = 2

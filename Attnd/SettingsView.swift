@@ -114,6 +114,9 @@ struct SettingsView: View {
                     LabeledContent("Edition", value: "App Clip")
                 }
                 LabeledContent("Server", value: info.serverHost)
+                if ServerSwitch.isSwitchable {
+                    ServerSwitchRow()
+                }
                 LabeledContent("API version", value: String(info.apiVersion))
                 LabeledContent("iOS", value: info.osVersion)
                 LabeledContent("Device", value: info.deviceModel)
@@ -268,6 +271,54 @@ private struct LiveFollowSection: View {
         .onAppear { refreshToken += 1 }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { refreshToken += 1 }
+        }
+    }
+}
+
+// MARK: - Server switch (test installs)
+
+/// TestFlight / Xcode installs only (`ServerSwitch.isSwitchable`): Production or Dev for the next
+/// launch. Switching leaves the current event, because events live on one server.
+private struct ServerSwitchRow: View {
+    @Environment(AppState.self) private var appState
+    private let current = ServerSwitch.current(host: APIClient.serverHost)
+    @State private var selection = ServerSwitch.current(host: APIClient.serverHost)
+    @State private var pending: ServerSwitch.Choice?
+    @State private var switchedTo: ServerSwitch.Choice?
+
+    var body: some View {
+        Picker(selection: $selection) {
+            ForEach(ServerSwitch.Choice.allCases, id: \.self) { Text($0.title).tag($0) }
+        } label: {
+            Label("Test server", systemImage: "server.rack")
+        }
+        .onChange(of: selection) { _, new in
+            if new != (switchedTo ?? current) { pending = new }
+        }
+        .confirmationDialog(
+            "Switch to the \(pending?.title ?? "") server?",
+            isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Switch and Leave Event", role: .destructive) {
+                guard let choice = pending else { return }
+                pending = nil
+                Task {
+                    await appState.switchServer(to: choice)
+                    switchedTo = choice
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                selection = switchedTo ?? current
+                pending = nil
+            }
+        } message: {
+            Text("Events live on one server, so you'll leave the current event. Close Attnd from the app switcher and open it again to use the other server.")
+        }
+        if let switchedTo, switchedTo != current {
+            Text("Close Attnd and open it again to use \(switchedTo.host).")
+                .font(.footnote)
+                .foregroundStyle(.orange)
         }
     }
 }

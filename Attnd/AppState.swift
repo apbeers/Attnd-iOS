@@ -655,6 +655,19 @@ final class AppState {
         deleteSavedEvent()
     }
 
+    /// Options → Server (test installs only, `ServerSwitch`): leaves the current event on this server,
+    /// drops this server's token and stores the choice; the next launch talks to the other server
+    /// (`APIClient.serverHost` is fixed per process).
+    func switchServer(to choice: ServerSwitch.Choice) async {
+        guard ServerSwitch.isSwitchable else { return }
+        AppLog.notice(.lifecycle, "lifecycle.server_switch", "Server switch for the next launch", ["to": .string(choice.rawValue)])
+        if currentEvent != nil { await leaveEvent() }
+        await sendPendingLeaves()
+        pendingLeaveEventIds = []
+        await AttestationManager.shared.clearToken()
+        UserDefaults.standard.set(choice.rawValue, forKey: ServerSwitch.choiceKey)
+    }
+
     /// Sends the queued `POST leave/`s; each one the server accepted (or answered 404) is dropped.
     func sendPendingLeaves() async {
         guard !sendingLeaves, !ScreenshotMode.isActive else { return }

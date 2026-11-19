@@ -17,6 +17,19 @@ final class BusinessLogicTests: XCTestCase {
 
     // MARK: - ISO 8601
 
+    func testServerSwitch_BuildHostUnlessASwitchableInstallChose() {
+        // App Store installs: always the build's server, whatever is stored.
+        XCTAssertEqual(ServerSwitch.host(buildHost: "attnd.app", switchable: false, choice: .dev), "attnd.app")
+        // TestFlight / Xcode without a choice: the build's server (Release → production, Dev → dev).
+        XCTAssertEqual(ServerSwitch.host(buildHost: "attnd.app", switchable: true, choice: nil), "attnd.app")
+        XCTAssertEqual(ServerSwitch.host(buildHost: "dev.attnd.app", switchable: true, choice: nil), "dev.attnd.app")
+        // A choice wins in a switchable install.
+        XCTAssertEqual(ServerSwitch.host(buildHost: "attnd.app", switchable: true, choice: .dev), "dev.attnd.app")
+        XCTAssertEqual(ServerSwitch.host(buildHost: "dev.attnd.app", switchable: true, choice: .production), "attnd.app")
+        XCTAssertEqual(ServerSwitch.current(host: "attnd.app"), .production)
+        XCTAssertEqual(ServerSwitch.current(host: "dev.attnd.app"), .dev)
+    }
+
     func testISODate_Variants() {
         let base = ISODate.parse("2026-07-04T12:00:00Z")
         XCTAssertNotNil(base)

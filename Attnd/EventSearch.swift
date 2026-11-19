@@ -552,6 +552,9 @@ struct EventSearchIndex: Sendable {
                     Field(weight: 2, words: item.tags.flatMap(EventSearch.words)),
                     Field(weight: 2, words: EventSearch.words(locationName)),
                     Field(weight: 1, words: EventSearch.words(item.description)),
+                    // API-018: performer names and genres weigh like tags, bios and the about text like descriptions.
+                    Field(weight: 2, words: ((item.context?.performers.map(\.name) ?? []) + (item.context?.genres ?? [])).flatMap(EventSearch.words)),
+                    Field(weight: 1, words: ([item.context?.about ?? ""] + (item.context?.performers.map(\.bio) ?? [])).flatMap(EventSearch.words)),
                 ],
                 subtitle: "\(time) · \(locationName)",
                 item: item,

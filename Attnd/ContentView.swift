@@ -166,7 +166,7 @@ struct ContentView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.scenePhase) private var scenePhase
 
-    /// Re-tapping the selected Map tab re-centres the map. The plan panel stays as it is
+    /// Re-tapping the selected Map tab re-centres the map. The plan page keeps its state
     /// across tabs (its state is the assistant's).
     /// (assumeIsolated: the closures always run on the main actor, whether or not
     /// the SDK declares Binding's closures @Sendable.)
@@ -209,7 +209,7 @@ struct ContentView: View {
                 case .search:
                     // Focus the field unless Siri / Spotlight opened the sheet on an item or
                     // an onboarding example is being asked. In the full app (outside screenshot
-                    // mode) this sheet only shows items of hidden tabs; search is the plan panel's bar.
+                    // mode, with the on-device model) this sheet only shows items of hidden tabs; search is the plan page's text box.
                     EventSearchSheet(focusesSearchField: appState.searchPath.isEmpty && appState.autoAskQuery == nil)
                 case .options:
                     OptionsSheet()
@@ -234,8 +234,14 @@ struct ContentView: View {
             appState.userLocationDidChange()
         }
         #if !APP_CLIP
-        // A shared plan link (API-015), once its event's content is shown: a proposal in the
-        // plan panel ("Use This Plan" / "Merge with Mine").
+        // The plan page (AssistantView.swift): a full-screen cover over the tabs.
+        .fullScreenCover(isPresented: planPageBinding) {
+            PlanPageHost()
+                .environment(appState)
+                .tint(accentColor ?? Color.accentColor)
+        }
+        // A shared plan link (API-015), once its event's content is shown: a proposal on the
+        // plan page ("Use This Plan" / "Merge with Mine").
         .task(id: [appState.pendingSharedPlan?.payload, appState.currentEvent.map { String($0.id) }]) {
             guard let shared = appState.pendingSharedPlan, appState.currentBundle != nil else { return }
             appState.pendingSharedPlan = nil
@@ -247,6 +253,9 @@ struct ContentView: View {
             guard appState.pendingTour else { return }
             try? await Task.sleep(for: .milliseconds(600))
             guard !Task.isCancelled, appState.pendingTour, appState.presentedSheet == nil else { return }
+            #if !APP_CLIP
+            guard !appState.assistant.pageOpen else { return }
+            #endif
             appState.showTour()
         }
         // Fallback poll while the scene is active and an event is joined (ContentView
@@ -264,6 +273,16 @@ struct ContentView: View {
             }
         }
     }
+
+    #if !APP_CLIP
+    private var planPageBinding: Binding<Bool> {
+        let state = self.appState
+        return Binding(
+            get: { MainActor.assumeIsolated { state.assistant.pageOpen } },
+            set: { open in MainActor.assumeIsolated { state.assistant.setPageOpen(open) } }
+        )
+    }
+    #endif
 
     private struct LivePollKey: Equatable {
         let phase: ScenePhase
@@ -374,13 +393,16 @@ enum FloatingSearchButtonMetrics {
 private struct FloatingActionButtonModifier: ViewModifier {
     let tab: EventTab
 
+    @Environment(AppState.self) private var appState
+
     @ViewBuilder
     func body(content: Content) -> some View {
         #if APP_CLIP
         content.floatingSearchButton()
         #else
-        if AppState.hasPlanPanel {
-            content.planPanel(tab: tab)
+        // My plan only with the on-device model (planner_view_spec §1); else search.
+        if appState.hasAssistant {
+            content.planButton(tab: tab)
         } else {
             content.floatingSearchButton()
         }

@@ -43,6 +43,8 @@ struct Event: Identifiable, Hashable, Sendable {
     var joinUrl: URL? = nil
     /// API-016: the event's website (Attnd Studio). Only absolute `https` URLs; nil when there is none.
     var websiteUrl: URL? = nil
+    /// API-018: what an assistant needs to know offline (about, FAQ, amenities, policies…); nil when none.
+    var context: EventContext? = nil
 
     /// The event's own time zone. All event times are displayed in it.
     var timeZone: TimeZone {
@@ -66,6 +68,7 @@ extension Event: Decodable {
         case contentVersion = "content_version"
         case joinUrl = "join_url"
         case websiteUrl = "website_url"
+        case context
     }
 
     init(from decoder: Decoder) throws {
@@ -91,6 +94,7 @@ extension Event: Decodable {
         contentVersion = c.lenient(Int.self, .contentVersion) ?? 0
         joinUrl = c.url(.joinUrl)
         websiteUrl = c.httpsURL(.websiteUrl)
+        context = c.lenient(EventContext.self, .context).flatMap { $0.isEmpty ? nil : $0 }
     }
 }
 
@@ -151,13 +155,15 @@ struct Location: Identifiable, Hashable, Sendable {
     var sortOrder: Int = 0
     /// Lower-case labels (API-010), e.g. ["live music", "free"]; capitalise only for display (`TagText`).
     var tags: [String] = []
+    /// API-018: about, menu, hours, accessibility, age limit, links; nil when none.
+    var context: LocationContext? = nil
 
     var coordinate: Coordinate? { Coordinate.valid(latitude: latitude, longitude: longitude) }
 }
 
 extension Location: Decodable {
     private enum CodingKeys: String, CodingKey {
-        case id, name, snippet, description, category, website, address, latitude, longitude, tags
+        case id, name, snippet, description, category, website, address, latitude, longitude, tags, context
         case imageUrl = "image_url"
         case sortOrder = "sort_order"
     }
@@ -176,6 +182,7 @@ extension Location: Decodable {
         longitude = c.lenient(Double.self, .longitude)
         sortOrder = c.lenient(Int.self, .sortOrder) ?? 0
         tags = c.lenient([String].self, .tags) ?? []
+        context = c.lenient(LocationContext.self, .context).flatMap { $0.isEmpty ? nil : $0 }
     }
 }
 
@@ -191,11 +198,13 @@ struct ScheduleItem: Identifiable, Hashable, Sendable {
     var locationId: Int? = nil
     var locationName: String? = nil
     var tags: [String] = []
+    /// API-018: about, performers (bios, genres), price, age limit, accessibility, links; nil when none.
+    var context: ScheduleItemContext? = nil
 }
 
 extension ScheduleItem: Decodable {
     private enum CodingKeys: String, CodingKey {
-        case id, name, description, tags
+        case id, name, description, tags, context
         case startTime = "start_time"
         case endTime = "end_time"
         case locationId = "location_id"
@@ -212,6 +221,7 @@ extension ScheduleItem: Decodable {
         locationId = c.lenient(Int.self, .locationId)
         locationName = c.nonEmptyString(.locationName)
         tags = c.lenient([String].self, .tags) ?? []
+        context = c.lenient(ScheduleItemContext.self, .context).flatMap { $0.isEmpty ? nil : $0 }
     }
 }
 
@@ -774,6 +784,265 @@ struct Coordinate: Hashable, Sendable {
               !(latitude == 0 && longitude == 0)
         else { return nil }
         return Coordinate(latitude: latitude, longitude: longitude)
+    }
+}
+
+// MARK: - Rich context (API-018)
+//
+// `event.context`, `location.context` and `schedule_item.context`: compact text the organizer's
+// AI import extracts for the on-device assistant (offline, nothing leaves the phone) and that the
+// detail screens show. Every key may be missing; strings are trimmed (missing → ""), list
+// elements without their required text are dropped, links are absolute `https` only, an unknown
+// amenity kind is `other`, and an object with nothing in it decodes as nil.
+
+/// A link the organizer added ("Bag policy", "Artist site"); `https` with a host only.
+struct ContextLink: Hashable, Sendable {
+    var title: String
+    var url: URL
+}
+
+extension ContextLink: Decodable {
+    private enum CodingKeys: String, CodingKey { case title, url }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        guard let url = c.httpsURL(.url) else {
+            throw DecodingError.dataCorruptedError(forKey: .url, in: c, debugDescription: "not an https URL")
+        }
+        self.url = url
+        title = c.nonEmptyString(.title) ?? url.host ?? url.absoluteString
+    }
+}
+
+/// One FAQ entry ("Can I bring a bag?" · "Clear bags only.").
+struct FAQEntry: Hashable, Sendable {
+    var question: String
+    var answer: String
+}
+
+extension FAQEntry: Decodable {
+    private enum CodingKeys: String, CodingKey { case q, a }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        guard let q = c.nonEmptyString(.q), let a = c.nonEmptyString(.a) else {
+            throw DecodingError.dataCorruptedError(forKey: .q, in: c, debugDescription: "empty FAQ entry")
+        }
+        question = q
+        answer = a
+    }
+}
+
+enum AmenityKind: String, CaseIterable, Hashable, Sendable {
+    case restrooms, water, atm
+    case firstAid = "first_aid"
+    case charging, lockers, info
+    case accessibleEntrance = "accessible_entrance"
+    case food, merch, parking, shuttle, other
+
+    /// "Restrooms", "First aid", …
+    var label: String {
+        switch self {
+        case .restrooms: return "Restrooms"
+        case .water: return "Water"
+        case .atm: return "ATM"
+        case .firstAid: return "First aid"
+        case .charging: return "Phone charging"
+        case .lockers: return "Lockers"
+        case .info: return "Information"
+        case .accessibleEntrance: return "Accessible entrance"
+        case .food: return "Food"
+        case .merch: return "Merch"
+        case .parking: return "Parking"
+        case .shuttle: return "Shuttle"
+        case .other: return "Other"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .restrooms: return "toilet"
+        case .water: return "drop"
+        case .atm: return "banknote"
+        case .firstAid: return "cross.case"
+        case .charging: return "battery.100.bolt"
+        case .lockers: return "lock"
+        case .info: return "info.circle"
+        case .accessibleEntrance: return "figure.roll"
+        case .food: return "fork.knife"
+        case .merch: return "tshirt"
+        case .parking: return "parkingsign"
+        case .shuttle: return "bus"
+        case .other: return "mappin"
+        }
+    }
+}
+
+/// Restrooms, water, first aid… optionally at one of the event's locations.
+struct Amenity: Hashable, Sendable {
+    var kind: AmenityKind
+    var name: String
+    var locationId: Int? = nil
+    var note: String = ""
+}
+
+extension Amenity: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case kind, name, note
+        case locationId = "location_id"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let rawKind = c.nonEmptyString(.kind)
+        kind = rawKind.flatMap { AmenityKind(rawValue: $0.lowercased()) } ?? .other
+        guard let name = c.nonEmptyString(.name) ?? (rawKind != nil ? kind.label : nil) else {
+            throw DecodingError.dataCorruptedError(forKey: .name, in: c, debugDescription: "amenity without a name or kind")
+        }
+        self.name = name
+        locationId = c.lenient(Int.self, .locationId)
+        note = c.nonEmptyString(.note) ?? ""
+    }
+}
+
+struct EventContext: Hashable, Sendable {
+    var about: String = ""
+    var faq: [FAQEntry] = []
+    var amenities: [Amenity] = []
+    var accessibility: String = ""
+    var policies: String = ""
+    var gettingThere: String = ""
+    var weatherPlan: String = ""
+    var links: [ContextLink] = []
+
+    var isEmpty: Bool { self == EventContext() }
+}
+
+extension EventContext: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case about, faq, amenities, accessibility, policies, links
+        case gettingThere = "getting_there"
+        case weatherPlan = "weather_plan"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        about = c.nonEmptyString(.about) ?? ""
+        faq = c.lossyArray(FAQEntry.self, .faq)
+        amenities = c.lossyArray(Amenity.self, .amenities)
+        accessibility = c.nonEmptyString(.accessibility) ?? ""
+        policies = c.nonEmptyString(.policies) ?? ""
+        gettingThere = c.nonEmptyString(.gettingThere) ?? ""
+        weatherPlan = c.nonEmptyString(.weatherPlan) ?? ""
+        links = c.lossyArray(ContextLink.self, .links)
+    }
+}
+
+/// One menu line ("Brisket plate" · "$14" · "Gluten-free").
+struct MenuEntry: Hashable, Sendable {
+    var name: String
+    var price: String = ""
+    var note: String = ""
+}
+
+extension MenuEntry: Decodable {
+    private enum CodingKeys: String, CodingKey { case name, price, note }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        guard let name = c.nonEmptyString(.name) else {
+            throw DecodingError.dataCorruptedError(forKey: .name, in: c, debugDescription: "menu entry without a name")
+        }
+        self.name = name
+        // A number price ("12.5") is shown as sent.
+        price = c.nonEmptyString(.price) ?? c.lenient(Double.self, .price).map { String(describing: $0) } ?? ""
+        note = c.nonEmptyString(.note) ?? ""
+    }
+}
+
+struct LocationContext: Hashable, Sendable {
+    var about: String = ""
+    var menu: [MenuEntry] = []
+    var hours: String = ""
+    var accessibility: String = ""
+    var ageLimit: String = ""
+    var links: [ContextLink] = []
+
+    var isEmpty: Bool { self == LocationContext() }
+}
+
+extension LocationContext: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case about, menu, hours, accessibility, links
+        case ageLimit = "age_limit"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        about = c.nonEmptyString(.about) ?? ""
+        menu = c.lossyArray(MenuEntry.self, .menu)
+        hours = c.nonEmptyString(.hours) ?? ""
+        accessibility = c.nonEmptyString(.accessibility) ?? ""
+        ageLimit = c.nonEmptyString(.ageLimit) ?? ""
+        links = c.lossyArray(ContextLink.self, .links)
+    }
+}
+
+/// A performer, speaker or vendor of a schedule item.
+struct Performer: Hashable, Sendable {
+    var name: String
+    var bio: String = ""
+    /// As sent ("country", "Texas swing"), trimmed, empty ones dropped.
+    var genres: [String] = []
+}
+
+extension Performer: Decodable {
+    private enum CodingKeys: String, CodingKey { case name, bio, genres }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        guard let name = c.nonEmptyString(.name) else {
+            throw DecodingError.dataCorruptedError(forKey: .name, in: c, debugDescription: "performer without a name")
+        }
+        self.name = name
+        bio = c.nonEmptyString(.bio) ?? ""
+        genres = c.lossyArray(String.self, .genres)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+}
+
+struct ScheduleItemContext: Hashable, Sendable {
+    var about: String = ""
+    var performers: [Performer] = []
+    var ageLimit: String = ""
+    var price: String = ""
+    var accessibility: String = ""
+    var links: [ContextLink] = []
+
+    var isEmpty: Bool { self == ScheduleItemContext() }
+
+    /// Every performer's genres, distinct, in order.
+    var genres: [String] {
+        var seen = Set<String>()
+        return performers.flatMap(\.genres).filter { seen.insert($0.lowercased()).inserted }
+    }
+}
+
+extension ScheduleItemContext: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case about, performers, price, accessibility, links
+        case ageLimit = "age_limit"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        about = c.nonEmptyString(.about) ?? ""
+        performers = c.lossyArray(Performer.self, .performers)
+        ageLimit = c.nonEmptyString(.ageLimit) ?? ""
+        price = c.nonEmptyString(.price) ?? ""
+        accessibility = c.nonEmptyString(.accessibility) ?? ""
+        links = c.lossyArray(ContextLink.self, .links)
     }
 }
 

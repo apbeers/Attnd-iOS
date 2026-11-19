@@ -77,6 +77,21 @@ final class EventSearchTests: XCTestCase {
         search(query).map(\.target)
     }
 
+    // MARK: - Rich context (API-018)
+
+    func testPerformerNamesAndGenresAreSearched() {
+        var withContext = bundle
+        withContext.schedule[2].context = ScheduleItemContext(
+            about: "An evening of bluegrass.",
+            performers: [Performer(name: "Hazel Creek", bio: "A fiddle band from Austin.", genres: ["bluegrass", "Americana"])]
+        )
+        let find: (String) -> [SearchTarget] = { EventSearch.search(withContext, query: $0, now: self.now).map(\.target) }
+        XCTAssertEqual(find("hazel creek").first, .scheduleItem(3), "performer name")
+        XCTAssertEqual(find("americana").first, .scheduleItem(3), "genre")
+        XCTAssertEqual(find("fiddle").first, .scheduleItem(3), "bio")
+        XCTAssertFalse(targets("hazel").contains(.scheduleItem(3)), "nothing without context")
+    }
+
     // MARK: - Text matching
 
     func testAccentFolding_CafeFindsCafe() {

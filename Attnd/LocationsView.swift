@@ -667,8 +667,8 @@ struct LocationDetailView: View {
                         .controlSize(.large)
                     }
 
-                    if !ScreenshotMode.isActive {
-                        // Assistant spec §8: for now the search sheet with the place's name.
+                    if !ScreenshotMode.isActive, appState.hasAssistant || AppState.isAppClip {
+                        // Assistant spec §8: the plan page's assistant (the App Clip: its search sheet).
                         Button {
                             appState.askAbout(.location(location.id))
                         } label: {
@@ -682,6 +682,12 @@ struct LocationDetailView: View {
                     if !location.description.isEmpty {
                         Divider()
                         Text(location.description).font(.body)
+                    }
+
+                    // API-018: about, hours, menu, accessibility, age limit, links.
+                    if let context = location.context {
+                        Divider()
+                        LocationContextView(context: context)
                     }
 
                     if let website = location.website {

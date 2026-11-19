@@ -1,7 +1,7 @@
 // PlanPanelTests.swift
 // AttndTests
 //
-// The "My plan" panel's rules (PlanPanel.swift; iOS only for now) on `AssistantFixture`: now Sat
+// The plan page dock's rules (PlanPanel.swift; iOS only for now) on `AssistantFixture`: now Sat
 // 10:00 AM, plan 10:00 111 · 11:00 109 · 12:00 lunch · 13:00 102 · 15:00 103 · 17:00 105 ·
 // 18:15 113 · 19:00 101 · 21:00 104; likes 101, 114.
 
@@ -11,32 +11,6 @@ import XCTest
 final class PlanPanelTests: XCTestCase {
 
     private let ctx = AssistantFixture.ctx()
-
-    // MARK: Detents
-
-    func testHeights() {
-        XCTAssertEqual(PlanPanelLayout.height(.collapsed, available: 800, collapsed: 120), 120)
-        XCTAssertEqual(PlanPanelLayout.height(.medium, available: 800, collapsed: 120), 400)
-        XCTAssertEqual(PlanPanelLayout.height(.large, available: 800, collapsed: 120), 792)
-        // A short window (keyboard up): never below the collapsed height.
-        XCTAssertEqual(PlanPanelLayout.height(.medium, available: 200, collapsed: 150), 150)
-        XCTAssertEqual(PlanPanelLayout.height(.large, available: 100, collapsed: 150), 150)
-    }
-
-    func testSnap() {
-        XCTAssertEqual(PlanPanelLayout.snap(predicted: 130, available: 800, collapsed: 120), .collapsed)
-        XCTAssertEqual(PlanPanelLayout.snap(predicted: 330, available: 800, collapsed: 120), .medium)
-        XCTAssertEqual(PlanPanelLayout.snap(predicted: 650, available: 800, collapsed: 120), .large)
-        XCTAssertEqual(PlanPanelLayout.snap(predicted: 2000, available: 800, collapsed: 120), .large)
-        XCTAssertEqual(PlanPanelLayout.snap(predicted: 60, available: 800, collapsed: 120), .collapsed)
-        XCTAssertNil(PlanPanelLayout.snap(predicted: 20, available: 800, collapsed: 120), "flung down: closes")
-    }
-
-    func testDragHeight() {
-        XCTAssertEqual(PlanPanelLayout.dragHeight(start: 400, translation: -100, available: 800, collapsed: 120), 500)
-        XCTAssertEqual(PlanPanelLayout.dragHeight(start: 400, translation: -1000, available: 800, collapsed: 120), 792)
-        XCTAssertEqual(PlanPanelLayout.dragHeight(start: 120, translation: 30, available: 800, collapsed: 120), 110, "rubber band")
-    }
 
     // MARK: Pane
 

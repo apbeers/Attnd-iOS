@@ -444,6 +444,11 @@ struct ScheduleItemDetailView: View {
                 }
             }
 
+            // API-018: about, performers, price / age / accessibility, links.
+            if let context = item.context {
+                ScheduleItemContextSections(context: context)
+            }
+
             Section("Location") {
                 if let location = appState.location(id: item.locationId) {
                     NavigationLink(value: location) {
@@ -464,8 +469,9 @@ struct ScheduleItemDetailView: View {
                 // The system's event editor (no calendar permission needed; CalendarCard.swift).
                 AddToCalendarButton(item: item)
                 #endif
-                if !ScreenshotMode.isActive {
-                    // Assistant spec §8: for now the search sheet with the item's name.
+                // Assistant spec §8: the plan page's assistant (only with the on-device model);
+                // the App Clip opens its search sheet with the item's name.
+                if !ScreenshotMode.isActive, appState.hasAssistant || AppState.isAppClip {
                     Button {
                         appState.askAbout(.scheduleItem(item.id))
                     } label: {

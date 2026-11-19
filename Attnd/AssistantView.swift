@@ -1,254 +1,316 @@
 // AssistantView.swift
 // Attnd (app target only — not in the App Clip)
 //
-// The plan panel (iOS, Nov 16, 2026; Android keeps the shared plan tab spec's My plan tab): the
-// floating Liquid Glass "My plan" button (`sparkles`, bottom-trailing, on every tab; it replaced the
-// floating search button) opens a bottom panel over the current tab:
-//   - Three snapping heights (`PlanPanelDetent`, rules in PlanPanel.swift): collapsed (grabber,
-//     the one-line summary "Next: … · 7:00 PM · Main Stage" and the input bar), medium and large.
-//     The grabber / header drags and snaps (a fling below collapsed closes it; tap toggles
-//     collapsed ↔ medium; × closes). Collapsed and medium are Liquid Glass and the tab stays usable
-//     above the panel; large is opaque, like a full-height system sheet.
-//   - Body (medium / large): the plan timeline (PlanView.swift), previews of proposals in place.
-//   - Dock, on the keyboard: the results pane (search results while typing — the previous results
-//     stay until the next ones are ready, so it never blinks — with "Add to plan" / "Plan around
-//     this" inline; otherwise the last answer card), the proposal pill, the Undo pill and the input
-//     bar ("Change your plan or search…"). There is no Search / Ask / Plan toggle: the app decides.
-// Why a custom panel and not `.sheet` + `presentationDetents`: a sheet covers the tab bar (tabs
-// couldn't be switched with the plan open, and CLAUDE.md keeps the tab bar always visible), the
-// tabs already present Options / Tour / search as their one `.sheet(item:)` (a second sheet
-// can't be presented beside it), and links that switch tabs would have to dismiss and re-present
-// it. The panel lives in each tab's content above the tab bar, follows the keyboard through the
-// keyboard safe area, and its state (open, height, draft, proposal) is the AssistantController's,
-// so it is the same on every tab.
-// Screenshot mode and the App Clip have the floating search button and its sheet instead.
+// The plan page's frame (planner_view_spec, iOS, Nov 19, 2026; it replaced the snapping plan
+// panel). Only with Apple Intelligence's on-device model (`AppState.hasAssistant`); without it,
+// like screenshot mode and the App Clip, the floating search button and sheet instead.
+//   - Closed: the floating Liquid Glass "My plan" button (`sparkles`, bottom-trailing on every
+//     tab) with a small peek of the plan ("Next: Juniper Lane · 11:00 AM · Main Stage",
+//     `PlanPanel.summaryLine`).
+//   - Open: a full-screen cover (`PlanPageHost`, presented by ContentView) with its own
+//     navigation stack (`AssistantController.pagePath`: cards tapped on the page push the item's
+//     normal detail; Back returns to the plan) and a Close button.
+//   - Phones (compact width): the plan page (PlanView.swift) with the dock on the keyboard: the
+//     small pane (search results while typing — the previous ones stay until the next are ready —
+//     with "Add to plan" / "Plan around this", or the last answer card), the proposal pill (with
+//     "Also fill this gap?" after a Remove), the Undo pill, the bottom bar (PlanView.swift) and
+//     the glass text box "Change your plan or search…", the only control. No chat transcript.
+//   - Wide windows (iPhone Duo unfolded, regular width): side by side — a chat column (this
+//     session's turns with their blocks, the dock) on the leading side and the plan page on the
+//     trailing side, one controller for both; split on the fold by `ArrangementView` (iOS 27.1
+//     SDK, `PlanArrangement`), at the top of the cover only.
+// There is no Search / Ask / Plan toggle: the app picks the path of every turn.
 
 import SwiftUI
 
-// MARK: - Host (every tab)
+// MARK: - The My plan button (every tab)
 
 extension View {
-    /// The floating "My plan" button, or the plan panel when it is open, over `tab`'s content.
-    func planPanel(tab: EventTab) -> some View {
-        modifier(PlanPanelModifier(tab: tab))
+    /// The floating "My plan" button (with its peek) over `tab`'s content.
+    func planButton(tab: EventTab) -> some View {
+        modifier(PlanButtonModifier())
     }
 }
 
-private struct PlanPanelModifier: ViewModifier {
-    let tab: EventTab
-
+private struct PlanButtonModifier: ViewModifier {
     @Environment(AppState.self) private var appState
-    /// The collapsed panel's height without results or pills: the tab's content keeps that much
-    /// bottom safe area while the panel is open, so lists scroll clear of it.
-    @State private var reserved: CGFloat = 120
 
     func body(content: Content) -> some View {
-        let open = appState.assistant.panelOpen
+        // Siblings in a ZStack: the extra safe area applies to the content only, so the button
+        // itself sits right above the tab bar (as the search button does).
         ZStack {
             content
-                .safeAreaPadding(.bottom, open ? reserved : FloatingSearchButtonMetrics.reservedHeight)
+                .safeAreaPadding(.bottom, FloatingSearchButtonMetrics.reservedHeight)
             ReservedRegionAvoiding {
-                if open {
-                    PlanPanelView(reserved: $reserved, isSelected: appState.selectedTab == tab)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                } else {
-                    VStack(spacing: 0) {
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    HStack(spacing: 0) {
                         Spacer(minLength: 0)
-                        HStack(spacing: 0) {
-                            Spacer(minLength: 0)
-                            FloatingPlanButton {
-                                appState.showPlanPanel()
-                            }
-                            .padding(.trailing, FloatingSearchButtonMetrics.trailingPadding)
-                            .padding(.bottom, FloatingSearchButtonMetrics.bottomPadding)
+                        FloatingPlanButton(peek: peek) {
+                            appState.showPlanPanel()
                         }
+                        .padding(.trailing, FloatingSearchButtonMetrics.trailingPadding)
+                        .padding(.bottom, FloatingSearchButtonMetrics.bottomPadding)
                     }
-                    // Stays put (under the keyboard) while a tab's own search field is typing.
-                    .ignoresSafeArea(.keyboard)
-                    .transition(.opacity)
                 }
+                // Stays put (under the keyboard) while a tab's own search field is typing.
+                .ignoresSafeArea(.keyboard)
             }
         }
-        .animation(.snappy, value: open)
+    }
+
+    /// "Next: …" once there is a plan; nil without one (just the icon).
+    private var peek: String? {
+        guard let bundle = appState.currentBundle, let plan = appState.planner.plan, !plan.isEmpty else { return nil }
+        return PlanPanel.summaryLine(plan: plan, bundle, now: .now)
     }
 }
 
-/// A Liquid Glass circle with sparkles ("My plan" for VoiceOver).
+/// A Liquid Glass capsule with sparkles and the plan's peek ("My plan" for VoiceOver).
 struct FloatingPlanButton: View {
+    var peek: String? = nil
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Label("My plan", systemImage: "sparkles")
-                .labelStyle(.iconOnly)
-                .font(.title3.weight(.semibold))
-                .frame(width: FloatingSearchButtonMetrics.size, height: FloatingSearchButtonMetrics.size)
-                .contentShape(Circle())
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles")
+                    .font(.title3.weight(.semibold))
+                if let peek {
+                    Text(peek)
+                        .font(.footnote.weight(.semibold))
+                        .lineLimit(1)
+                        .frame(maxWidth: 200, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.horizontal, peek == nil ? 0 : 14)
+            .frame(minWidth: FloatingSearchButtonMetrics.size, minHeight: FloatingSearchButtonMetrics.size)
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .foregroundStyle(.tint)
-        .glassEffect(.regular.interactive(), in: .circle)
+        .glassEffect(.regular.interactive(), in: .capsule)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel("My plan")
+        .accessibilityValue(peek ?? "")
         .accessibilityHint("Opens your plan. Type there to search, ask or change the plan.")
+        .accessibilityAddTraits(.isButton)
         .keyboardShortcut("f", modifiers: .command)
     }
 }
 
-// MARK: - Panel
+// MARK: - The page (full-screen cover)
 
-private struct PlanPanelView: View {
-    @Binding var reserved: CGFloat
-    /// Its tab is the shown one (every tab has its own panel view; only that one takes focus and
-    /// runs the live tasks).
-    let isSelected: Bool
-
+/// The cover's root: compact → the plan page with the dock; regular width → chat column + page.
+struct PlanPageHost: View {
     @Environment(AppState.self) private var appState
-    @FocusState private var inputFocused: Bool
-    /// Height available to the panel (the tab's content area above the tab bar or keyboard).
-    @State private var available: CGFloat = 700
-    /// The collapsed panel's own height (with whatever it shows).
-    @State private var collapsedHeight: CGFloat = 120
-    /// The panel's current height (for starting a drag).
-    @State private var panelHeight: CGFloat = 120
-    @State private var dragStart: CGFloat?
-    @State private var dragHeight: CGFloat?
-    /// The results pane: the last computed results and the text they are for.
-    @State private var results: [EventSearchResult] = []
-    @State private var resultsQuery: String?
-
-    private var assistant: AssistantController { appState.assistant }
-
-    private var detent: PlanPanelDetent { assistant.panelDetent }
-
-    private var showsBody: Bool {
-        if let dragHeight { return dragHeight > collapsedHeight + 24 }
-        return detent != .collapsed
-    }
-
-    private var fixedHeight: CGFloat? {
-        if let dragHeight { return dragHeight }
-        guard detent != .collapsed else { return nil }
-        return CGFloat(PlanPanelLayout.height(detent, available: Double(available), collapsed: Double(collapsedHeight)))
-    }
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     var body: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 0)
-            panel
-                .frame(maxWidth: 640)
-                .padding(.horizontal, 8)
-                .padding(.bottom, 4)
-        }
-        .frame(maxWidth: .infinity)
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { available = $0 }
-        .modifier(PanelResultsTracking(results: $results, resultsQuery: $resultsQuery))
-        .modifier(PanelFocus(focused: $inputFocused, isSelected: isSelected))
-        .modifier(PanelLiveTasks(isSelected: isSelected, expanded: detent != .collapsed))
-    }
-
-    private var panel: some View {
-        let opaque = detent == .large && dragHeight == nil
-        return VStack(spacing: 0) {
-            PlanPanelHeader(collapsed: !showsBody, onToggle: toggle)
-                .gesture(dragGesture)
-            if showsBody {
-                ScrollView {
-                    PlanTimeline()
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                }
-                .scrollDismissesKeyboard(.interactively)
-                .frame(maxHeight: .infinity)
-                .transition(.opacity)
-            }
-            PlanPanelDock(
-                focused: $inputFocused,
-                results: results,
-                resultsQuery: resultsQuery,
-                maxPaneHeight: max(160, available / 3),
-                onSend: send
-            )
-        }
-        .frame(height: fixedHeight)
-        .modifier(PanelBackground(opaque: opaque))
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
-            panelHeight = height
-            guard dragHeight == nil, detent == .collapsed else { return }
-            collapsedHeight = height
-            let plain = assistant.draft.isEmpty && assistant.answer == nil && assistant.proposal == nil && assistant.undoPill == nil
-            // + the panel's bottom padding.
-            if plain, abs(reserved - (height + 4)) > 0.5 { reserved = height + 4 }
-        }
-        .animation(dragHeight == nil ? Animation.snappy : nil, value: detent)
-        .accessibilityAction(named: detent == .large ? "Make smaller" : "Make bigger") {
-            assistant.panelDetent = detent == .collapsed ? .medium : detent == .medium ? .large : .medium
-        }
-    }
-
-    private var dragGesture: some Gesture {
-        DragGesture(minimumDistance: 6, coordinateSpace: .global)
-            .onChanged { value in
-                let start = dragStart ?? panelHeight
-                if dragStart == nil { dragStart = start }
-                dragHeight = CGFloat(PlanPanelLayout.dragHeight(
-                    start: Double(start), translation: Double(value.translation.height),
-                    available: Double(available), collapsed: Double(collapsedHeight)
-                ))
-            }
-            .onEnded { value in
-                let start = dragStart ?? panelHeight
-                let predicted = Double(start - value.predictedEndTranslation.height)
-                let snapped = PlanPanelLayout.snap(predicted: predicted, available: Double(available), collapsed: Double(collapsedHeight))
-                withAnimation(.snappy) {
-                    dragStart = nil
-                    dragHeight = nil
-                    if let snapped {
-                        assistant.panelDetent = snapped
-                        if snapped == .collapsed { inputFocused = false }
-                    } else {
-                        assistant.closePanel()
+        Group {
+            if horizontalSizeClass == .regular {
+                PlanArrangement {
+                    NavigationStack {
+                        ChatColumn()
+                            .navigationTitle("Assistant")
+                            .navigationBarTitleDisplayMode(.inline)
+                            .toolbar { PageCloseItem() }
                     }
+                } secondary: {
+                    PlanPageStack(showsDock: false)
                 }
+            } else {
+                PlanPageStack(showsDock: true)
             }
-    }
-
-    private func toggle() {
-        withAnimation(.snappy) {
-            assistant.panelDetent = detent == .collapsed ? .medium : .collapsed
         }
-    }
-
-    private func send() {
-        let text = assistant.draft
-        assistant.draft = ""
-        resultsQuery = nil
-        results = []
-        assistant.submit(text)
+        .modifier(PageLiveTasks())
     }
 }
 
-/// Liquid Glass while the tab shows above it (collapsed, medium); opaque at full height.
-private struct PanelBackground: ViewModifier {
-    let opaque: Bool
+/// The plan page in its own navigation stack (item details pushed from the page).
+private struct PlanPageStack: View {
+    /// Phones: the dock (results, pills, bottom bar, text box) on the keyboard. Wide: only the
+    /// bottom bar (the chat column has the text box).
+    let showsDock: Bool
 
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 28, style: .continuous)
-        if opaque {
-            content
-                .background(Color(.systemBackground), in: shape)
-                .clipShape(shape)
-                .shadow(color: .black.opacity(0.15), radius: 16, y: 2)
+    @Environment(AppState.self) private var appState
+    @State private var available: CGFloat = 700
+
+    var body: some View {
+        @Bindable var assistant = appState.assistant
+        NavigationStack(path: $assistant.pagePath) {
+            PlanPageView()
+                .navigationTitle("My Plan")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    if showsDock { PageCloseItem() }
+                }
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    VStack(spacing: 8) {
+                        PlanBottomBar()
+                        if showsDock {
+                            PlanDock(maxPaneHeight: max(160, available / 3))
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, showsDock ? 0 : 10)
+                }
+                .navigationDestination(for: SearchTarget.self) { target in
+                    SearchDestinationView(target: target)
+                }
+                .navigationDestination(for: Location.self) { location in
+                    LocationDetailView(location: location)
+                }
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { available = $0 }
+    }
+}
+
+private struct PageCloseItem: ToolbarContent {
+    @Environment(AppState.self) private var appState
+
+    var body: some ToolbarContent {
+        ToolbarItem(placement: .cancellationAction) {
+            Button("Close", systemImage: "xmark", role: .close) {
+                appState.assistant.closePage()
+            }
+        }
+    }
+}
+
+/// Chat column + plan page side by side; `ArrangementView` (iOS 27.1, iPhone Duo) splits them on
+/// the fold. Older systems and SDKs: an HStack with the plan taking ~60 %.
+private struct PlanArrangement<Primary: View, Secondary: View>: View {
+    @ViewBuilder var primary: Primary
+    @ViewBuilder var secondary: Secondary
+
+    var body: some View {
+        #if IOS27_SDK
+        if #available(iOS 27.1, *) {
+            ArrangementView {
+                primary
+            } secondary: {
+                secondary
+            }
+            .arrangementViewStyle(.split)
         } else {
-            content
-                .clipShape(shape)
-                .glassEffect(.regular, in: shape)
+            fallback
+        }
+        #else
+        fallback
+        #endif
+    }
+
+    private var fallback: some View {
+        GeometryReader { proxy in
+            HStack(spacing: 0) {
+                primary
+                    .frame(width: max(320, proxy.size.width * 0.4))
+                Divider()
+                secondary
+            }
+        }
+    }
+}
+
+// MARK: - Dock (phones; the chat column has its own)
+
+private struct PlanDock: View {
+    let maxPaneHeight: CGFloat
+
+    @Environment(AppState.self) private var appState
+    @FocusState private var inputFocused: Bool
+    @State private var results: [EventSearchResult] = []
+    @State private var resultsQuery: String?
+
+    var body: some View {
+        let assistant = appState.assistant
+        let pane = PlanPanel.pane(
+            draft: assistant.draft, resultsQuery: resultsQuery,
+            hasAnswer: assistant.answer != nil, proposalOptions: assistant.proposal?.options.count
+        )
+        VStack(spacing: 8) {
+            switch pane {
+            case .results:
+                ResultsPane(results: results, query: resultsQuery ?? "", maxHeight: maxPaneHeight, focused: $inputFocused)
+                    .transition(.opacity)
+            case .answer:
+                if let answer = assistant.answer {
+                    AnswerCard(turn: answer, maxHeight: maxPaneHeight)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            case .none:
+                EmptyView()
+            }
+            DockPills()
+            AssistantInputBar(focused: $inputFocused, onSend: send)
+        }
+        .padding(.bottom, 8)
+        .animation(.snappy, value: pane)
+        .animation(.snappy, value: assistant.answer?.id)
+        .animation(.snappy, value: assistant.proposal)
+        .animation(.snappy, value: assistant.undoPill)
+        .modifier(DockResultsTracking(results: $results, resultsQuery: $resultsQuery))
+        .modifier(DockFocus(focused: $inputFocused))
+    }
+
+    private func send() {
+        let text = appState.assistant.draft
+        appState.assistant.draft = ""
+        resultsQuery = nil
+        results = []
+        appState.assistant.submit(text)
+    }
+}
+
+/// The proposal pill (+ "Also fill this gap?" after a Remove) and the Undo pill.
+private struct DockPills: View {
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        let assistant = appState.assistant
+        if let proposal = assistant.proposal, let preview = assistant.preview {
+            ProposalPill(proposal: proposal, preview: preview)
+            FillGapChips(proposal: proposal)
+        }
+        if let pill = assistant.undoPill {
+            UndoPillView(pill: pill)
+        }
+    }
+}
+
+/// After a row's Remove: "Also fill this gap?" with the gap's ideas (each a new proposal).
+private struct FillGapChips: View {
+    let proposal: PlanProposal
+
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        let assistant = appState.assistant
+        if let bundle = appState.currentBundle, let removal = PlanPage.removal(proposal, bundle, now: .now) {
+            let ideas = PlanPage.fillIdeas(removal.edit, removed: removal.itemId, bundle, appState.likeSet, now: .now)
+            if !ideas.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Also fill this gap?")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    ChipRow(chips: ideas.map { ChipItem(id: String($0), label: bundle.scheduleItem($0)?.name ?? "An item") }) { chip in
+                        guard let id = Int(chip.id) else { return }
+                        let removedName = bundle.scheduleItem(removal.itemId)?.name ?? "it"
+                        let name = bundle.scheduleItem(id)?.name ?? "it"
+                        assistant.proposeEdit([.replace(item: removal.itemId, with: id)], label: "Swap \(removedName) for \(name)")
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 6)
+            }
         }
     }
 }
 
 /// The search results for the typed text, debounced; the previous ones stay until then.
-private struct PanelResultsTracking: ViewModifier {
+private struct DockResultsTracking: ViewModifier {
     @Binding var results: [EventSearchResult]
     @Binding var resultsQuery: String?
 
@@ -274,24 +336,21 @@ private struct PanelResultsTracking: ViewModifier {
     }
 }
 
-/// Keyboard up / down when the controller asks (a request typed elsewhere, opening without a
-/// plan; an item opened from the panel).
-private struct PanelFocus: ViewModifier {
+/// Keyboard up / down when the controller asks (no plan yet, a request typed elsewhere).
+private struct DockFocus: ViewModifier {
     var focused: FocusState<Bool>.Binding
-    let isSelected: Bool
 
     @Environment(AppState.self) private var appState
 
     func body(content: Content) -> some View {
         let assistant = appState.assistant
         content
-            .task(id: isSelected) {
-                guard isSelected else { return }
-                try? await Task.sleep(for: .milliseconds(350))
+            .task {
+                try? await Task.sleep(for: .milliseconds(450))
                 if !Task.isCancelled, assistant.consumeFocusRequest() { focused.wrappedValue = true }
             }
             .onChange(of: assistant.focusSerial) {
-                if isSelected, assistant.consumeFocusRequest() { focused.wrappedValue = true }
+                if assistant.consumeFocusRequest() { focused.wrappedValue = true }
             }
             .onChange(of: assistant.blurSerial) {
                 focused.wrappedValue = false
@@ -299,123 +358,131 @@ private struct PanelFocus: ViewModifier {
     }
 }
 
-/// While the panel is shown: live hints once a minute; distances (and live hints' position) while
-/// it is expanded and location is already permitted.
-private struct PanelLiveTasks: ViewModifier {
-    let isSelected: Bool
-    let expanded: Bool
-
+/// While the page is shown: live hints once a minute, distances (location already permitted),
+/// the forecast at most hourly.
+private struct PageLiveTasks: ViewModifier {
     @Environment(AppState.self) private var appState
 
     func body(content: Content) -> some View {
         content
-            .usesUserLocation(heading: true, active: isSelected && expanded)
-            .task(id: isSelected) {
-                guard isSelected else { return }
+            .usesUserLocation(heading: false)
+            .task {
                 while !Task.isCancelled {
                     appState.assistant.refreshLive()
                     try? await Task.sleep(for: .seconds(60))
                 }
             }
-    }
-}
-
-// MARK: - Header
-
-private struct PlanPanelHeader: View {
-    let collapsed: Bool
-    let onToggle: () -> Void
-
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        let line = appState.currentBundle.map {
-            PlanPanel.summaryLine(plan: appState.planner.plan, $0, now: .now)
-        } ?? ""
-        VStack(spacing: 6) {
-            Capsule()
-                .fill(.tertiary)
-                .frame(width: 36, height: 5)
-                .padding(.top, 6)
-            HStack(spacing: 10) {
-                Image(systemName: "sparkles")
-                    .foregroundStyle(.tint)
-                    .font(.headline)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("My Plan")
-                        .font(.subheadline.weight(.semibold))
-                    Text(line)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+            .task(id: appState.currentEvent?.id) {
+                while !Task.isCancelled {
+                    if let bundle = appState.currentBundle { await appState.weather.refreshIfNeeded(bundle) }
+                    try? await Task.sleep(for: .seconds(PlanWeather.refreshInterval))
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                Button {
-                    appState.assistant.closePanel()
-                } label: {
-                    Label("Close", systemImage: "xmark")
-                        .labelStyle(.iconOnly)
-                        .font(.subheadline.weight(.bold))
-                        .frame(width: 32, height: 32)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
             }
-            .padding(.horizontal, 14)
-        }
-        .padding(.bottom, 6)
-        .contentShape(.rect)
-        .onTapGesture(perform: onToggle)
-        .accessibilityElement(children: .contain)
-        .accessibilityHint(collapsed ? "Double-tap to show your plan." : "Double-tap to make the panel smaller.")
     }
 }
 
-// MARK: - Dock (on the keyboard)
+// MARK: - Chat column (wide windows)
 
-private struct PlanPanelDock: View {
-    var focused: FocusState<Bool>.Binding
-    let results: [EventSearchResult]
-    let resultsQuery: String?
-    let maxPaneHeight: CGFloat
-    let onSend: () -> Void
-
+private struct ChatColumn: View {
     @Environment(AppState.self) private var appState
+    @FocusState private var inputFocused: Bool
+    @State private var results: [EventSearchResult] = []
+    @State private var resultsQuery: String?
 
     var body: some View {
         let assistant = appState.assistant
         let pane = PlanPanel.pane(
             draft: assistant.draft, resultsQuery: resultsQuery,
-            hasAnswer: assistant.answer != nil, proposalOptions: assistant.proposal?.options.count
+            hasAnswer: false, proposalOptions: assistant.proposal?.options.count
         )
-        VStack(spacing: 8) {
-            switch pane {
-            case .results:
-                ResultsPane(results: results, query: resultsQuery ?? "", maxHeight: maxPaneHeight, focused: focused)
-                    .transition(.opacity)
-            case .answer:
-                if let answer = assistant.answer {
-                    AnswerCard(turn: answer, maxHeight: maxPaneHeight)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 14) {
+                    if assistant.transcript.isEmpty && assistant.answer == nil {
+                        ChatEmptyState()
+                    }
+                    ForEach(assistant.transcript) { turn in
+                        ChatTurnView(turn: turn)
+                            .id(turn.id)
+                    }
+                    if let answer = assistant.answer, answer.streaming || !assistant.transcript.contains(where: { $0.id == answer.id }) {
+                        ChatTurnView(turn: answer)
+                            .id(answer.id)
+                    }
                 }
-            case .none:
-                EmptyView()
+                .padding(16)
             }
-            if let proposal = assistant.proposal, let preview = assistant.preview {
-                ProposalPill(proposal: proposal, preview: preview)
+            .scrollDismissesKeyboard(.interactively)
+            .defaultScrollAnchor(.bottom)
+            .onChange(of: assistant.transcript.last?.id) {
+                if let id = assistant.transcript.last?.id {
+                    withAnimation(.snappy) { proxy.scrollTo(id, anchor: .bottom) }
+                }
             }
-            if let pill = assistant.undoPill {
-                UndoPillView(pill: pill)
-            }
-            AssistantInputBar(focused: focused, onSend: onSend)
         }
-        .padding(.horizontal, 10)
-        .padding(.bottom, 10)
-        .animation(.snappy, value: pane)
-        .animation(.snappy, value: assistant.answer?.id)
-        .animation(.snappy, value: assistant.proposal)
-        .animation(.snappy, value: assistant.undoPill)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 8) {
+                if pane == .results {
+                    ResultsPane(results: results, query: resultsQuery ?? "", maxHeight: 260, focused: $inputFocused)
+                }
+                DockPills()
+                AssistantInputBar(focused: $inputFocused, onSend: send)
+            }
+            .padding(.horizontal, 10)
+            .padding(.bottom, 8)
+            .animation(.snappy, value: pane)
+        }
+        .modifier(DockResultsTracking(results: $results, resultsQuery: $resultsQuery))
+        .modifier(DockFocus(focused: $inputFocused))
+    }
+
+    private func send() {
+        let text = appState.assistant.draft
+        appState.assistant.draft = ""
+        resultsQuery = nil
+        results = []
+        appState.assistant.submit(text)
+    }
+}
+
+private struct ChatEmptyState: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Ask or change your plan", systemImage: "sparkles")
+                .font(.headline)
+            Text("Type what you'd like below — \"swap the next thing\", \"where are the restrooms?\", \"no food until 3\". Everything stays on your iPhone.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// One turn of the chat column: what was typed, then the answer's blocks.
+private struct ChatTurnView: View {
+    let turn: AssistantController.Turn
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let input = turn.input, !input.isEmpty {
+                HStack {
+                    Spacer(minLength: 40)
+                    Text(input)
+                        .font(.subheadline)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color.accentColor.opacity(0.15), in: .rect(cornerRadius: 16))
+                }
+            }
+            ForEach(Array(turn.blocks.enumerated()), id: \.offset) { index, block in
+                AssistantBlockView(block: block, turn: turn, index: index)
+            }
+            if turn.streaming && turn.blocks.isEmpty {
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text("Thinking on your iPhone…").foregroundStyle(.secondary)
+                }
+            }
+        }
     }
 }
 
@@ -445,7 +512,6 @@ struct AssistantInputBar: View {
                         assistant.clearProposal()
                     } else {
                         focused.wrappedValue = false
-                        assistant.panelDetent = .collapsed
                     }
                     return .handled
                 }

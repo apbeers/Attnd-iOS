@@ -42,6 +42,8 @@ struct RouterContext: Sendable {
     var history = PlanHistory()
     var units: DistanceUnits = .imperial
     var locale = Locale(identifier: "en_US")
+    /// The cached forecast for the event's days (`PlanWeather.promptLines`; empty without one).
+    var weather: [String] = []
 
     var blockContext: BlockContext { BlockContext(bundle: bundle, plan: plan, now: now) }
 }

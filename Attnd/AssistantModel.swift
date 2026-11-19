@@ -140,6 +140,8 @@ enum AssistantModel {
         lines.append("Rules: at most 8 blocks; text at most 400 characters; end with at most 5 chips; one card for one result, a carousel for 2–8; never invent ids, times or facts.")
         lines.append("All times are local to the event (\(zone.identifier)). NOW: \(nowText).")
         lines.append("EVENT: \(clean(bundle.event.name)) — \(AssistantSearch.eventDetail(bundle.event, locale: ctx.locale))")
+        if let info = eventInfo(bundle) { lines.append("EVENT INFO: " + info) }
+        if !ctx.weather.isEmpty { lines.append("FORECAST: " + ctx.weather.joined(separator: "; ")) }
         if let plan = ctx.plan {
             lines.append("PLAN: " + Planner.summary(plan, timeZone: zone, locale: ctx.locale) + " — " + plan.items.map { "s\($0.itemId)" }.joined(separator: "; "))
         } else {
@@ -181,7 +183,47 @@ enum AssistantModel {
         if !detail.isEmpty { text += " — " + clean(detail) }
         if !tags.isEmpty { text += " — tags: " + clean(tags.joined(separator: ", ")) }
         if !marks.isEmpty { text += " — " + marks.joined(separator: ", ") }
+        if let extra = contextLine(ref, bundle) { text += " — " + extra }
         return text
+    }
+
+    /// API-018 for an ITEMS line, compact: performers with genres, price, age limit (items);
+    /// hours, age limit, the first menu entries (places).
+    static func contextLine(_ ref: EntityRef, _ bundle: EventBundle) -> String? {
+        var parts: [String] = []
+        switch ref.kind {
+        case .schedule:
+            guard let context = bundle.scheduleItem(ref.id)?.context else { return nil }
+            if !context.performers.isEmpty {
+                let names = context.performers.prefix(3).map { p in p.genres.isEmpty ? p.name : "\(p.name) (\(p.genres.prefix(3).joined(separator: ", ")))" }
+                parts.append("performers: " + names.joined(separator: ", "))
+            }
+            if !context.price.isEmpty { parts.append("price: " + context.price) }
+            if !context.ageLimit.isEmpty { parts.append("age: " + context.ageLimit) }
+        case .location:
+            guard let context = bundle.location(ref.id)?.context else { return nil }
+            if !context.hours.isEmpty { parts.append("hours: " + context.hours) }
+            if !context.ageLimit.isEmpty { parts.append("age: " + context.ageLimit) }
+            if !context.menu.isEmpty {
+                parts.append("menu: " + context.menu.prefix(4).map { $0.price.isEmpty ? $0.name : "\($0.name) \($0.price)" }.joined(separator: ", "))
+            }
+        case .update:
+            return nil
+        }
+        return parts.isEmpty ? nil : clean(parts.joined(separator: " — "), max: 240)
+    }
+
+    /// API-018 event facts for the prompt (≤ 400 characters): amenities and the start of the FAQ.
+    static func eventInfo(_ bundle: EventBundle) -> String? {
+        guard let context = bundle.event.context else { return nil }
+        var parts: [String] = []
+        if !context.amenities.isEmpty {
+            parts.append("amenities: " + context.amenities.prefix(8).map { a in
+                bundle.location(a.locationId).map { "\(a.name) at l\($0.id)" } ?? a.name
+            }.joined(separator: ", "))
+        }
+        if !context.faq.isEmpty { parts.append("FAQ: " + context.faq.prefix(3).map { "\($0.question) \($0.answer)" }.joined(separator: " ")) }
+        return parts.isEmpty ? nil : clean(parts.joined(separator: " — "), max: 400)
     }
 
     private static func clean(_ text: String, max: Int = 160) -> String {

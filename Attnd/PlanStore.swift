@@ -8,8 +8,9 @@
 //   - AppState.makePlan: the on-device model reads the request into preferences
 //     (EventAssistant.planPreferences, validated against the bundle) merged with the plain-rule
 //     reading (PlanRequest.heuristic, which alone is used when the model fails); the
-//     deterministic Planner then schedules. Offered wherever the plan panel exists
-//     (`AppState.plannerAvailable`); without the model the plain-rule reading plans alone.
+//     deterministic Planner then schedules. Offered only where the plan page exists
+//     (`AppState.plannerAvailable`: Apple Intelligence's on-device model is available;
+//     planner_view_spec §1); when the model fails for a request the plain-rule reading plans alone.
 //   - Every stored change updates the Live Activity and reminders (plan > hearts > now/next).
 //
 // Nothing here runs in screenshot mode (the planner is never offered there and no plan loads).
@@ -142,9 +143,9 @@ final class PlanStore {
 extension AppState {
     static let nothingFitsMessage = "Nothing on the schedule fits that. Try another day or fewer limits."
 
-    /// The planner is offered (the plan panel, Ask plans, onboarding's plan chips) wherever the
-    /// plan panel exists: with Apple Intelligence the on-device model reads requests, without it
-    /// the plain-rule reading and the likes make the plan. Never in screenshot mode.
+    /// The planner is offered (the plan page, Ask plans, onboarding's plan chips) only where the
+    /// plan page exists: the full app with Apple Intelligence's on-device model (planner_view_spec
+    /// §1; no model → no planner UI at all). Never in screenshot mode.
     static var plannerAvailable: Bool { hasPlanPanel }
 
     /// A planned item changed or disappeared in a content update since the plan was made.
@@ -182,7 +183,7 @@ extension AppState {
         let rules = PlanRequest.heuristic(trimmed, bundle: bundle, now: now)
         let modelStarted = ContinuousClock.now
         var model: PlanPreferences?
-        // Without the on-device model the plain-rule reading alone plans (plan tab spec).
+        // The model reads the request; when it fails the plain-rule reading alone plans.
         if Self.assistantAvailable {
             do {
                 model = try await EventAssistant.planPreferences(
@@ -278,11 +279,15 @@ extension AppState {
         planner.apply(nil)
     }
 
-    /// Opens the plan panel at half height (after planning from Ask or onboarding, the Live
-    /// Activity's plan link), closing any sheet.
+    /// Opens the plan page (after planning from Ask or onboarding, the Live Activity's plan link),
+    /// closing any sheet. Without the on-device model (no plan page) the Schedule tab instead.
     func showMyPlan() {
         guard currentEvent != nil else { return }
-        showPlanPanel(.medium)
+        guard Self.hasPlanPanel else {
+            select(.schedule)
+            return
+        }
+        showPlanPanel()
     }
 
     /// An onboarding / plan-card example: a plan request plans (and opens My plan), the

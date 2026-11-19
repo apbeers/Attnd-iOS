@@ -1,16 +1,14 @@
 // PlanPanel.swift
 // Attnd (app target only — not in the App Clip; pure, unit tested in PlanPanelTests)
 //
-// The rules behind the "My plan" panel (iOS, Nov 16, 2026; diverges from the shared plan tab
-// spec, which Android keeps): a floating Liquid Glass "My plan" button on every tab opens a
-// bottom panel with three snapping heights (collapsed: summary line + input bar; medium; large)
-// holding the plan timeline, a results pane above the input bar and the input bar itself. There
-// is no Search / Ask / Plan toggle: the app picks the path for every turn (`AssistantFlow.path`).
-//   - `PlanPanelDetent` / `PlanPanelLayout`: detent heights for the space the panel has, and where
-//     a drag snaps (nearest detent to the predicted end; well below collapsed dismisses).
-//   - `PlanPanel.pane`: what the results pane shows. While typing it keeps the last results until
-//     the next ones are ready (never blank between keystrokes); a typed answer to a proposal
-//     ("do it", "the second one", "no") shows nothing; with an empty bar the last answer card.
+// The rules of the plan page's dock that outlived the snapping plan panel (retired Nov 19, 2026
+// for the full-page plan, PlanPage.swift; the plan page spec in attnd-web docs/specs/
+// planner_view_spec.md). There is no Search / Ask / Plan toggle: the app picks the path for
+// every turn (`AssistantFlow.path`).
+//   - `PlanPanel.pane`: what the small pane above the text box shows. While typing it keeps the
+//     last results until the next ones are ready (never blank between keystrokes); a typed answer
+//     to a proposal ("do it", "the second one", "no") shows nothing; with an empty box the last
+//     answer card.
 //   - `PlanPanel.resultAction`: the inline action of a search result — "Add to plan" on a
 //     schedule item that hasn't started and isn't planned ("In your plan" when it is), "Plan
 //     around this" on a place with something still to come; nothing on updates.
@@ -18,48 +16,9 @@
 //     an item that clashes with a planned one → a replace ("instead of X", the clashing row crossed
 //     out), else an add; a place → its next unplanned items (≤ 4) as add options. Without a plan
 //     both propose a new plan built around the item (pinned) or the place (counted as liked).
-//   - `PlanPanel.summaryLine`: the collapsed panel's one line ("Now: …", "Next: … · 7:00 PM · …").
+//   - `PlanPanel.summaryLine`: the My plan button's peek ("Now: …", "Next: … · 7:00 PM · …").
 
 import Foundation
-
-enum PlanPanelDetent: String, CaseIterable, Hashable, Sendable {
-    case collapsed, medium, large
-}
-
-enum PlanPanelLayout {
-    /// The gap kept above the panel at full height.
-    static let topMargin: Double = 8
-    /// Dragging this far below the collapsed height (predicted) closes the panel.
-    static let dismissDistance: Double = 70
-
-    /// The panel's height at `detent` with `available` points of height; `collapsed` is the
-    /// collapsed panel's own (measured) height.
-    static func height(_ detent: PlanPanelDetent, available: Double, collapsed: Double) -> Double {
-        let top = max(collapsed, available - topMargin)
-        switch detent {
-        case .collapsed: return collapsed
-        case .medium: return min(top, max(collapsed, (available * 0.5).rounded()))
-        case .large: return top
-        }
-    }
-
-    /// Where a drag that would end at `predicted` points of height snaps (nil: close the panel).
-    static func snap(predicted: Double, available: Double, collapsed: Double) -> PlanPanelDetent? {
-        if predicted < collapsed - dismissDistance { return nil }
-        return PlanPanelDetent.allCases.min { a, b in
-            abs(height(a, available: available, collapsed: collapsed) - predicted)
-                < abs(height(b, available: available, collapsed: collapsed) - predicted)
-        } ?? .collapsed
-    }
-
-    /// The height while dragging: between the collapsed height (a little rubber band below) and the top.
-    static func dragHeight(start: Double, translation: Double, available: Double, collapsed: Double) -> Double {
-        let raw = start - translation
-        let top = height(.large, available: available, collapsed: collapsed)
-        if raw < collapsed { return collapsed - (collapsed - raw) / 3 }
-        return min(top, raw)
-    }
-}
 
 /// What the results pane above the input bar shows.
 enum PlanPanelPane: Hashable, Sendable {
@@ -181,7 +140,7 @@ enum PlanPanel {
         return .proposal(proposal)
     }
 
-    /// The collapsed panel's one line.
+    /// The My plan button's peek and the plan page's title line.
     static func summaryLine(plan: Plan?, _ bundle: EventBundle, now: Date, locale: Locale = .current) -> String {
         guard let plan, !plan.isEmpty else { return "No plan yet · type to plan or search" }
         func place(_ item: ScheduleItem) -> String {

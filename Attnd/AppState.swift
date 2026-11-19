@@ -174,9 +174,21 @@ final class AppState {
     let planner = PlanStore()
 
     /// The event assistant (AssistantController.swift, spec §1–8): the conversation, its actions
-    /// and live hints. The floating button opens it (the search sheet in screenshot mode).
+    /// and live hints. The floating My plan button opens its plan page (only with the on-device
+    /// model; otherwise, like screenshot mode and the App Clip, the search button and sheet).
     let assistant = AssistantController()
+
+    /// The plan page's forecast (WeatherKit, cached on disk per event) and day summaries.
+    let weather = WeatherStore()
+    let daySummaries = PlanSummaryStore()
     #endif
+
+    /// Apple Intelligence's on-device model can be used (planner_view_spec §1: the plan button,
+    /// plan page, planner and assistant exist only then). Checked at launch and every scene
+    /// activation (`refreshOnDeviceModel`), so a model that finished downloading shows them.
+    private(set) var onDeviceModelReady = false
+    /// The same for static callers (`hasPlanPanel`, `assistantAvailable`, `plannerAvailable`).
+    private static var modelReady = false
 
     // MARK: - Device
 
@@ -329,6 +341,26 @@ final class AppState {
         #if !APP_CLIP
         assistant.appState = self
         #endif
+        refreshOnDeviceModel()
+    }
+
+    /// Re-checks the on-device model (launch, scene activation). When it goes away the plan page
+    /// closes and the search button comes back.
+    func refreshOnDeviceModel() {
+        #if APP_CLIP
+        let ready = false
+        #else
+        let ready = !ScreenshotMode.isActive && EventAssistant.isAvailable
+        #endif
+        Self.modelReady = ready
+        guard onDeviceModelReady != ready else { return }
+        onDeviceModelReady = ready
+        AppLog.info(.planner, "planner.availability", "On-device model \(ready ? "available" : "unavailable")", [
+            "status": .string(ready ? "available" : "unavailable"),
+        ])
+        #if !APP_CLIP
+        if !ready { assistant.closePage() }
+        #endif
     }
 
     // MARK: - App updates
@@ -374,13 +406,23 @@ final class AppState {
     /// The tab's title ("Places" for Locations; "Locations" in screenshot mode).
     func title(of tab: EventTab) -> String { TabLayout.title(tab, screenshotMode: ScreenshotMode.isActive) }
 
-    /// The floating "My plan" button and its panel exist: the full app, not in screenshot mode
-    /// (with or without the model). The App Clip and screenshot mode have the search button.
+    /// The floating "My plan" button and its plan page exist: the full app, not in screenshot
+    /// mode, with the on-device model available (planner_view_spec §1). Otherwise — like the App
+    /// Clip — the search button and sheet.
     static var hasPlanPanel: Bool {
         #if APP_CLIP
         return false
         #else
-        return !ScreenshotMode.isActive
+        return modelReady
+        #endif
+    }
+
+    /// `hasPlanPanel` for views (observable: re-evaluated when the model's availability changes).
+    var hasAssistant: Bool {
+        #if APP_CLIP
+        return false
+        #else
+        return onDeviceModelReady
         #endif
     }
 
@@ -878,6 +920,18 @@ final class AppState {
     /// collapses to its summary line, so the item is in view.
     func navigate(to target: SearchTarget) {
         guard currentEvent != nil else { return }
+        #if !APP_CLIP
+        // The plan page is a full-screen cover: it closes first, then the tab (or the search
+        // sheet, which can't be presented while the cover is) shows the item.
+        if assistant.pageOpen {
+            assistant.closePage()
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(450))
+                self.navigate(to: target)
+            }
+            return
+        }
+        #endif
         let tab: EventTab
         switch target {
         case .location:     tab = .locations
@@ -887,9 +941,6 @@ final class AppState {
             presentedSheet = .options
             return
         }
-        #if !APP_CLIP
-        assistant.collapsePanel()
-        #endif
         if shows(tab) {
             presentedSheet = nil
             focusRequest = target
@@ -900,9 +951,16 @@ final class AppState {
         }
     }
 
-    /// A tap on an item inside the app (cards, results, plan rows in the plan panel): its own
-    /// tab (the panel collapses), or the search sheet for a hidden tab — `navigate(to:)`.
+    /// A tap on an item inside the app (cards, results, plan rows): on the plan page its detail
+    /// is pushed on the page's own stack (Back returns to the plan); elsewhere its own tab, or
+    /// the search sheet for a hidden tab — `navigate(to:)`.
     func open(_ target: SearchTarget) {
+        #if !APP_CLIP
+        if assistant.pageOpen {
+            assistant.pagePath.append(target)
+            return
+        }
+        #endif
         navigate(to: target)
     }
 
@@ -918,7 +976,7 @@ final class AppState {
         // once when it was to be asked.
         if Self.hasPlanPanel {
             autoAskQuery = nil
-            showPlanPanel(.collapsed)
+            showPlanPanel()
             assistant.request(query, send: ask)
             return
         }
@@ -927,13 +985,13 @@ final class AppState {
     }
 
     /// Whether "Ask" (Apple Intelligence's on-device model) can answer: never in the App Clip
-    /// or screenshot mode. Onboarding's "Plan your day" card and the planner (spec §6, "My plan")
-    /// are offered only when this is true.
+    /// or screenshot mode. The plan page, the planner and onboarding's "Plan your day" card
+    /// exist only when this is true (the last check, `refreshOnDeviceModel`).
     static var assistantAvailable: Bool {
         #if APP_CLIP
         return false
         #else
-        return !ScreenshotMode.isActive && EventAssistant.isAvailable
+        return modelReady
         #endif
     }
 
@@ -960,7 +1018,7 @@ final class AppState {
             case .notification(let id): ref = EntityRef(kind: .update, id: id)
             case .event:                ref = nil
             }
-            showPlanPanel(.collapsed)
+            showPlanPanel()
             if let ref {
                 assistant.askAbout(ref)
             } else {
@@ -988,12 +1046,19 @@ final class AppState {
     }
 
     #if !APP_CLIP
-    /// Opens the plan panel over the current tab (any sheet closed; no-op without the panel).
-    /// `detent` nil: medium when it was closed, else it stays as it is.
-    func showPlanPanel(_ detent: PlanPanelDetent? = nil) {
+    /// Opens the plan page (a full-screen cover over the tabs; no-op without the on-device model).
+    /// A sheet that is shown closes first; the cover follows once it has gone.
+    func showPlanPanel() {
         guard Self.hasPlanPanel, currentEvent != nil else { return }
+        guard presentedSheet != nil else {
+            assistant.openPage()
+            return
+        }
         presentedSheet = nil
-        assistant.openPanel(detent)
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(450))
+            self.assistant.openPage()
+        }
     }
     #endif
 
@@ -1003,7 +1068,7 @@ final class AppState {
         mapFocusLocationId = locationId
         presentedSheet = nil
         #if !APP_CLIP
-        assistant.collapsePanel()
+        assistant.closePage()
         #endif
         select(.map)
     }
@@ -1032,7 +1097,7 @@ final class AppState {
             if let payload = shared.payload {
                 pendingSharedPlan = PendingSharedPlan(eventCode: shared.eventCode, payload: payload, receivedAt: .now)
                 // The plan panel shows it as a proposal ("Use This Plan" / "Merge with Mine").
-                showPlanPanel(.medium)
+                showPlanPanel()
             }
             #endif
             return
@@ -1249,6 +1314,8 @@ final class AppState {
         #if !APP_CLIP
         planner.load(eventId: eventId)
         assistant.load(eventId: eventId)
+        weather.load(eventId: eventId)
+        daySummaries.load(eventId: eventId)
         #endif
     }
 
@@ -1385,6 +1452,7 @@ final class AppState {
 
     /// The scene became active: the Live Activity can start now (foreground only).
     func sceneDidBecomeActive() {
+        refreshOnDeviceModel()
         liveFollowNeedsUpdate()
     }
 

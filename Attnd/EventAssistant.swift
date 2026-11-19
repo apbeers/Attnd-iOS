@@ -28,7 +28,7 @@ enum EventAssistant {
     }
 
     /// Answers `question` from the event's own content. Throws when the model fails or refuses.
-    static func answer(_ question: String, bundle: EventBundle, now: Date) async throws -> EventAssistantAnswer {
+    static func answer(_ question: String, bundle: EventBundle, now: Date, forecast: [String] = []) async throws -> EventAssistantAnswer {
         let index = EventSearchIndex(bundle)
         let recorder = SourceRecorder()
         let context = AssistantContext(index: index, bundle: bundle, now: now, recorder: recorder)
@@ -40,6 +40,7 @@ enum EventAssistant {
                 WhatsOnTool(context: context),
                 LocationDetailsTool(context: context),
                 LatestUpdatesTool(context: context),
+                EventInfoTool(bundle: bundle, forecast: forecast),
             ]
         ) {
             """
@@ -111,14 +112,19 @@ extension EventAssistant {
         _ prompt: String,
         bundle: EventBundle,
         now: Date,
+        forecast: [String] = [],
         onPartial: @escaping @MainActor @Sendable (String) -> Void
     ) async throws -> (raw: String, toolCalls: Int) {
         let counter = ToolCallCounter()
-        let session = LanguageModelSession(tools: [AssistantLookupTool(bundle: bundle, now: now, counter: counter)]) {
+        let session = LanguageModelSession(tools: [
+            AssistantLookupTool(bundle: bundle, now: now, counter: counter),
+            EventInfoTool(bundle: bundle, forecast: forecast, counter: counter),
+        ]) {
             """
             You are the on-device assistant of the Attnd event app. You only choose how to answer: \
             reply with exactly one JSON object in the format the prompt describes, no other text. \
-            Use only ids from ITEMS or from the lookup tool, never invent ids, times or facts. \
+            Use only ids from ITEMS or from the lookup tool, never invent ids, times or facts; ask the \
+            eventInfo tool about the venue, FAQ, amenities, policies, getting there or the weather. \
             Keep text short and friendly.
             """
         }
@@ -174,7 +180,8 @@ struct AssistantLookupTool: Tool {
         let lines = results.compactMap { result -> String? in
             guard let ref = EntityRef.of(result) else { return nil }
             let detail = AssistantSearch.detail(result, bundle, locale: .current)
-            return "[\(ref.code)] \(result.title)" + (detail.isEmpty ? "" : " — \(detail)")
+            let extra = AssistantModel.contextLine(ref, bundle).map { " — \($0)" } ?? ""
+            return "[\(ref.code)] \(result.title)" + (detail.isEmpty ? "" : " — \(detail)") + extra
         }
         return lines.isEmpty ? "Nothing in the event matches \"\(arguments.query)\"." : lines.joined(separator: "\n")
     }
@@ -295,16 +302,18 @@ struct AssistantContext: Sendable {
         let details: String
         switch target {
         case .scheduleItem(let id):
-            details = bundle.schedule.first { $0.id == id }?.description ?? ""
+            let item = bundle.schedule.first { $0.id == id }
+            details = ([item?.description ?? ""] + EventAssistant.contextFacts(item?.context)).filter { !$0.isEmpty }.joined(separator: ". ")
         case .location(let id):
             let location = bundle.locations.first { $0.id == id }
-            details = [location?.address ?? "", location?.description ?? ""].filter { !$0.isEmpty }.joined(separator: ". ")
+            details = ([location?.address ?? "", location?.description ?? ""] + EventAssistant.contextFacts(location?.context))
+                .filter { !$0.isEmpty }.joined(separator: ". ")
         case .notification(let id):
             details = bundle.notifications.first { $0.id == id }?.body ?? ""
         case .event:
             details = [bundle.event.address, bundle.event.description].filter { !$0.isEmpty }.joined(separator: ". ")
         }
-        if !details.isEmpty { line += " — \(EventSearch.excerpt(details, limit: 240))" }
+        if !details.isEmpty { line += " — \(EventSearch.excerpt(details, limit: 360))" }
         return line
     }
 
@@ -380,7 +389,7 @@ struct WhatsOnTool: Tool {
 
 struct LocationDetailsTool: Tool {
     let name = "locationDetails"
-    let description = "Finds a location of the event by name and returns its address, description and what is scheduled there."
+    let description = "Finds a location of the event by name and returns its address, description, hours, menu, accessibility, age limit and what is scheduled there."
 
     @Generable
     struct Arguments {
@@ -425,5 +434,140 @@ struct LatestUpdatesTool: Tool {
         let count = min(max(arguments.count, 1), 5)
         let targets = context.bundle.notifications.prefix(count).map { SearchTarget.notification($0.id) }
         return await context.report(targets, empty: "The organizer hasn't posted any updates.")
+    }
+}
+
+// MARK: - Rich context (API-018)
+
+extension EventAssistant {
+    /// A schedule item's context as short facts: about, performers with genres and bios, price,
+    /// age limit, accessibility.
+    static func contextFacts(_ context: ScheduleItemContext?) -> [String] {
+        guard let context else { return [] }
+        var facts: [String] = []
+        if !context.about.isEmpty { facts.append(context.about) }
+        for performer in context.performers.prefix(3) {
+            var fact = "Performer: \(performer.name)"
+            if !performer.genres.isEmpty { fact += " (\(performer.genres.prefix(3).joined(separator: ", ")))" }
+            if !performer.bio.isEmpty { fact += " — " + String(performer.bio.prefix(120)) }
+            facts.append(fact)
+        }
+        if !context.price.isEmpty { facts.append("Price: \(context.price)") }
+        if !context.ageLimit.isEmpty { facts.append("Age: \(context.ageLimit)") }
+        if !context.accessibility.isEmpty { facts.append("Accessibility: \(context.accessibility)") }
+        return facts
+    }
+
+    /// A location's context as short facts: about, hours, menu (≤ 6 lines), accessibility, age.
+    static func contextFacts(_ context: LocationContext?) -> [String] {
+        guard let context else { return [] }
+        var facts: [String] = []
+        if !context.about.isEmpty { facts.append(context.about) }
+        if !context.hours.isEmpty { facts.append("Hours: \(context.hours)") }
+        if !context.menu.isEmpty {
+            facts.append("Menu: " + context.menu.prefix(6).map { entry in
+                [entry.name, entry.price, entry.note].filter { !$0.isEmpty }.joined(separator: " ")
+            }.joined(separator: "; "))
+        }
+        if !context.accessibility.isEmpty { facts.append("Accessibility: \(context.accessibility)") }
+        if !context.ageLimit.isEmpty { facts.append("Age: \(context.ageLimit)") }
+        return facts
+    }
+
+    /// The event's own facts for the `eventInfo` tool, ≤ ~1,600 characters: about, FAQ,
+    /// amenities (with the location id they are at), accessibility, policies, getting there, the
+    /// weather plan and the cached forecast.
+    static func eventFacts(_ bundle: EventBundle, forecast: [String], topic: String) -> String {
+        let context = bundle.event.context
+        let want = EventSearch.fold(topic).trimmingCharacters(in: .whitespacesAndNewlines)
+        func wanted(_ words: [String]) -> Bool { want.isEmpty || want == "all" || words.contains { want.contains($0) } }
+        var lines: [String] = []
+        if let about = context?.about, !about.isEmpty, wanted(["about", "event", "what"]) { lines.append("About: " + String(about.prefix(300))) }
+        if let context {
+            if !context.faq.isEmpty, wanted(["faq", "question", "bag", "pet", "entry", "rule", "ticket", "polic"]) {
+                lines += context.faq.prefix(8).map { "Q: \($0.question) A: \(String($0.answer.prefix(200)))" }
+            }
+            if !context.amenities.isEmpty, wanted(["amenit", "restroom", "toilet", "water", "atm", "first aid", "charg", "locker", "parking", "shuttle", "food", "merch", "info", "access"]) {
+                lines += context.amenities.prefix(12).map { amenity in
+                    var line = "Amenity: \(amenity.kind.label) — \(amenity.name)"
+                    if let location = bundle.location(amenity.locationId) { line += " at [l\(location.id)] \(location.name)" }
+                    if !amenity.note.isEmpty { line += " (\(amenity.note))" }
+                    return line
+                }
+            }
+            if !context.accessibility.isEmpty, wanted(["access", "wheelchair", "step", "sensory"]) { lines.append("Accessibility: " + String(context.accessibility.prefix(300))) }
+            if !context.policies.isEmpty, wanted(["polic", "rule", "bag", "allowed", "bring"]) { lines.append("Policies: " + String(context.policies.prefix(300))) }
+            if !context.gettingThere.isEmpty, wanted(["getting", "there", "parking", "bus", "train", "shuttle", "drive", "transit"]) {
+                lines.append("Getting there: " + String(context.gettingThere.prefix(300)))
+            }
+            if !context.weatherPlan.isEmpty, wanted(["weather", "rain", "storm", "heat"]) { lines.append("Weather plan: " + String(context.weatherPlan.prefix(200))) }
+        }
+        if !forecast.isEmpty, wanted(["weather", "rain", "forecast", "temperature", "hot", "cold"]) { lines += forecast.map { "Forecast " + $0 } }
+        if lines.isEmpty {
+            return want == "all" || (context == nil && forecast.isEmpty)
+                ? "The organizer hasn't added venue information for this event."
+                : eventFacts(bundle, forecast: forecast, topic: "all")
+        }
+        var text = ""
+        for line in lines where text.count + line.count < 1_600 { text += (text.isEmpty ? "" : "\n") + line }
+        return text
+    }
+}
+
+/// The event's own information: about, FAQ, amenities, accessibility, policies, getting there,
+/// the weather plan and the forecast cached on the phone (API-018, WeatherKit).
+struct EventInfoTool: Tool {
+    let name = "eventInfo"
+    let description = """
+        Returns the event's own information: about, FAQ, amenities such as restrooms, water, ATMs, \
+        first aid and charging (with the place they are at), accessibility, policies, getting there, \
+        the weather plan and the weather forecast.
+        """
+
+    @Generable
+    struct Arguments {
+        @Guide(description: "What to look up: \"faq\", \"amenities\", \"restrooms\", \"accessibility\", \"policies\", \"getting there\", \"weather\" or \"all\".")
+        var topic: String
+    }
+
+    let bundle: EventBundle
+    let forecast: [String]
+    var counter: ToolCallCounter? = nil
+
+    func call(arguments: Arguments) async throws -> String {
+        await counter?.add()
+        return EventAssistant.eventFacts(bundle, forecast: forecast, topic: arguments.topic)
+    }
+}
+
+// MARK: - Plan page day summary
+
+/// The plan page's summary of one day: one line and a few sentences for "Read more".
+@Generable(description: "A short summary of an attendee's planned day at an event.")
+struct PlanDaySummaryReply {
+    @Guide(description: "One friendly line of at most 90 characters, for example \"Country and blues all afternoon, then the headliners at 7\".")
+    var line: String
+
+    @Guide(description: "Two to four sentences about the day: highlights, walking, breaks and the weather if given. Use only facts from the prompt.")
+    var more: String
+}
+
+extension EventAssistant {
+    /// The day's summary from `PlanPage.summaryPrompt` (throws when the model fails).
+    static func daySummary(_ prompt: String) async throws -> (line: String, more: String) {
+        let session = LanguageModelSession {
+            """
+            You summarise an attendee's plan for one day of an event in the Attnd app. Use only the \
+            facts in the prompt; never invent acts, times or places.
+            """
+        }
+        var options = GenerationOptions()
+        options.temperature = 0.3
+        let response = try await session.respond(generating: PlanDaySummaryReply.self, options: options) {
+            prompt
+        }
+        let line = response.content.line.trimmingCharacters(in: .whitespacesAndNewlines)
+        let more = response.content.more.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (String(line.prefix(120)), String(more.prefix(600)))
     }
 }

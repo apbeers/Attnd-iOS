@@ -381,12 +381,18 @@ enum AssistantSearch {
         for item in bundle.schedule {
             let locationName = item.locationName.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
                 ?? bundle.location(item.locationId)?.name ?? generalTitle
-            result.append(Candidate(kind: .schedule, id: item.id, title: item.name, fields: [
+            var fields = [
                 field(item.name, weightPrimary),
                 field(item.tags.joined(separator: " "), weightSecondary),
                 field(locationName, weightSecondary),
                 field(item.description, weightTertiary),
-            ], item: item))
+            ]
+            // API-018: performer names and genres weigh like tags; their bios and the about text like descriptions.
+            if let context = item.context {
+                fields.append(field((context.performers.map(\.name) + context.genres).joined(separator: " "), weightSecondary))
+                fields.append(field(([context.about] + context.performers.map(\.bio)).joined(separator: " "), weightTertiary))
+            }
+            result.append(Candidate(kind: .schedule, id: item.id, title: item.name, fields: fields, item: item))
         }
         for location in bundle.locations {
             var fields = [field(location.name, weightPrimary)]

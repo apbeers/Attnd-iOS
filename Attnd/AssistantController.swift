@@ -1,14 +1,18 @@
 // AssistantController.swift
 // Attnd (app target only — not in the App Clip)
 //
-// The event assistant at runtime behind the plan panel (the floating "My plan" button over every
-// tab, PlanPanel.swift / AssistantView.swift; iOS since Nov 16, 2026 — Android keeps the plan tab
-// spec's My plan tab; the assistant spec's router, blocks, actions, edits, undo and live rules
-// are unchanged and shared). One panel, no transcript:
+// The event assistant at runtime behind the plan page (the floating "My plan" button over every
+// tab, AssistantView.swift / PlanView.swift, rules in PlanPage.swift and PlanPanel.swift; iOS,
+// planner_view_spec Nov 19, 2026 — only with Apple Intelligence's on-device model; Android keeps
+// the plan tab spec's My plan tab; the assistant spec's router, blocks, actions, edits, undo and
+// live rules are unchanged and shared):
 //
-//   - The panel: `panelOpen` and `panelDetent` (collapsed / medium / large), shared by every tab.
-//     Opening an item collapses it (`collapsePanel`) so the item's own tab is in view; a proposal
-//     expands a collapsed panel so its preview shows.
+//   - The page: `pageOpen` (a full-screen cover over the tabs) and `pagePath` (its own stack:
+//     items tapped on the page push their detail there). Links, Siri and notifications close it
+//     (`closePage`) so the item's tab is in view; a new proposal opens it so its preview shows.
+//   - Phones show only the last answer (`answer`) in a small pane above the text box; wide
+//     windows (iPhone Duo unfolded) add a chat column with this session's turns (`transcript`,
+//     in memory, ≤ 30).
 //   - Turns: no Search / Ask / Plan toggle. Every typed turn goes through `PlanProposals.swap`, the
 //     rule-based `AssistantRouter` or — when Apple Intelligence's on-device model is available and
 //     `AssistantFlow.path` says so — the model (`EventAssistant.assistantTurn`, streamed; any
@@ -33,6 +37,7 @@
 
 import Foundation
 import Observation
+import SwiftUI
 
 @MainActor
 @Observable
@@ -63,14 +68,16 @@ final class AssistantController {
     /// The answer card (nil: none shown).
     private(set) var answer: Turn?
     /// The plan edit shown in the timeline, waiting to be applied (nil: none). A new one opens
-    /// the panel (at least medium), so its preview is in view.
+    /// the plan page, so its preview is in view.
     private(set) var proposal: PlanProposal? {
         didSet {
-            guard proposal != nil, oldValue != proposal, appState?.currentEvent != nil else { return }
-            panelOpen = true
-            if panelDetent == .collapsed { panelDetent = .medium }
+            guard proposal != nil, oldValue != proposal, appState?.currentEvent != nil, !pageOpen else { return }
+            appState?.showPlanPanel()
         }
     }
+    /// This session's turns for the wide layout's chat column (≤ 30, not stored).
+    private(set) var transcript: [Turn] = []
+    private static let maxTranscript = 30
     /// The Undo pill after a plan change (nil: none).
     private(set) var undoPill: UndoPill?
     /// The path of the turn being worked on (busy indicator in the input bar).
@@ -78,11 +85,11 @@ final class AssistantController {
     /// The input bar's text. A proposal stays while typing (so "the second one" can answer it);
     /// sending anything that isn't an answer to it clears it.
     var draft = ""
-    /// The plan panel is open (the floating "My plan" button), over whichever tab is shown.
-    private(set) var panelOpen = false
-    /// Its height; the panel's drag sets it.
-    var panelDetent: PlanPanelDetent = .medium
-    /// Incremented to put the keyboard down (an item opened from the panel).
+    /// The plan page is shown (the floating "My plan" button), over whichever tab is shown.
+    private(set) var pageOpen = false
+    /// The plan page's own navigation stack (item details pushed from the page).
+    var pagePath = NavigationPath()
+    /// Incremented to put the keyboard down.
     private(set) var blurSerial = 0
     @ObservationIgnored private var focusPending = false
     private(set) var live = LiveHints()
@@ -122,8 +129,9 @@ final class AssistantController {
         answer = nil
         proposal = nil
         undoPill = nil
-        panelOpen = false
-        panelDetent = .medium
+        pageOpen = false
+        pagePath = NavigationPath()
+        transcript = []
         focusPending = false
         draft = ""
         guard eventId != nil, appState != nil, !ScreenshotMode.isActive else {
@@ -150,7 +158,8 @@ final class AssistantController {
             modelAvailable: available,
             history: appState.planner.history,
             units: DistanceText.usesImperial() ? .imperial : .metric,
-            locale: .current
+            locale: .current,
+            weather: appState.weather.promptLines(bundle)
         )
     }
 
@@ -173,33 +182,27 @@ final class AssistantController {
         proposal = nil
     }
 
-    /// The "My plan" button (and every "show my plan"): opens the panel; `detent` nil keeps an
-    /// open panel's height and opens a closed one at medium. Without a plan the keyboard comes up.
-    func openPanel(_ detent: PlanPanelDetent? = nil) {
-        if let detent {
-            panelDetent = detent
-        } else if !panelOpen {
-            panelDetent = .medium
-        }
-        if !panelOpen { AppLog.debug(.ui, "ui.screen", "Plan panel", ["name": "plan"]) }
-        panelOpen = true
+    /// The "My plan" button (and every "show my plan"): opens the plan page. Without a plan the
+    /// keyboard comes up.
+    func openPage() {
+        guard !pageOpen else { return }
+        AppLog.debug(.ui, "ui.screen", "Plan page", ["name": "plan"])
+        pageOpen = true
         if appState?.planner.hasPlan != true { focusInput() }
     }
 
-    /// The panel's × (or a drag down past its collapsed height). What was typed stays.
-    func closePanel() {
-        guard panelOpen else { return }
-        panelOpen = false
+    /// The page's Close button, a link elsewhere, the model going away. What was typed stays.
+    func closePage() {
+        guard pageOpen else { return }
+        pageOpen = false
         proposal = nil
+        pagePath = NavigationPath()
         blurSerial += 1
     }
 
-    /// An item is opened from the panel (or a link, Siri, a notification): the panel shrinks to
-    /// its summary line and the keyboard goes down, so the item's tab is in view.
-    func collapsePanel() {
-        guard panelOpen else { return }
-        panelDetent = .collapsed
-        blurSerial += 1
+    /// The cover's own dismissal (swipe, Esc) as a binding.
+    func setPageOpen(_ open: Bool) {
+        if open { openPage() } else { closePage() }
     }
 
     /// The Undo pill's time is up (only the pill with `id`).
@@ -274,6 +277,7 @@ final class AssistantController {
         busy = nil
         answer = nil
         proposal = p
+        if let input { record(Turn(id: nextId, input: input, blocks: [.text(p.text)])); nextId += 1 }
         var fields: LogFields = [
             "path": .string(source == .model ? "model" : "rules"), "intent": "plan_edit",
             "ms": .int((ContinuousClock.now - started).wholeMilliseconds), "blocks": 0, "fallback": false,
@@ -299,7 +303,7 @@ final class AssistantController {
             var raw: String?
             var toolCalls = 0
             do {
-                let reply = try await EventAssistant.assistantTurn(prompt, bundle: ctx.bundle, now: ctx.now) { [weak self] partial in
+                let reply = try await EventAssistant.assistantTurn(prompt, bundle: ctx.bundle, now: ctx.now, forecast: ctx.weather) { [weak self] partial in
                     guard let self, self.answer?.id == id else { return }
                     let shown = AssistantModel.completeBlocks(partial, ctx).filter { !$0.isChips }
                     if shown != self.answer?.blocks { self.answer?.blocks = shown }
@@ -402,6 +406,14 @@ final class AssistantController {
         }
         answer = Turn(id: nextId, input: input, blocks: blocks, source: source, applied: applied)
         nextId += 1
+        if let answer { record(answer) }
+    }
+
+    /// Adds a turn to the chat column (replacing one with the same id).
+    private func record(_ turn: Turn) {
+        transcript.removeAll { $0.id == turn.id }
+        transcript.append(turn)
+        if transcript.count > Self.maxTranscript { transcript.removeFirst(transcript.count - Self.maxTranscript) }
     }
 
     /// The model's conversation: the user's text and what the assistant answered (text only).
@@ -966,7 +978,7 @@ final class AssistantController {
 
     /// The panel takes a pending keyboard request (true once per request).
     func consumeFocusRequest() -> Bool {
-        guard focusPending, panelOpen else { return false }
+        guard focusPending, pageOpen else { return false }
         focusPending = false
         return true
     }
@@ -1054,7 +1066,7 @@ extension AppState {
         LikeSet(locations: personal.heartedLocations, scheduleItems: personal.heartedScheduleItems)
     }
 
-    /// The assistant runs (full app, not in screenshot mode): the plan panel.
+    /// The assistant runs (full app, not in screenshot mode, with the on-device model): the plan page.
     static var assistantEnabled: Bool { hasPlanPanel }
 
     /// `open(screen, id?)`: a manual screen (its own tab; the plan panel collapses).
@@ -1069,7 +1081,7 @@ extension AppState {
         func tab(_ tab: EventTab) {
             guard shows(tab) else { return }
             presentedSheet = nil
-            assistant.collapsePanel()
+            assistant.closePage()
             select(tab)
         }
         switch screen {
@@ -1086,7 +1098,16 @@ extension AppState {
                 tab(screen == "locations" ? .locations : screen == "schedule" ? .schedule : .notifications)
             }
         case "flyer": tab(.flyer)
-        case "options": presentedSheet = .options
+        case "options":
+            guard assistant.pageOpen else {
+                presentedSheet = .options
+                return
+            }
+            assistant.closePage()
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(450))
+                self.presentedSheet = .options
+            }
         case "tour": showTour()
         case "plan": showMyPlan()
         default: break

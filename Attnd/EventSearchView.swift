@@ -326,7 +326,7 @@ struct EventSearchView: View {
         }
         assistant = .thinking(query: question)
         do {
-            let answer = try await EventAssistant.answer(question, bundle: bundle, now: .now)
+            let answer = try await EventAssistant.answer(question, bundle: bundle, now: .now, forecast: appState.weather.promptLines(bundle))
             guard query == question else { return }
             assistant = .answered(query: question, answer: answer)
         } catch {
@@ -492,6 +492,10 @@ struct EventInfoView: View {
                     Section("About") {
                         Text(event.description)
                     }
+                }
+                // API-018: FAQ, amenities, getting there, accessibility, policies, weather plan.
+                if let context = event.context {
+                    EventContextSections(context: context)
                 }
             }
         }

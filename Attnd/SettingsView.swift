@@ -60,6 +60,14 @@ struct SettingsView: View {
                     if let website = event.websiteUrl {
                         EventWebsiteLink(url: website)
                     }
+                    // API-018: FAQ, amenities, getting there… (the event's info page).
+                    if event.context != nil {
+                        NavigationLink {
+                            EventInfoView()
+                        } label: {
+                            Label("FAQ, Amenities & Getting There", systemImage: "info.circle")
+                        }
+                    }
                 }
             }
 

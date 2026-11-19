@@ -30,7 +30,7 @@ struct NotificationsView: View {
                         .listRowBackground(rowBackground(notification))
                         // Assistant spec §8 ("Ask about this"; for now the search sheet with its title).
                         .contextMenu {
-                            if !ScreenshotMode.isActive, appState.hasAssistant || AppState.isAppClip {
+                            if !ScreenshotMode.isActive, appState.hasAssistant {
                                 Button("Ask About This", systemImage: "sparkles") {
                                     appState.askAbout(.notification(notification.id))
                                 }

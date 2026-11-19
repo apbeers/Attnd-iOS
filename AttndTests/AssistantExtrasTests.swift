@@ -2,7 +2,7 @@
 // AttndTests
 //
 // Assistant spec §5–7 (Android's `unit/AssistantExtrasTest.kt`, same cases): day routes, live
-// rules, share links (API-015), group plans, why-not, calendar entries.
+// rules, share links (API-015), group plans, why-not.
 
 import XCTest
 @testable import Attnd
@@ -113,17 +113,6 @@ final class AssistantExtrasTests: XCTestCase {
         XCTAssertTrue(swapped.itemIds.contains(114))
         XCTAssertFalse(swapped.itemIds.contains(101))
         XCTAssertEqual(swapped.items.first { $0.itemId == 114 }?.orInstead, [101])
-    }
-
-    func testCalendar() {
-        XCTAssertEqual(CalendarEntries.forItem(101, bundle), CalendarEntry(
-            itemId: 101, title: "The Prairie Lights", start: PlannerFixture.date("2026-11-15T01:00:00Z"), end: PlannerFixture.date("2026-11-15T02:30:00Z"),
-            timeZone: "America/Chicago", location: "Main Stage · Panther Island, Fort Worth, TX",
-            notes: "Texas country headliners.\n\nFort Worth Food & Music Festival"
-        ))
-        XCTAssertEqual(CalendarEntries.forItem(111, bundle)?.location, "Panther Island, Fort Worth, TX")
-        XCTAssertEqual(CalendarEntries.forPlan(plan, bundle).map(\.itemId), plan.itemIds)
-        XCTAssertNil(CalendarEntries.forItem(999, bundle))
     }
 
     // MARK: Day route

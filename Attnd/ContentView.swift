@@ -4,9 +4,9 @@
 // AppRootView switches between the launch flow and the joined event.
 // ContentView is the tab container for a joined event (TabLayout.swift): the event's own tabs
 // (`display.tabs`: Map, Places, Schedule, Flyer, Updates; at most five, so never a "More" tab).
-// The full app has a floating Liquid Glass "My plan" button on every tab that opens the plan
-// panel (AssistantView.swift: the plan, search, the assistant); the App Clip and screenshot mode
-// have the floating search button and its sheet instead. Options is a toolbar item on each tab's
+// With the on-device model (app and App Clip) a floating Liquid Glass "My plan" button on every
+// tab opens the plan page (AssistantView.swift: the plan, search, the assistant); without it and
+// in screenshot mode the floating search button and its sheet instead. Options is a toolbar item on each tab's
 // root screen.
 // It also drives bundle refreshes (on becoming active, plus a slow poll while
 // active: every 60 s without a push token, e.g. the App Clip; a 5-minute safety
@@ -188,7 +188,7 @@ struct ContentView: View {
     var body: some View {
         @Bindable var state = appState
         // TabLayout: the event's own tabs, at most five, so never a "More" tab. The floating
-        // button (My plan, or search in the App Clip / screenshot mode) is on every tab and
+        // button (My plan with the on-device model, else search) is on every tab and
         // Options a toolbar item on every tab's root screen.
         TabView(selection: tabSelection) {
             ForEach(appState.tabs) { tab in
@@ -208,8 +208,8 @@ struct ContentView: View {
                 switch sheet {
                 case .search:
                     // Focus the field unless Siri / Spotlight opened the sheet on an item or
-                    // an onboarding example is being asked. In the full app (outside screenshot
-                    // mode, with the on-device model) this sheet only shows items of hidden tabs; search is the plan page's text box.
+                    // an onboarding example is being asked. With the on-device model (outside
+                    // screenshot mode) this sheet only shows items of hidden tabs; search is the plan page's text box.
                     EventSearchSheet(focusesSearchField: appState.searchPath.isEmpty && appState.autoAskQuery == nil)
                 case .options:
                     OptionsSheet()
@@ -233,7 +233,6 @@ struct ContentView: View {
         .onChange(of: appState.userLocation.location) {
             appState.userLocationDidChange()
         }
-        #if !APP_CLIP
         // The plan page (AssistantView.swift): a full-screen cover over the tabs.
         .fullScreenCover(isPresented: planPageBinding) {
             PlanPageHost()
@@ -247,15 +246,12 @@ struct ContentView: View {
             appState.pendingSharedPlan = nil
             appState.assistant.openShared(shared)
         }
-        #endif
         // The onboarding cards after the first join, once the tabs are on screen.
         .task(id: appState.pendingTour) {
             guard appState.pendingTour else { return }
             try? await Task.sleep(for: .milliseconds(600))
             guard !Task.isCancelled, appState.pendingTour, appState.presentedSheet == nil else { return }
-            #if !APP_CLIP
             guard !appState.assistant.pageOpen else { return }
-            #endif
             appState.showTour()
         }
         // Fallback poll while the scene is active and an event is joined (ContentView
@@ -274,7 +270,6 @@ struct ContentView: View {
         }
     }
 
-    #if !APP_CLIP
     private var planPageBinding: Binding<Bool> {
         let state = self.appState
         return Binding(
@@ -282,7 +277,6 @@ struct ContentView: View {
             set: { open in MainActor.assumeIsolated { state.assistant.setPageOpen(open) } }
         )
     }
-    #endif
 
     private struct LivePollKey: Equatable {
         let phase: ScenePhase
@@ -364,7 +358,7 @@ private struct LatestUpdateBannerModifier: ViewModifier {
 // MARK: - Floating search button
 
 extension View {
-    /// The floating button of a tab: "My plan" and its panel in the full app, else search.
+    /// The floating button of a tab: "My plan" and its page with the on-device model, else search.
     func floatingActionButton(tab: EventTab) -> some View {
         modifier(FloatingActionButtonModifier(tab: tab))
     }
@@ -397,16 +391,12 @@ private struct FloatingActionButtonModifier: ViewModifier {
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        #if APP_CLIP
-        content.floatingSearchButton()
-        #else
         // My plan only with the on-device model (planner_view_spec §1); else search.
         if appState.hasAssistant {
             content.planButton(tab: tab)
         } else {
             content.floatingSearchButton()
         }
-        #endif
     }
 }
 

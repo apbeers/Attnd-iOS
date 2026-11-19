@@ -1,5 +1,5 @@
 // AssistantModel.swift
-// Attnd (app target only — not in the App Clip; unit tested in AssistantBlocksTests)
+// Attnd (app + App Clip; unit tested in AssistantBlocksTests)
 //
 // The model path (assistant spec §3), a port of Android's `domain/AssistantModel.kt`: the
 // on-device model only understands and picks components. It sees the event facts, the plan
@@ -134,14 +134,13 @@ enum AssistantModel {
         lines.append("Choose how to answer the attendee. Reply with only one JSON object and no other text:")
         lines.append(#"{"blocks":[{"type":"text","text":"…"}],"actions":[]}"#)
         lines.append("BLOCKS (use ids from ITEMS only, like \"s12\", \"l3\", \"u9\"):")
-        lines.append("text{text} item_card{id} place_card{id} update_card{id} list{ids,title} carousel{ids,title} timeline{ids} map{pins,route} gallery{ids} now_next{location} countdown{id} compare{a,b} plan{} setting{setting} summary{kind} share{target} calendar{ids|plan} chips{chips:[{label,action,params}]} confirm{action,params,prompt}")
+        lines.append("text{text} item_card{id} place_card{id} update_card{id} list{ids,title} carousel{ids,title} timeline{ids} map{pins,route} gallery{ids} now_next{location} countdown{id} compare{a,b} plan{} setting{setting} summary{kind} share{target} chips{chips:[{label,action,params}]} confirm{action,params,prompt}")
         lines.append("READ ACTIONS: \(reads)")
         lines.append("WRITE ACTIONS (the app asks or offers Undo): \(writes)")
         lines.append("Rules: at most 8 blocks; text at most 400 characters; end with at most 5 chips; one card for one result, a carousel for 2–8; never invent ids, times or facts.")
         lines.append("All times are local to the event (\(zone.identifier)). NOW: \(nowText).")
         lines.append("EVENT: \(clean(bundle.event.name)) — \(AssistantSearch.eventDetail(bundle.event, locale: ctx.locale))")
         if let info = eventInfo(bundle) { lines.append("EVENT INFO: " + info) }
-        if !ctx.weather.isEmpty { lines.append("FORECAST: " + ctx.weather.joined(separator: "; ")) }
         if let plan = ctx.plan {
             lines.append("PLAN: " + Planner.summary(plan, timeZone: zone, locale: ctx.locale) + " — " + plan.items.map { "s\($0.itemId)" }.joined(separator: "; "))
         } else {

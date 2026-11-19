@@ -1,5 +1,5 @@
 // EventAssistant.swift
-// Attnd (app target only — not in the App Clip)
+// Attnd (app + App Clip)
 //
 // "Ask about this event": Apple's on-device foundation model (Foundation Models framework)
 // answers a question with tool calling over the joined event's local bundle. Nothing leaves
@@ -28,7 +28,7 @@ enum EventAssistant {
     }
 
     /// Answers `question` from the event's own content. Throws when the model fails or refuses.
-    static func answer(_ question: String, bundle: EventBundle, now: Date, forecast: [String] = []) async throws -> EventAssistantAnswer {
+    static func answer(_ question: String, bundle: EventBundle, now: Date) async throws -> EventAssistantAnswer {
         let index = EventSearchIndex(bundle)
         let recorder = SourceRecorder()
         let context = AssistantContext(index: index, bundle: bundle, now: now, recorder: recorder)
@@ -40,7 +40,7 @@ enum EventAssistant {
                 WhatsOnTool(context: context),
                 LocationDetailsTool(context: context),
                 LatestUpdatesTool(context: context),
-                EventInfoTool(bundle: bundle, forecast: forecast),
+                EventInfoTool(bundle: bundle),
             ]
         ) {
             """
@@ -112,19 +112,18 @@ extension EventAssistant {
         _ prompt: String,
         bundle: EventBundle,
         now: Date,
-        forecast: [String] = [],
         onPartial: @escaping @MainActor @Sendable (String) -> Void
     ) async throws -> (raw: String, toolCalls: Int) {
         let counter = ToolCallCounter()
         let session = LanguageModelSession(tools: [
             AssistantLookupTool(bundle: bundle, now: now, counter: counter),
-            EventInfoTool(bundle: bundle, forecast: forecast, counter: counter),
+            EventInfoTool(bundle: bundle, counter: counter),
         ]) {
             """
             You are the on-device assistant of the Attnd event app. You only choose how to answer: \
             reply with exactly one JSON object in the format the prompt describes, no other text. \
             Use only ids from ITEMS or from the lookup tool, never invent ids, times or facts; ask the \
-            eventInfo tool about the venue, FAQ, amenities, policies, getting there or the weather. \
+            eventInfo tool about the venue, FAQ, amenities, policies, getting there or the weather plan. \
             Keep text short and friendly.
             """
         }
@@ -475,9 +474,9 @@ extension EventAssistant {
     }
 
     /// The event's own facts for the `eventInfo` tool, ≤ ~1,600 characters: about, FAQ,
-    /// amenities (with the location id they are at), accessibility, policies, getting there, the
-    /// weather plan and the cached forecast.
-    static func eventFacts(_ bundle: EventBundle, forecast: [String], topic: String) -> String {
+    /// amenities (with the location id they are at), accessibility, policies, getting there and the
+    /// weather plan.
+    static func eventFacts(_ bundle: EventBundle, topic: String) -> String {
         let context = bundle.event.context
         let want = EventSearch.fold(topic).trimmingCharacters(in: .whitespacesAndNewlines)
         func wanted(_ words: [String]) -> Bool { want.isEmpty || want == "all" || words.contains { want.contains($0) } }
@@ -502,11 +501,10 @@ extension EventAssistant {
             }
             if !context.weatherPlan.isEmpty, wanted(["weather", "rain", "storm", "heat"]) { lines.append("Weather plan: " + String(context.weatherPlan.prefix(200))) }
         }
-        if !forecast.isEmpty, wanted(["weather", "rain", "forecast", "temperature", "hot", "cold"]) { lines += forecast.map { "Forecast " + $0 } }
         if lines.isEmpty {
-            return want == "all" || (context == nil && forecast.isEmpty)
+            return want == "all" || context == nil
                 ? "The organizer hasn't added venue information for this event."
-                : eventFacts(bundle, forecast: forecast, topic: "all")
+                : eventFacts(bundle, topic: "all")
         }
         var text = ""
         for line in lines where text.count + line.count < 1_600 { text += (text.isEmpty ? "" : "\n") + line }
@@ -515,13 +513,13 @@ extension EventAssistant {
 }
 
 /// The event's own information: about, FAQ, amenities, accessibility, policies, getting there,
-/// the weather plan and the forecast cached on the phone (API-018, WeatherKit).
+/// the weather plan (API-018).
 struct EventInfoTool: Tool {
     let name = "eventInfo"
     let description = """
         Returns the event's own information: about, FAQ, amenities such as restrooms, water, ATMs, \
-        first aid and charging (with the place they are at), accessibility, policies, getting there, \
-        the weather plan and the weather forecast.
+        first aid and charging (with the place they are at), accessibility, policies, getting there \
+        and the weather plan (what happens in bad weather).
         """
 
     @Generable
@@ -531,12 +529,11 @@ struct EventInfoTool: Tool {
     }
 
     let bundle: EventBundle
-    let forecast: [String]
     var counter: ToolCallCounter? = nil
 
     func call(arguments: Arguments) async throws -> String {
         await counter?.add()
-        return EventAssistant.eventFacts(bundle, forecast: forecast, topic: arguments.topic)
+        return EventAssistant.eventFacts(bundle, topic: arguments.topic)
     }
 }
 
@@ -548,7 +545,7 @@ struct PlanDaySummaryReply {
     @Guide(description: "One friendly line of at most 90 characters, for example \"Country and blues all afternoon, then the headliners at 7\".")
     var line: String
 
-    @Guide(description: "Two to four sentences about the day: highlights, walking, breaks and the weather if given. Use only facts from the prompt.")
+    @Guide(description: "Two to four sentences about the day: highlights, walking, breaks and the weather plan if given. Use only facts from the prompt.")
     var more: String
 }
 

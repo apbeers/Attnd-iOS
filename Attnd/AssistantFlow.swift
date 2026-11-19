@@ -1,5 +1,5 @@
 // AssistantFlow.swift
-// Attnd (app target only — not in the App Clip; unit tested in AssistantFlowTests)
+// Attnd (app + App Clip; unit tested in AssistantFlowTests)
 //
 // The assistant screen's pure helpers (assistant spec §3, §6–8), a port of Android's
 // `domain/AssistantFlow.kt` with the same tests:
@@ -87,7 +87,7 @@ enum AssistantFlow {
         case .placeCard(let id, _): return [EntityRef(kind: .location, id: id)]
         case .updateCard(let id): return [EntityRef(kind: .update, id: id)]
         case .list(let ids, _, _), .carousel(let ids, _): return ids
-        case .timeline(let ids, _, _), .calendar(let ids, _): return ids.map { EntityRef(kind: .schedule, id: $0) }
+        case .timeline(let ids, _, _): return ids.map { EntityRef(kind: .schedule, id: $0) }
         case .map(let pins, _): return pins.map { EntityRef(kind: .location, id: $0) }
         case .gallery(let ids, _): return ids.map { EntityRef(kind: .location, id: $0) }
         case .planDiff(let diff): return (diff.removed + diff.added).map { EntityRef(kind: .schedule, id: $0) }

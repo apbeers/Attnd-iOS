@@ -1,11 +1,11 @@
 // PlanPage.swift
-// Attnd (app target only — not in the App Clip; pure, unit tested in PlanPageTests)
+// Attnd (app + App Clip; pure, unit tested in PlanPageTests)
 //
 // The rules behind the plan page (attnd-web docs/specs/planner_view_spec.md, iOS, Nov 19, 2026):
 // a trip-style itinerary that replaced the snapping plan panel. Everything here is pure and
-// works offline from the bundle, the plan and the cached forecast:
-//   - `PlanPage.model`: the page's sections — one per plan day with a header (date, item count,
-//     forecast) and its rows on a timeline rail: item cards, walk legs between items ("Main Stage
+// works offline from the bundle and the plan:
+//   - `PlanPage.model`: the page's sections — one per plan day with a header (date, item count)
+//     and its rows on a timeline rail: item cards, walk legs between items ("Main Stage
 //     → Taco Row · 6 min walk"), meal breaks, gap rows ("45 min free · 3 ideas nearby") and the
 //     shown proposal's dashed suggested rows (`PlanPreview`). Each row carries the sticky chip it
 //     belongs to: days ("1 Sat", "2 Sun") when the plan spans days, else Morning (< 12:00) /
@@ -22,10 +22,6 @@
 //     `PlanPage.mealOptions` (food items around the break, food places by walk) for walk legs and
 //     meal breaks.
 //   - `PlanPage.stats`: the bottom bar ("8 items · 10 AM – 11 PM · 2.1 mi walking").
-//   - Weather (WeatherKit, cached on disk by `WeatherStore`): `PlanForecast` (Codable, the cache
-//     format), the day chip ("72°/58° · 40%"), the "as of 2:14 PM" line, the model's forecast line
-//     ("Sat Nov 14: 72°F / 58°F, partly cloudy, 40% rain after 3 PM"), the coordinate (the event's,
-//     else the locations' centre) and the hourly refresh rule.
 //   - The day summary's cache key, prompt and fallback (`Planner.summary` of that day).
 
 import Foundation
@@ -201,137 +197,6 @@ struct PlanPageStats: Hashable, Sendable {
         if walkedMeters > 0 { parts.append("\(AssistantText.distance(walkedMeters, units, locale: locale)) walking") }
         return parts.joined(separator: " · ")
     }
-}
-
-// MARK: - Weather (the cache format of WeatherStore)
-
-struct PlanDayForecast: Codable, Hashable, Sendable {
-    var date: String
-    /// °C.
-    var high: Double
-    var low: Double
-    /// 0…1.
-    var precipitationChance: Double
-    /// An SF Symbol name from WeatherKit.
-    var symbol: String
-    /// "Partly cloudy".
-    var condition: String
-
-    var planDate: PlanDate? { PlanDate.parse(date) }
-}
-
-struct PlanHourForecast: Codable, Hashable, Sendable {
-    var date: Date
-    /// °C.
-    var temperature: Double
-    var precipitationChance: Double
-    var symbol: String
-}
-
-/// The last forecast for an event (Application Support, per event; shown offline with "as of").
-struct PlanForecast: Codable, Hashable, Sendable {
-    var eventId: Int
-    var fetchedAt: Date
-    var latitude: Double
-    var longitude: Double
-    var days: [PlanDayForecast]
-    var hours: [PlanHourForecast] = []
-
-    func day(_ date: PlanDate) -> PlanDayForecast? { days.first { $0.planDate == date } }
-
-    static func decode(_ data: Data?) -> PlanForecast? {
-        guard let data else { return nil }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .secondsSince1970
-        return try? decoder.decode(PlanForecast.self, from: data)
-    }
-
-    func encoded() -> Data? {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .secondsSince1970
-        encoder.outputFormatting = [.sortedKeys]
-        return try? encoder.encode(self)
-    }
-}
-
-enum PlanWeather {
-    /// Rain chances from this are shown on the chip and in the model's line.
-    static let rainShown = 0.3
-    /// Fetched at most this often while the plan is shown (and online).
-    static let refreshInterval: TimeInterval = 3600
-
-    /// The forecast's place: the event's coordinate, else the centre of its locations' (nil: none).
-    static func coordinate(_ bundle: EventBundle) -> Coordinate? {
-        if let point = bundle.event.coordinate { return point }
-        let points = bundle.locations.compactMap(\.coordinate)
-        guard !points.isEmpty else { return nil }
-        let lat = points.map(\.latitude).reduce(0, +) / Double(points.count)
-        let lng = points.map(\.longitude).reduce(0, +) / Double(points.count)
-        return Coordinate.valid(latitude: lat, longitude: lng)
-    }
-
-    /// Fetch when there is no forecast, it is for another place (> ~1 km), or it is an hour old.
-    static func needsFetch(_ cached: PlanForecast?, at point: Coordinate, now: Date) -> Bool {
-        guard let cached else { return true }
-        if abs(cached.latitude - point.latitude) > 0.01 || abs(cached.longitude - point.longitude) > 0.01 { return true }
-        return now.timeIntervalSince(cached.fetchedAt) >= refreshInterval || now < cached.fetchedAt
-    }
-
-    static func degrees(_ celsius: Double, fahrenheit: Bool) -> Int {
-        let value = fahrenheit ? celsius * 9 / 5 + 32 : celsius
-        return Int(value.rounded(.toNearestOrAwayFromZero))
-    }
-
-    /// The day header's chip: "72°/58°" (+ " · 40%" when rain is likely, ≥ 30 %).
-    static func chipText(_ day: PlanDayForecast, fahrenheit: Bool) -> String {
-        var text = "\(degrees(day.high, fahrenheit: fahrenheit))°/\(degrees(day.low, fahrenheit: fahrenheit))°"
-        if day.precipitationChance >= rainShown { text += " · \(percent(day.precipitationChance))%" }
-        return text
-    }
-
-    /// VoiceOver: "Partly cloudy, high 72°, low 58°, 40% chance of rain".
-    static func spokenText(_ day: PlanDayForecast, fahrenheit: Bool) -> String {
-        var text = "\(day.condition), high \(degrees(day.high, fahrenheit: fahrenheit))°, low \(degrees(day.low, fahrenheit: fahrenheit))°"
-        if day.precipitationChance >= rainShown { text += ", \(percent(day.precipitationChance))% chance of rain" }
-        return text
-    }
-
-    /// "as of 2:14 PM" (the device's zone: when this phone fetched it); "as of Sat 2:14 PM" on another day.
-    static func asOfText(_ fetchedAt: Date, now: Date, zone: TimeZone = .current, locale: Locale = .current) -> String {
-        let calendar = PlanCalendar.calendar(zone)
-        let pattern = calendar.isDate(fetchedAt, inSameDayAs: now) ? "h:mm a" : "EEE h:mm a"
-        return "as of " + AssistantText.format(fetchedAt, pattern, zone, locale)
-    }
-
-    /// The first hour of `date` (event zone, 08:00–23:00) with rain likely: "after 3 PM".
-    static func rainStart(_ forecast: PlanForecast, _ date: PlanDate, zone: TimeZone, locale: Locale) -> String? {
-        let calendar = PlanCalendar.calendar(zone)
-        let hour = forecast.hours
-            .filter { PlanDate($0.date, in: calendar) == date && $0.precipitationChance >= rainShown }
-            .filter { (8...23).contains(calendar.component(.hour, from: $0.date)) }
-            .min { $0.date < $1.date }
-        return hour.map { "after " + AssistantText.format($0.date, "h a", zone, locale) }
-    }
-
-    /// One line per event day in the forecast for the model: "Sat Nov 14: 72°F / 58°F, partly
-    /// cloudy, 40% rain after 3 PM".
-    static func promptLines(_ forecast: PlanForecast?, days: [PlanDate], zone: TimeZone, fahrenheit: Bool, locale: Locale) -> [String] {
-        guard let forecast else { return [] }
-        let unit = fahrenheit ? "°F" : "°C"
-        let utc = PlanCalendar.calendar(TimeZone(identifier: "UTC") ?? zone)
-        return days.compactMap { date in
-            guard let day = forecast.day(date) else { return nil }
-            let label = AssistantText.format(date.at(PlanClock(hour: 12, minute: 0), in: utc), "EEE MMM d", utc.timeZone, locale)
-            var text = "\(label): \(degrees(day.high, fahrenheit: fahrenheit))\(unit) / \(degrees(day.low, fahrenheit: fahrenheit))\(unit), \(day.condition.lowercased())"
-            if day.precipitationChance >= rainShown {
-                text += ", \(percent(day.precipitationChance))% rain"
-                if let start = rainStart(forecast, date, zone: zone, locale: locale) { text += " " + start }
-            }
-            return text
-        }
-    }
-
-    private static func percent(_ chance: Double) -> Int { Int((chance * 100).rounded(.toNearestOrAwayFromZero)) }
 }
 
 // MARK: - Rules
@@ -672,10 +537,9 @@ enum PlanPage {
     }
 
     /// What the on-device model reads to write the day's summary (short and long).
-    static func summaryPrompt(_ plan: Plan, _ date: PlanDate, _ bundle: EventBundle, forecast: String?, locale: Locale) -> String {
+    static func summaryPrompt(_ plan: Plan, _ date: PlanDate, _ bundle: EventBundle, locale: Locale) -> String {
         let zone = bundle.event.timeZone
         var lines = ["EVENT: \(bundle.event.name)", "DAY: \(dayTitle(date, locale: locale))"]
-        if let forecast { lines.append("WEATHER: \(forecast)") }
         if let weatherPlan = bundle.event.context?.weatherPlan, !weatherPlan.isEmpty {
             lines.append("WEATHER PLAN: \(String(weatherPlan.prefix(200)))")
         }

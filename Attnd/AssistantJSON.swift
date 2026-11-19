@@ -1,5 +1,5 @@
 // AssistantJSON.swift
-// Attnd (app target only — not in the App Clip; unit tested in AssistantBlocksTests)
+// Attnd (app + App Clip; unit tested in AssistantBlocksTests)
 //
 // The JSON the event assistant speaks (assistant spec §2–3): blocks, actions and plan ops as the
 // on-device model writes them and as Android's kotlinx JSON elements read them. Foundation's

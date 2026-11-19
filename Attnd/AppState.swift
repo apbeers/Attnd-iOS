@@ -163,25 +163,22 @@ final class AppState {
     private(set) var personal = EventPersonalState()
     @ObservationIgnored private var personalEventId: Int?
 
-    #if !APP_CLIP
     /// A shared plan link (`/p/<code>/<payload>`, API-015) opened for the joined event, waiting
     /// for the assistant to show it read-only ("Use this plan" / "Merge with mine"). Cleared
     /// when the event is left or switched; the assistant clears it once shown.
     var pendingSharedPlan: PendingSharedPlan?
 
     /// "My plan" (spec §6): the current event's plan and the planner's progress (PlanStore.swift;
-    /// the full app only, offered while Apple Intelligence's on-device model is available).
+    /// app and App Clip, offered while Apple Intelligence's on-device model is available).
     let planner = PlanStore()
 
     /// The event assistant (AssistantController.swift, spec §1–8): the conversation, its actions
     /// and live hints. The floating My plan button opens its plan page (only with the on-device
-    /// model; otherwise, like screenshot mode and the App Clip, the search button and sheet).
+    /// model; otherwise, like screenshot mode, the search button and sheet).
     let assistant = AssistantController()
 
-    /// The plan page's forecast (WeatherKit, cached on disk per event) and day summaries.
-    let weather = WeatherStore()
+    /// The plan page's day summaries (on-device model, cached on disk per event).
     let daySummaries = PlanSummaryStore()
-    #endif
 
     /// Apple Intelligence's on-device model can be used (planner_view_spec §1: the plan button,
     /// plan page, planner and assistant exist only then). Checked at launch and every scene
@@ -338,29 +335,21 @@ final class AppState {
         NotificationCenter.default.addObserver(forName: .attndUpdateRequired, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in await self?.handleUpdateRequired() }
         }
-        #if !APP_CLIP
         assistant.appState = self
-        #endif
         refreshOnDeviceModel()
     }
 
     /// Re-checks the on-device model (launch, scene activation). When it goes away the plan page
     /// closes and the search button comes back.
     func refreshOnDeviceModel() {
-        #if APP_CLIP
-        let ready = false
-        #else
         let ready = !ScreenshotMode.isActive && EventAssistant.isAvailable
-        #endif
         Self.modelReady = ready
         guard onDeviceModelReady != ready else { return }
         onDeviceModelReady = ready
         AppLog.info(.planner, "planner.availability", "On-device model \(ready ? "available" : "unavailable")", [
             "status": .string(ready ? "available" : "unavailable"),
         ])
-        #if !APP_CLIP
         if !ready { assistant.closePage() }
-        #endif
     }
 
     // MARK: - App updates
@@ -406,24 +395,16 @@ final class AppState {
     /// The tab's title ("Places" for Locations; "Locations" in screenshot mode).
     func title(of tab: EventTab) -> String { TabLayout.title(tab, screenshotMode: ScreenshotMode.isActive) }
 
-    /// The floating "My plan" button and its plan page exist: the full app, not in screenshot
-    /// mode, with the on-device model available (planner_view_spec §1). Otherwise — like the App
-    /// Clip — the search button and sheet.
+    /// The floating "My plan" button and its plan page exist: the app or the App Clip, not in
+    /// screenshot mode, with the on-device model available (planner_view_spec §1). Otherwise the
+    /// search button and sheet.
     static var hasPlanPanel: Bool {
-        #if APP_CLIP
-        return false
-        #else
         return modelReady
-        #endif
     }
 
     /// `hasPlanPanel` for views (observable: re-evaluated when the model's availability changes).
     var hasAssistant: Bool {
-        #if APP_CLIP
-        return false
-        #else
         return onDeviceModelReady
-        #endif
     }
 
     /// `tab` (Map, Places, Schedule, Flyer, Updates) is one of the tabs.
@@ -765,9 +746,7 @@ final class AppState {
         searchIndex = nil
         autoAskQuery = nil
         pendingTour = false
-        #if !APP_CLIP
         pendingSharedPlan = nil
-        #endif
         loadPersonalState(for: nil)
         #if !APP_CLIP
         EventEntityIndex.shared.update(with: nil)
@@ -891,9 +870,7 @@ final class AppState {
         if isFirstApply, !ScreenshotMode.isActive, !UserDefaults.standard.bool(forKey: Keys.onboardingSeen) {
             pendingTour = true
         }
-        #if !APP_CLIP
         assistant.refreshLive()
-        #endif
         liveFollowNeedsUpdate()
     }
 
@@ -920,7 +897,6 @@ final class AppState {
     /// collapses to its summary line, so the item is in view.
     func navigate(to target: SearchTarget) {
         guard currentEvent != nil else { return }
-        #if !APP_CLIP
         // The plan page is a full-screen cover: it closes first, then the tab (or the search
         // sheet, which can't be presented while the cover is) shows the item.
         if assistant.pageOpen {
@@ -931,7 +907,6 @@ final class AppState {
             }
             return
         }
-        #endif
         let tab: EventTab
         switch target {
         case .location:     tab = .locations
@@ -955,12 +930,10 @@ final class AppState {
     /// is pushed on the page's own stack (Back returns to the plan); elsewhere its own tab, or
     /// the search sheet for a hidden tab — `navigate(to:)`.
     func open(_ target: SearchTarget) {
-        #if !APP_CLIP
         if assistant.pageOpen {
             assistant.pagePath.append(target)
             return
         }
-        #endif
         navigate(to: target)
     }
 
@@ -971,8 +944,7 @@ final class AppState {
         searchPath = NavigationPath()
         searchText = query
         autoAskQuery = ask && Self.assistantAvailable ? query : nil
-        #if !APP_CLIP
-        // The plan panel's input bar is the full app's search: the text goes into it, or runs at
+        // The plan page's text box is the search there: the text goes into it, or runs at
         // once when it was to be asked.
         if Self.hasPlanPanel {
             autoAskQuery = nil
@@ -980,24 +952,19 @@ final class AppState {
             assistant.request(query, send: ask)
             return
         }
-        #endif
         presentedSheet = .search
     }
 
-    /// Whether "Ask" (Apple Intelligence's on-device model) can answer: never in the App Clip
-    /// or screenshot mode. The plan page, the planner and onboarding's "Plan your day" card
+    /// Whether "Ask" (Apple Intelligence's on-device model) can answer: never in screenshot
+    /// mode. The plan page, the planner and onboarding's "Plan your day" card
     /// exist only when this is true (the last check, `refreshOnDeviceModel`).
     static var assistantAvailable: Bool {
-        #if APP_CLIP
-        return false
-        #else
         return modelReady
-        #endif
     }
 
     /// "Ask About This" on a location, schedule item or update detail (assistant spec §8): the
     /// assistant with the item as context ("Tell me about X": the model's answer, else the
-    /// item's card and chips). The App Clip opens its search sheet with the item's name.
+    /// item's card and chips). Without the model, the search sheet with the item's name.
     func askAbout(_ target: SearchTarget) {
         guard currentEvent != nil, !ScreenshotMode.isActive else { return }
         let name: String?
@@ -1009,7 +976,6 @@ final class AppState {
         }
         guard let name, !name.isEmpty else { return }
         AppLog.debug(.ui, "ui.action", "Ask about this", ["name": "ask_about", "id": .string(target.reference)])
-        #if !APP_CLIP
         if Self.hasPlanPanel {
             let ref: EntityRef?
             switch target {
@@ -1026,26 +992,22 @@ final class AppState {
             }
             return
         }
-        #endif
         showSearch(name)
     }
 
-    /// The floating search button (App Clip, screenshot mode): opens the search sheet on its
-    /// results (the last query stays, like the old search tab), with the field focused. In the
-    /// full app the floating button is "My plan" and opens the plan panel instead.
+    /// The floating search button (no on-device model, screenshot mode): opens the search sheet on
+    /// its results (the last query stays, like the old search tab), with the field focused. With
+    /// the model the floating button is "My plan" and opens the plan page instead.
     func openSearch() {
         guard currentEvent != nil else { return }
-        #if !APP_CLIP
         if Self.hasPlanPanel {
             showPlanPanel()
             return
         }
-        #endif
         searchPath = NavigationPath()
         presentedSheet = .search
     }
 
-    #if !APP_CLIP
     /// Opens the plan page (a full-screen cover over the tabs; no-op without the on-device model).
     /// A sheet that is shown closes first; the cover follows once it has gone.
     func showPlanPanel() {
@@ -1060,16 +1022,13 @@ final class AppState {
             self.assistant.openPage()
         }
     }
-    #endif
 
     /// "Show on Map" in a location's detail: the Map tab, focused on that pin (any sheet closes).
     func showOnMap(locationId: Int) {
         guard shows(.map) else { return }
         mapFocusLocationId = locationId
         presentedSheet = nil
-        #if !APP_CLIP
         assistant.closePage()
-        #endif
         select(.map)
     }
 
@@ -1083,7 +1042,7 @@ final class AppState {
 
     /// Handles https://attnd.app/join/<event_code>/ and shared plan links
     /// https://attnd.app/p/<event_code>/<payload> (API-015; Universal Links, App Clip
-    /// invocations). A shared plan link joins its event, then (full app only, readable payload)
+    /// invocations). A shared plan link joins its event, then (readable payload)
     /// keeps the plan in `pendingSharedPlan` for the assistant. On failure the user stays where
     /// they are.
     func handleDeepLink(_ url: URL) async {
@@ -1093,13 +1052,11 @@ final class AppState {
         if let shared = SharedPlanLink.parse(url) {
             AppLog.info(.lifecycle, "lifecycle.deep_link", "Opened by a shared plan link", ["kind": "open", "target": "/p/{code}/{payload}/"])
             guard await join(code: shared.eventCode, via: "link") else { return }
-            #if !APP_CLIP
             if let payload = shared.payload {
                 pendingSharedPlan = PendingSharedPlan(eventCode: shared.eventCode, payload: payload, receivedAt: .now)
                 // The plan panel shows it as a proposal ("Use This Plan" / "Merge with Mine").
                 showPlanPanel()
             }
-            #endif
             return
         }
         guard let code = DeepLink.eventCode(from: url) else { return }
@@ -1311,12 +1268,9 @@ final class AppState {
     }
 
     private func loadPlan(for eventId: Int?) {
-        #if !APP_CLIP
         planner.load(eventId: eventId)
         assistant.load(eventId: eventId)
-        weather.load(eventId: eventId)
         daySummaries.load(eventId: eventId)
-        #endif
     }
 
     private func savePersonalState() {
@@ -1403,11 +1357,7 @@ final class AppState {
 
     /// "Follow on Lock Screen" for this event (default: on once something is hearted or planned).
     var followsOnLockScreen: Bool {
-        #if APP_CLIP
-        return personal.followsOnLockScreen
-        #else
         return personal.followOnLockScreen ?? (personal.hasHearts || planner.hasPlan)
-        #endif
     }
 
     func setFollowOnLockScreen(_ on: Bool) {
@@ -1443,10 +1393,8 @@ final class AppState {
 
     /// The user's position changed (walk minutes in the Live Activity).
     func userLocationDidChange() {
-        #if !APP_CLIP
         // Position samples for auto check-off and running late (only while already tracked).
         assistant.onLocation(userLocation.isAuthorized ? userLocation.location : nil)
-        #endif
         liveFollowNeedsUpdate()
     }
 

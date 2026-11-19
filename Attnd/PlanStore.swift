@@ -1,5 +1,5 @@
 // PlanStore.swift
-// Attnd (app target only — not in the App Clip)
+// Attnd (app + App Clip)
 //
 // "My plan" (shared spec §6) at runtime, matching Android's EventViewModel / PlanStore:
 //
@@ -133,8 +133,10 @@ final class PlanStore {
                 UserDefaults.standard.removeObject(forKey: Self.key(eventId))
             }
         }
-        // The Live Activity and reminders follow the plan.
+        // The Live Activity and reminders follow the plan (the app only; the App Clip has neither).
+        #if !APP_CLIP
         LiveFollowController.shared.setNeedsUpdate()
+        #endif
     }
 }
 

@@ -1,5 +1,5 @@
 // PlanRequest.swift
-// Attnd (app target only — not in the App Clip; unit tested in PlanRequestTests)
+// Attnd (app + App Clip; unit tested in PlanRequestTests)
 //
 // Turning an attendee's request ("Plan my Saturday around live music and BBQ") into
 // `PlanPreferences` (shared spec §6; a port of Android's `domain/PlanRequest.kt`):

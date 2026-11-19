@@ -1,5 +1,5 @@
 // AssistantSearch.swift
-// Attnd (app target only — not in the App Clip; unit tested through AssistantRouterTests)
+// Attnd (app + App Clip; unit tested through AssistantRouterTests)
 //
 // The event assistant's search and text helpers, ported 1:1 from Android (`EventSearch.kt`,
 // `SearchQuery.kt`, `SearchText.kt`, `Walking.kt`, `Geo.kt` DistanceFormat, `RelativeTime.kt`)

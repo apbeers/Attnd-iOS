@@ -9,8 +9,7 @@
 # with some capabilities (it did on the App Group, since removed). Renewal: attnd-web SETUP.md (iOS signing). The API key is
 # then only used for the upload.
 #
-# AUTOMATIC SIGNING (fallback without those secrets; the WeatherKit entitlement is removed for that build,
-# so weather is off) using an App Store Connect API key: profiles are managed by Xcode
+# AUTOMATIC SIGNING (fallback without those secrets) using an App Store Connect API key: profiles are managed by Xcode
 # (-allowProvisioningUpdates also registers new App IDs and capabilities, e.g. com.arcu.Attnd.widgets and
 # Time Sensitive Notifications) and the upload is signed with a cloud-managed distribution certificate. The archive step needs an Apple Development
 # certificate; one stored certificate (IOS_DEV_CERT_P12_BASE64 + IOS_DEV_CERT_PASSWORD secrets) is
@@ -77,10 +76,9 @@ if [ "$manual" = 1 ]; then
   # profile only allows production, and the export would switch it anyway.
   /usr/libexec/PlistBuddy -c 'Set :aps-environment production' Attnd/Attnd.entitlements
 else
-  echo "::warning title=Signing::IOS_DIST_CERT_P12_BASE64 is not set: automatic signing, without the WeatherKit entitlement (no weather in this build)"
+  echo "::warning title=Signing::IOS_DIST_CERT_P12_BASE64 is not set: automatic signing via the API key"
   for f in Attnd/Attnd.entitlements AttndWidgets/AttndWidgets.entitlements; do
     /usr/libexec/PlistBuddy -c 'Delete :com.apple.security.application-groups' "$f" 2>/dev/null || true
-    /usr/libexec/PlistBuddy -c 'Delete :com.apple.developer.weatherkit' "$f" 2>/dev/null || true
   done
   auth=(-allowProvisioningUpdates "${auth[@]}")
 fi

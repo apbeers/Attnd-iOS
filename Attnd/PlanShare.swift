@@ -1,5 +1,5 @@
 // PlanShare.swift
-// Attnd (app target only — not in the App Clip; unit tested in AssistantExtrasTests)
+// Attnd (app + App Clip; unit tested in AssistantExtrasTests)
 //
 // Shared plan / item links (assistant spec §7, attnd-web API-015), a port of Android's
 // `domain/PlanShare.kt`: `https://attnd.app/p/<EVENT_CODE>/<payload>`, payload = base64url

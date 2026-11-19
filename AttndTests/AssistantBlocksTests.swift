@@ -20,13 +20,13 @@ final class AssistantBlocksTests: XCTestCase {
         XCTAssertEqual(ActionName.allCases.map(\.key), [
             "search", "get_item", "get_location", "get_update", "event_info", "now_next", "whats_on", "liked", "plan", "near_me", "why_not", "route", "day_route",
             "like", "unlike", "plan_make", "plan_edit", "plan_undo", "plan_version", "checkoff", "follow_lock_screen", "reminders", "notifications",
-            "add_to_calendar", "share_plan", "share_item", "open", "directions",
+            "share_plan", "share_item", "open", "directions",
         ])
         XCTAssertEqual(Set(ActionName.allCases.filter { $0.confirm == .chip }), [.followLockScreen, .reminders, .notifications])
-        XCTAssertEqual(Set(ActionName.allCases.filter { $0.confirm == .sheet }), [.addToCalendar, .sharePlan, .shareItem])
+        XCTAssertEqual(Set(ActionName.allCases.filter { $0.confirm == .sheet }), [.sharePlan, .shareItem])
         XCTAssertEqual(Set(ActionName.allCases.filter(\.undoable)), [.like, .unlike, .planMake, .planEdit, .planVersion, .checkoff])
         XCTAssertTrue(ActionName.allCases.filter { !$0.mutates }.allSatisfy { $0.confirm == .none })
-        XCTAssertEqual(ActionName.neverAvailable, ["leave_event", "debug_mode", "copy_support_info"])
+        XCTAssertEqual(ActionName.neverAvailable, ["leave_event", "debug_mode", "copy_support_info", "add_to_calendar"])
     }
 
     private func check(_ name: String, _ params: String = "{}") -> ActionCheck {
@@ -48,8 +48,8 @@ final class AssistantBlocksTests: XCTestCase {
         XCTAssertEqual(check("whats_on", #"{"from":"6pm"}"#), .invalid("bad from"))
         XCTAssertEqual(check("open", #"{"screen":"debug"}"#), .invalid("bad screen"))
         XCTAssertEqual(check("plan_edit", #"{"ops":[{"op":"teleport"}]}"#), .invalid("bad ops"))
-        XCTAssertEqual(check("add_to_calendar", #"{"ids":["s999"]}"#), .invalid("nothing to add"))
-        XCTAssertTrue(isValid(check("add_to_calendar", #"{"ids":["s101"]}"#)))
+        // iOS has no Add to Calendar (Android keeps it): the action is never available.
+        XCTAssertEqual(check("add_to_calendar", #"{"ids":["s101"]}"#), .invalid("not available to the assistant"))
     }
 
     private final class Recorder: ActionExecutor {
@@ -79,11 +79,8 @@ final class AssistantBlocksTests: XCTestCase {
         noPlan.hasPlan = false
         XCTAssertEqual(dispatcher.dispatch(edit, context: noPlan, source: .rules), .rejected("no plan"))
         XCTAssertEqual(dispatcher.dispatch(AssistantAction(name: .nearMe), context: context, source: .model), .rejected("needs location"))
-        var clip = context
-        clip.isAppClip = true
-        XCTAssertEqual(dispatcher.dispatch(edit, context: clip, source: .rules), .rejected("not in the App Clip"))
-        if case .executed = dispatcher.dispatch(like, context: clip, source: .rules) {} else { XCTFail("like in the App Clip") }
-        XCTAssertEqual(recorder.ran, ["reminders", "reminders", "like", "plan_edit", "like"])
+        // The App Clip runs the same assistant as the app (no write restriction on iOS).
+        XCTAssertEqual(recorder.ran, ["reminders", "reminders", "like", "plan_edit"])
     }
 
     func testJSONRoundTrip() {
@@ -95,7 +92,7 @@ final class AssistantBlocksTests: XCTestCase {
             .compare(a: "plan:chill", b: "plan:everything"),
             .planDiff(PlanDiff(removed: [103], added: [107], moved: [PlanDiff.Move(from: 109, to: 115)])),
             .plan(day: PlanDate(year: 2026, month: 11, day: 14)), .setting("reminders"), .summary("walking"),
-            .share("item:s101"), .calendar(plan: true), .chips([AssistantChip(label: "Liked", action: AssistantAction(name: .liked))]),
+            .share("item:s101"), .chips([AssistantChip(label: "Liked", action: AssistantAction(name: .liked))]),
             .confirm(action: .toggle(.reminders, on: true), prompt: "Sure?"),
         ]
         for block in blocks {
@@ -103,6 +100,8 @@ final class AssistantBlocksTests: XCTestCase {
         }
         XCTAssertEqual(BlockJSON.encode(AssistantBlock.placeCard(id: 6, show: ["image"])).encoded, #"{"type":"place_card","id":"l6","show":["image"]}"#)
         XCTAssertEqual(BlockJSON.decode(json(#"{"type":"hologram"}"#)), .unknown)
+        // Android's calendar block isn't an iOS type: dropped like any unknown one.
+        XCTAssertEqual(BlockJSON.decode(json(#"{"type":"calendar","ids":[],"plan":true}"#)), .unknown)
         XCTAssertEqual(BlockJSON.decode(json(#"{"type":"item_card"}"#)), .malformed("item_card"))
         XCTAssertEqual(BlockJSON.decode(json(#"{"type":"list","ids":["x12"]}"#)), .malformed("list"))
         // Ids as numbers or upper case are read.

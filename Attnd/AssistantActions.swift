@@ -1,5 +1,5 @@
 // AssistantActions.swift
-// Attnd (app target only — not in the App Clip; unit tested in AssistantBlocksTests)
+// Attnd (app + App Clip; unit tested in AssistantBlocksTests)
 //
 // The event assistant's action layer (assistant spec §1), a port of Android's
 // `domain/AssistantActions.kt`: one registry (`ActionName`: name, params, mutates, confirm,
@@ -98,7 +98,7 @@ enum ConfirmKind: Hashable, Sendable {
     case none
     /// A `confirm` block (Yes / No) first.
     case chip
-    /// The OS sheet (share, calendar) is the confirmation.
+    /// The OS sheet (share) is the confirmation.
     case sheet
 }
 
@@ -130,7 +130,7 @@ enum ActionName: String, CaseIterable, Hashable, Sendable {
     case dayRoute = "day_route"
     // Write
     case like, unlike, planMake = "plan_make", planEdit = "plan_edit", planUndo = "plan_undo", planVersion = "plan_version"
-    case checkoff, followLockScreen = "follow_lock_screen", reminders, notifications, addToCalendar = "add_to_calendar"
+    case checkoff, followLockScreen = "follow_lock_screen", reminders, notifications
     case sharePlan = "share_plan", shareItem = "share_item", open, directions
 
     var key: String { rawValue }
@@ -159,7 +159,6 @@ enum ActionName: String, CaseIterable, Hashable, Sendable {
         case .planVersion: return [p("kind", .enumeration, true, "chill", "everything")]
         case .checkoff: return [p("item", .scheduleId, true), p("done", .bool, true)]
         case .followLockScreen, .reminders, .notifications: return [p("on", .bool, true)]
-        case .addToCalendar: return [p("ids", .entities, false), p("plan", .bool, false)]
         case .shareItem: return [p("id", .scheduleId, true)]
         case .open: return [ActionParam(name: "screen", type: .enumeration, required: true, values: assistantOpenScreens), p("id", .entity, false)]
         case .directions: return [p("location", .locationId, true)]
@@ -169,7 +168,7 @@ enum ActionName: String, CaseIterable, Hashable, Sendable {
     var mutates: Bool {
         switch self {
         case .like, .unlike, .planMake, .planEdit, .planUndo, .planVersion, .checkoff, .followLockScreen, .reminders,
-             .notifications, .addToCalendar, .sharePlan, .shareItem:
+             .notifications, .sharePlan, .shareItem:
             return true
         default:
             return false
@@ -179,7 +178,7 @@ enum ActionName: String, CaseIterable, Hashable, Sendable {
     var confirm: ConfirmKind {
         switch self {
         case .followLockScreen, .reminders, .notifications: return .chip
-        case .addToCalendar, .sharePlan, .shareItem: return .sheet
+        case .sharePlan, .shareItem: return .sheet
         default: return .none
         }
     }
@@ -200,7 +199,7 @@ enum ActionName: String, CaseIterable, Hashable, Sendable {
         case .dayRoute: return .dayRoute
         case .planEdit, .planVersion: return .planDiff
         case .followLockScreen, .reminders, .notifications: return .setting
-        case .addToCalendar, .sharePlan, .shareItem: return .sheet
+        case .sharePlan, .shareItem: return .sheet
         case .open, .directions: return .navigation
         }
     }
@@ -222,10 +221,8 @@ enum ActionName: String, CaseIterable, Hashable, Sendable {
     }
 
     /// Manual-only actions: never offered to or accepted from the assistant.
-    static let neverAvailable: Set<String> = ["leave_event", "debug_mode", "copy_support_info"]
-
-    /// The App Clip's rule-based assistant may only like / unlike among the writes.
-    static let appClipWrites: Set<ActionName> = [.like, .unlike]
+    /// iOS adds `add_to_calendar` (Nov 19, 2026: no Add to Calendar on iOS; Android keeps it).
+    static let neverAvailable: Set<String> = ["leave_event", "debug_mode", "copy_support_info", "add_to_calendar"]
 }
 
 /// An action call: a registry name and its JSON params (ids as "s12" / "l3" / "u9", or numbers).
@@ -295,7 +292,6 @@ struct AssistantAction: Hashable, Sendable {
     static func planVersion(_ kind: PlanVersionKind) -> AssistantAction { AssistantAction(name: .planVersion, params: ["kind": .string(kind.key)]) }
     static func directions(_ locationId: Int) -> AssistantAction { AssistantAction(name: .directions, params: ["location": .string("l\(locationId)")]) }
     static func simple(_ name: ActionName) -> AssistantAction { AssistantAction(name: name) }
-    static func calendarPlan() -> AssistantAction { AssistantAction(name: .addToCalendar, params: ["plan": .bool(true)]) }
 }
 
 /// Where an action came from: the model and the rule-based router are the assistant; buttons are manual.
@@ -307,7 +303,6 @@ struct ActionContext: Sendable {
     var now: Date
     var hasLocation = false
     var hasPlan = false
-    var isAppClip = false
 }
 
 /// Result of a validation: the action (params checked) or why it was refused.
@@ -321,8 +316,7 @@ enum ActionRegistry {
     /// Validates `name` + `params` (from the model, the router or a chip): the name must be in the
     /// registry and not `neverAvailable`; every required param present; ids must exist in the
     /// bundle (like/unlike: `id` of the given `kind`); times "HH:MM"; days event days; enums in
-    /// their values; `ops` readable plan ops; calendar `ids` at least one existing schedule ref or
-    /// `plan` true.
+    /// their values; `ops` readable plan ops.
     static func check(_ name: String?, _ params: JSONObject?, _ bundle: EventBundle, now: Date) -> ActionCheck {
         if let key = name?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), ActionName.neverAvailable.contains(key) {
             return .invalid("not available to the assistant")
@@ -336,12 +330,7 @@ enum ActionRegistry {
             }
             if !valid(param, element, values, bundle, now) { return .invalid("bad \(param.name)") }
         }
-        let checked = AssistantAction(name: action, params: values)
-        if action == .addToCalendar, checked.bool("plan") != true,
-           !checked.refs("ids").contains(where: { $0.kind == .schedule && $0.exists(bundle) }) {
-            return .invalid("nothing to add")
-        }
-        return .valid(checked)
+        return .valid(AssistantAction(name: action, params: values))
     }
 
     private static func valid(_ param: ActionParam, _ element: JSONValue, _ all: JSONObject, _ bundle: EventBundle, _ now: Date) -> Bool {
@@ -437,7 +426,7 @@ enum ActionDispatch: Hashable, Sendable {
 }
 
 /// Validates, confirms and runs actions. Order: registry check; `needsLocation` without a location
-/// → rejected; in the App Clip only like/unlike may write; plan edits / undo / versions /
+/// → rejected; plan edits / undo / versions /
 /// check-offs / share plan need a plan; a chip-confirmed action from the assistant needs
 /// `confirmed` (manual buttons are their own confirmation); then the executor, with the Undo when
 /// the action has one and succeeded.
@@ -450,7 +439,6 @@ struct ActionDispatcher {
         }
         let name = action.name
         if name.needsLocation && !context.hasLocation { return .rejected("needs location") }
-        if context.isAppClip && name.mutates && !ActionName.appClipWrites.contains(name) { return .rejected("not in the App Clip") }
         if [.planEdit, .planUndo, .planVersion, .checkoff, .sharePlan].contains(name) && !context.hasPlan {
             return .rejected("no plan")
         }

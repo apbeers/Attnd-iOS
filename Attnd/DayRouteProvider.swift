@@ -1,5 +1,5 @@
 // DayRouteProvider.swift
-// Attnd (app target only — not in the App Clip)
+// Attnd (app + App Clip)
 //
 // The plan's walking legs on real paths (assistant spec §5): `DayRoutes.of` gives the stops and
 // the straight-line estimate at once; this provider asks MapKit for a walking route per leg

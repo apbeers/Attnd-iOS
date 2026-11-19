@@ -1,5 +1,5 @@
 // WhyNot.swift
-// Attnd (app target only — not in the App Clip; unit tested in AssistantExtrasTests)
+// Attnd (app + App Clip; unit tested in AssistantExtrasTests)
 //
 // "Why isn't X in my plan?" (assistant spec §7), a port of Android's `domain/WhyNot.kt`: the first
 // reason that applies, in the planner's own terms — no plan; already planned; removed by the

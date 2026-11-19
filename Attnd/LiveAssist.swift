@@ -1,5 +1,5 @@
 // LiveAssist.swift
-// Attnd (app target only — not in the App Clip; unit tested in AssistantExtrasTests)
+// Attnd (app + App Clip; unit tested in AssistantExtrasTests)
 //
 // Live plan rules (assistant spec §6), a port of Android's `domain/LiveAssist.kt`; all local and
 // pure, time and location are inputs:

@@ -210,81 +210,12 @@ final class PlanPageTests: XCTestCase {
     }
 
     func testSummaryPrompt() {
-        let prompt = PlanPage.summaryPrompt(plan, saturday, bundle, forecast: "Sat Nov 14: 72°F / 58°F, sunny", locale: enUS)
+        let prompt = PlanPage.summaryPrompt(plan, saturday, bundle, locale: enUS)
         let lines = prompt.components(separatedBy: "\n")
-        XCTAssertEqual(Array(lines.prefix(4)), [
-            "EVENT: \(bundle.event.name)", "DAY: Saturday, Nov 14", "WEATHER: Sat Nov 14: 72°F / 58°F, sunny", "PLAN:",
+        XCTAssertEqual(Array(lines.prefix(3)), [
+            "EVENT: \(bundle.event.name)", "DAY: Saturday, Nov 14", "PLAN:",
         ])
-        XCTAssertEqual(lines[4], "- 10:00 AM Gates open at General (general, free)")
+        XCTAssertEqual(lines[3], "- 10:00 AM Gates open at General (general, free)")
         XCTAssertTrue(lines.contains("- 12:00 PM Lunch break near Main Stage") || lines.contains { $0.hasPrefix("- 12:00 PM Lunch") })
-    }
-
-    // MARK: Weather
-
-    private func forecast(fetchedAt: Date) -> PlanForecast {
-        PlanForecast(
-            eventId: 1, fetchedAt: fetchedAt, latitude: 32.75, longitude: -97.33,
-            days: [
-                PlanDayForecast(date: "2026-11-14", high: 22.2, low: 14.4, precipitationChance: 0.4, symbol: "cloud.sun.rain", condition: "Scattered Showers"),
-                PlanDayForecast(date: "2026-11-15", high: 18, low: 9.6, precipitationChance: 0.1, symbol: "sun.max", condition: "Sunny"),
-            ],
-            hours: [
-                PlanHourForecast(date: PlannerFixture.sat("06:00"), temperature: 15, precipitationChance: 0.6, symbol: "cloud.rain"),
-                PlanHourForecast(date: PlannerFixture.sat("14:00"), temperature: 21, precipitationChance: 0.2, symbol: "cloud"),
-                PlanHourForecast(date: PlannerFixture.sat("15:00"), temperature: 21, precipitationChance: 0.45, symbol: "cloud.rain"),
-            ]
-        )
-    }
-
-    func testWeatherChipAndSpokenText() {
-        let f = forecast(fetchedAt: now)
-        XCTAssertEqual(PlanWeather.chipText(f.days[0], fahrenheit: true), "72°/58° · 40%")
-        XCTAssertEqual(PlanWeather.chipText(f.days[0], fahrenheit: false), "22°/14° · 40%")
-        XCTAssertEqual(PlanWeather.chipText(f.days[1], fahrenheit: true), "64°/49°", "rain below 30 % isn't shown")
-        XCTAssertEqual(PlanWeather.spokenText(f.days[0], fahrenheit: true), "Scattered Showers, high 72°, low 58°, 40% chance of rain")
-        XCTAssertEqual(f.day(saturday)?.condition, "Scattered Showers")
-        XCTAssertNil(f.day(saturday.adding(days: 5)), "only days in the forecast's range")
-    }
-
-    func testWeatherPromptLines() {
-        let f = forecast(fetchedAt: now)
-        XCTAssertEqual(PlanWeather.rainStart(f, saturday, zone: PlannerFixture.chicago, locale: enUS), "after 3 PM", "the 6 AM shower is before 8")
-        XCTAssertEqual(PlanWeather.promptLines(f, days: [saturday, saturday.adding(days: 1), saturday.adding(days: 2)],
-                                               zone: PlannerFixture.chicago, fahrenheit: true, locale: enUS), [
-            "Sat Nov 14: 72°F / 58°F, scattered showers, 40% rain after 3 PM",
-            "Sun Nov 15: 64°F / 49°F, sunny",
-        ])
-        XCTAssertEqual(PlanWeather.promptLines(nil, days: [saturday], zone: PlannerFixture.chicago, fahrenheit: true, locale: enUS), [])
-    }
-
-    func testWeatherFetchRuleAndAsOf() {
-        let point = Coordinate(latitude: 32.75, longitude: -97.33)
-        XCTAssertTrue(PlanWeather.needsFetch(nil, at: point, now: now))
-        XCTAssertFalse(PlanWeather.needsFetch(forecast(fetchedAt: now.addingTimeInterval(-1800)), at: point, now: now))
-        XCTAssertTrue(PlanWeather.needsFetch(forecast(fetchedAt: now.addingTimeInterval(-3600)), at: point, now: now))
-        XCTAssertTrue(PlanWeather.needsFetch(forecast(fetchedAt: now), at: Coordinate(latitude: 33.0, longitude: -97.33), now: now))
-        XCTAssertTrue(PlanWeather.needsFetch(forecast(fetchedAt: now.addingTimeInterval(600)), at: point, now: now), "a clock change")
-        let zone = PlannerFixture.chicago
-        XCTAssertEqual(PlanWeather.asOfText(PlannerFixture.sat("14:14"), now: PlannerFixture.sat("16:00"), zone: zone, locale: enUS), "as of 2:14 PM")
-        XCTAssertEqual(PlanWeather.asOfText(PlannerFixture.sat("14:14"), now: PlannerFixture.sun("09:00"), zone: zone, locale: enUS), "as of Sat 2:14 PM")
-    }
-
-    func testWeatherCoordinate() {
-        XCTAssertNotNil(PlanWeather.coordinate(bundle))
-        var noEvent = bundle
-        noEvent.event.latitude = nil
-        noEvent.event.longitude = nil
-        let centre = PlanWeather.coordinate(noEvent)
-        let points = bundle.locations.compactMap(\.coordinate)
-        XCTAssertEqual(centre?.latitude ?? 0, points.map(\.latitude).reduce(0, +) / Double(points.count), accuracy: 1e-9)
-        noEvent.locations = []
-        XCTAssertNil(PlanWeather.coordinate(noEvent))
-    }
-
-    func testForecastCodecRoundTrip() {
-        let f = forecast(fetchedAt: Date(timeIntervalSince1970: 1_794_000_000))
-        XCTAssertEqual(PlanForecast.decode(f.encoded()), f)
-        XCTAssertNil(PlanForecast.decode(Data("{}".utf8)))
-        XCTAssertNil(PlanForecast.decode(nil))
     }
 }

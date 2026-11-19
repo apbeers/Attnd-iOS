@@ -1,5 +1,5 @@
 // PlanView.swift
-// Attnd (app target only — not in the App Clip)
+// Attnd (app + App Clip)
 //
 // The plan page (planner_view_spec §3, iOS, Nov 19, 2026): a trip-style itinerary, the body of
 // the full-screen plan page (AssistantView.swift), never a conversation. Rules in PlanPage.swift.
@@ -8,7 +8,7 @@
 //     is highlighted while scrolling (`scrollPosition(id:)`).
 //   - "Your plan changed" (organizer changes, Re-plan / Keep as Is) and the live hints (running
 //     late, gap fillers, skipped items, the day's recap).
-//   - Per day: the header (date, the WeatherKit chip with Apple's attribution, item count, a
+//   - Per day: the header (date, item count, a
 //     one-line on-device summary + "Read more", the route on a mini map), then a timeline rail
 //     with an icon per row: item cards (location photo, time, Now / Next / "in 20 min", name,
 //     place, tags, the planner's reason, like, check-off once started, Change and Remove), walk
@@ -20,7 +20,7 @@
 //     Compare with the planned item); picking one previews it in place, the pill's Apply
 //     commits it with Undo.
 //   - `PlanBottomBar` (above the text box): "8 items · 10 AM – 11 PM · 2.1 mi walking", Share,
-//     Add to calendar, Undo, More (Re-plan from Now, New Plan).
+//     Undo, More (Re-plan from Now, New Plan).
 //   - No plan yet: the example requests (`PlanRequest.examples`) and the liked items.
 // Rows are small views of their own (the type checker stays fast).
 
@@ -242,7 +242,6 @@ private struct PlanDayHeader: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
-            DayWeatherChip(date: day.date)
             DaySummaryText(plan: plan, date: day.date, expanded: $expanded)
             if let route, route.stops.count >= 2 {
                 Button(showsMap ? "Hide Route" : "Show Route", systemImage: "map") {
@@ -267,30 +266,6 @@ private struct PlanDayHeader: View {
     }
 }
 
-/// "☀︎ 72°/58° · 40%" with the Apple Weather attribution and "as of"; nothing outside the forecast.
-private struct DayWeatherChip: View {
-    let date: PlanDate
-
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        let store = appState.weather
-        if let forecast = store.forecast, forecast.eventId == appState.currentEvent?.id, let day = forecast.day(date) {
-            let fahrenheit = WeatherStore.usesFahrenheit
-            VStack(alignment: .leading, spacing: 4) {
-                Label(PlanWeather.chipText(day, fahrenheit: fahrenheit), systemImage: day.symbol)
-                    .font(.subheadline.weight(.semibold))
-                    .symbolRenderingMode(.multicolor)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(Color.accentColor.opacity(0.12), in: .capsule)
-                    .accessibilityLabel(PlanWeather.spokenText(day, fahrenheit: fahrenheit))
-                WeatherAttributionView(store: store, asOf: PlanWeather.asOfText(forecast.fetchedAt, now: .now))
-            }
-        }
-    }
-}
-
 /// The day's one-line summary (on-device AI, cached; else the plain summary) + "Read more".
 private struct DaySummaryText: View {
     let plan: Plan
@@ -301,8 +276,7 @@ private struct DaySummaryText: View {
 
     var body: some View {
         if let bundle = appState.currentBundle {
-            let forecastLine = appState.weather.promptLines(bundle).first { $0.hasPrefix(dayPrefix) }
-            let summary = appState.daySummaries.summary(plan, date, bundle, forecast: forecastLine, modelAvailable: appState.hasAssistant)
+            let summary = appState.daySummaries.summary(plan, date, bundle, modelAvailable: appState.hasAssistant)
             VStack(alignment: .leading, spacing: 4) {
                 Text(summary.line)
                     .font(.subheadline)
@@ -320,12 +294,6 @@ private struct DaySummaryText: View {
                 }
             }
         }
-    }
-
-    /// "Sat Nov 14" (PlanWeather.promptLines' label for the day).
-    private var dayPrefix: String {
-        let utc = TimeZone(identifier: "UTC") ?? .current
-        return AssistantText.format(date.at(PlanClock(hour: 12, minute: 0), in: PlanCalendar.calendar(utc)), "EEE MMM d", utc, .current)
     }
 }
 
@@ -717,10 +685,9 @@ private struct PageSuggestionRow: View {
 
 // MARK: - Bottom bar
 
-/// "8 items · 10 AM – 11 PM · 2.1 mi walking" with Share, Add to calendar, Undo and More.
+/// "8 items · 10 AM – 11 PM · 2.1 mi walking" with Share, Undo and More.
 struct PlanBottomBar: View {
     @Environment(AppState.self) private var appState
-    @State private var showsCalendar = false
 
     var body: some View {
         if let bundle = appState.currentBundle, let plan = appState.planner.plan, !plan.isEmpty {
@@ -731,7 +698,6 @@ struct PlanBottomBar: View {
                     .minimumScaleFactor(0.8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 PlanShareButton()
-                Button("Add to Calendar", systemImage: "calendar.badge.plus") { showsCalendar = true }
                 if appState.planner.canUndo {
                     Button("Undo", systemImage: "arrow.uturn.backward") { appState.assistant.undoLastChange() }
                 }
@@ -743,10 +709,6 @@ struct PlanBottomBar: View {
             .padding(.trailing, 8)
             .padding(.vertical, 8)
             .glassEffect(.regular, in: .capsule)
-            .sheet(isPresented: $showsCalendar) {
-                PlanCalendarSheet(itemIds: plan.itemIds)
-                    .environment(appState)
-            }
         }
     }
 
@@ -792,31 +754,6 @@ private struct PlanMoreMenu: View {
         } label: {
             Label("More", systemImage: "ellipsis.circle")
         }
-    }
-}
-
-/// "Add to calendar" for the whole plan: one Add per item (CalendarCard).
-private struct PlanCalendarSheet: View {
-    let itemIds: [Int]
-
-    @Environment(AppState.self) private var appState
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                CalendarCard(items: itemIds.compactMap { appState.currentBundle?.scheduleItem($0) }, title: "Your plan")
-                    .padding(16)
-            }
-            .navigationTitle("Add to Calendar")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close", systemImage: "xmark", role: .close) { dismiss() }
-                }
-            }
-        }
-        .presentationDetents([.medium, .large])
     }
 }
 

@@ -1,5 +1,5 @@
 // PlanProposal.swift
-// Attnd (app target only — not in the App Clip; pure, unit tested in PlanProposalTests — same
+// Attnd (app + App Clip; pure, unit tested in PlanProposalTests — same
 // rules and cases as Android's `domain/PlanProposal.kt`)
 //
 // The plan panel edits the plan in place (plan tab spec, Nov 15, 2026; on iOS the panel of the "My plan" button): a turn that would change

@@ -1,5 +1,5 @@
 // DayRoute.swift
-// Attnd (app target only — not in the App Clip; unit tested in AssistantExtrasTests)
+// Attnd (app + App Clip; unit tested in AssistantExtrasTests)
 //
 // The plan's walking legs (assistant spec §5), a port of Android's `domain/DayRoute.kt`:
 // numbered stops (consecutive items at one location share a stop), legs between them as the

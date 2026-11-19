@@ -25,7 +25,6 @@ IGNORED = {"application-identifier", "com.apple.developer.team-identifier", "key
 # Capability names for the error message.
 NAMES = {
     "com.apple.security.application-groups": "App Groups",
-    "com.apple.developer.weatherkit": "WeatherKit",
     "aps-environment": "Push Notifications",
     "com.apple.developer.associated-domains": "Associated Domains",
     "com.apple.developer.usernotifications.time-sensitive": "Time Sensitive Notifications",

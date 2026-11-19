@@ -1,9 +1,9 @@
 // AssistantView.swift
-// Attnd (app target only — not in the App Clip)
+// Attnd (app + App Clip)
 //
 // The plan page's frame (planner_view_spec, iOS, Nov 19, 2026; it replaced the snapping plan
-// panel). Only with Apple Intelligence's on-device model (`AppState.hasAssistant`); without it,
-// like screenshot mode and the App Clip, the floating search button and sheet instead.
+// panel). Only with Apple Intelligence's on-device model (`AppState.hasAssistant`); without it
+// (and in screenshot mode) the floating search button and sheet instead.
 //   - Closed: the floating Liquid Glass "My plan" button (`sparkles`, bottom-trailing on every
 //     tab) with a small peek of the plan ("Next: Juniper Lane · 11:00 AM · Main Stage",
 //     `PlanPanel.summaryLine`).
@@ -358,8 +358,7 @@ private struct DockFocus: ViewModifier {
     }
 }
 
-/// While the page is shown: live hints once a minute, distances (location already permitted),
-/// the forecast at most hourly.
+/// While the page is shown: live hints once a minute, distances (location already permitted).
 private struct PageLiveTasks: ViewModifier {
     @Environment(AppState.self) private var appState
 
@@ -370,12 +369,6 @@ private struct PageLiveTasks: ViewModifier {
                 while !Task.isCancelled {
                     appState.assistant.refreshLive()
                     try? await Task.sleep(for: .seconds(60))
-                }
-            }
-            .task(id: appState.currentEvent?.id) {
-                while !Task.isCancelled {
-                    if let bundle = appState.currentBundle { await appState.weather.refreshIfNeeded(bundle) }
-                    try? await Task.sleep(for: .seconds(PlanWeather.refreshInterval))
                 }
             }
     }

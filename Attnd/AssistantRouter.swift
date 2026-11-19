@@ -1,12 +1,13 @@
 // AssistantRouter.swift
-// Attnd (app target only — not in the App Clip for now; unit tested in AssistantRouterTests)
+// Attnd (app + App Clip; unit tested in AssistantRouterTests)
 //
 // The rule-based assistant (assistant spec §3; every phone, pure), a port of Android's
 // `domain/AssistantRouter.kt` grammar rules 1–29 with the same fixtures and exact block JSON.
 // `route` reads the input (folded: lower case, accents dropped, everything but letters, digits
 // and ':' as spaces) as a small command grammar, first match wins:
 //  1. empty → EMPTY (suggestion chips).  2. "undo" → `plan_undo`.
-//  3. "add <x | my plan> to (my) calendar" → `calendar`.
+//  3. "add <x | my plan> to (my) calendar" → `calendar`: on iOS a "not available" text (+ Share my
+//     plan); no Add to Calendar here since Nov 19, 2026 (Android adds it).
 //  4. "replace | swap <a> with | for <b>" (b = "something like <item>", "something <tag>", a tag,
 //     else an item; a prefers planned items) → `plan_edit replace`.
 //  5. "remove | drop | skip | cancel <a>" → remove.  6. "add <a> (to my plan)" → add.
@@ -35,15 +36,13 @@ struct RouterContext: Sendable {
     var now: Date
     /// The user's position, only when location is permitted and known.
     var user: Coordinate? = nil
-    /// The planner may make plans (model available, not the App Clip).
+    /// The planner may make plans (model available).
     var canPlan = true
     /// Ask (the on-device model) is available; the router is then only the fallback.
     var modelAvailable = false
     var history = PlanHistory()
     var units: DistanceUnits = .imperial
     var locale = Locale(identifier: "en_US")
-    /// The cached forecast for the event's days (`PlanWeather.promptLines`; empty without one).
-    var weather: [String] = []
 
     var blockContext: BlockContext { BlockContext(bundle: bundle, plan: plan, now: now) }
 }
@@ -98,15 +97,10 @@ enum AssistantRouter {
                 : done(.planUndo, [.text("There's nothing to undo.")], ctx)
         }
 
-        if let m = Rx.find(#"^(?:add|put|save)\s+(.+?)\s+(?:to|in|on)\s+(?:my\s+)?calendar$"#, cmd) {
-            let what = m[1]
-            if what == "plan" || what == "my plan" {
-                guard plan != nil else { return noPlan(ctx) }
-                return done(.calendar, [.calendar(plan: true)], ctx)
-            }
-            return withEntity(what, [.schedule], ctx, .calendar, chip: { AssistantChip(label: name($0, ctx), action: calendarAction($0)) }) { ref in
-                done(.calendar, [.calendar(ids: [ref.id])], ctx)
-            }
+        if Rx.matches(#"^(?:add|put|save)\s+(.+?)\s+(?:to|in|on)\s+(?:my\s+)?calendar$"#, cmd) {
+            var blocks: [AssistantBlock] = [.text(calendarText)]
+            if plan != nil { blocks.append(chips([AssistantChip(label: "Share my plan", action: AssistantAction(name: .sharePlan))])) }
+            return done(.calendar, blocks, ctx)
         }
 
         if let turn = planCommand(cmd, ctx) { return turn }
@@ -120,7 +114,7 @@ enum AssistantRouter {
 
         if Rx.matches(#"share\s+(?:my\s+)?plan"#, cmd) {
             guard plan != nil else { return noPlan(ctx) }
-            return done(.share, [.share("plan"), chips([AssistantChip(label: "Add my plan to calendar", action: .calendarPlan())])], ctx)
+            return done(.share, [.share("plan")], ctx)
         }
         if let m = Rx.find(#"^share\s+(.+)$"#, cmd) {
             return withEntity(m[1], [.schedule], ctx, .share, chip: { ref in
@@ -473,9 +467,7 @@ enum AssistantRouter {
         }
     }
 
-    private static func calendarAction(_ ref: EntityRef) -> AssistantAction {
-        AssistantAction(name: .addToCalendar, params: ["ids": .array([.string(ref.code)])])
-    }
+    static let calendarText = "Attnd doesn't add things to your calendar."
 
     // MARK: Likes
 
@@ -662,7 +654,6 @@ enum AssistantRouter {
         guard let plan = ctx.plan else { return [] }
         var list = [
             AssistantChip(label: "Share my plan", action: AssistantAction(name: .sharePlan)),
-            AssistantChip(label: "Add my plan to calendar", action: .calendarPlan()),
             AssistantChip(label: PlanVersionKind.chill.label + " version", action: .planVersion(.chill)),
         ]
         if ctx.history.canUndo { list.append(AssistantChip(label: "Undo", action: AssistantAction(name: .planUndo))) }

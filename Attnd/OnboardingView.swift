@@ -9,7 +9,7 @@
 //   2. Location: walk times, the compass arrow, what's nearby → the permission prompt.
 //   3. Notifications (full app): set-time changes and reminders for hearts → the prompt.
 //   4. "Plan your day", only when Apple Intelligence's on-device model is available
-//      (`AppState.plannerAvailable`; never in the App Clip): example requests built from this
+//      (`AppState.plannerAvailable`; app and App Clip): example requests built from this
 //      event's tags (`PlanRequest.examples`, the same as Android's). A plan chip makes the plan
 //      and opens the plan page (spec §6); the question chip opens Ask with it.
 
@@ -40,18 +40,12 @@ struct OnboardingView: View {
     }
 
     private var hasPlanCard: Bool {
-        #if APP_CLIP
-        return false
-        #else
         return AppState.plannerAvailable && !examples.isEmpty
-        #endif
     }
 
-    #if !APP_CLIP
     private var examples: [PlanExample] {
         appState.currentBundle.map { PlanRequest.examples($0, now: .now) } ?? []
     }
-    #endif
 
     var body: some View {
         let cards = self.cards
@@ -164,7 +158,6 @@ struct OnboardingView: View {
 
     @ViewBuilder
     private var planCard: some View {
-        #if !APP_CLIP
         CardLayout(systemImage: "wand.and.stars", title: "Plan your day") {
             Text("Say what you'd like in your own words. Apple Intelligence builds a plan on your iPhone from the event's schedule, your likes and walking times.")
                 .foregroundStyle(.secondary)
@@ -180,7 +173,6 @@ struct OnboardingView: View {
                 .buttonStyle(.bordered)
             }
         }
-        #endif
     }
 
     private static var hasLocationPermission: Bool {

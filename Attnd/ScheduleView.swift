@@ -465,13 +465,8 @@ struct ScheduleItemDetailView: View {
             }
 
             Section {
-                #if !APP_CLIP
-                // The system's event editor (no calendar permission needed; CalendarCard.swift).
-                AddToCalendarButton(item: item)
-                #endif
-                // Assistant spec §8: the plan page's assistant (only with the on-device model);
-                // the App Clip opens its search sheet with the item's name.
-                if !ScreenshotMode.isActive, appState.hasAssistant || AppState.isAppClip {
+                // Assistant spec §8: the plan page's assistant (only with the on-device model).
+                if !ScreenshotMode.isActive, appState.hasAssistant {
                     Button {
                         appState.askAbout(.scheduleItem(item.id))
                     } label: {

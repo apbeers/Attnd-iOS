@@ -1,5 +1,5 @@
 // AssistantBlockModel.swift
-// Attnd (app target only — not in the App Clip; unit tested in AssistantBlocksTests)
+// Attnd (app + App Clip; unit tested in AssistantBlocksTests)
 //
 // The assistant's response blocks (assistant spec §2), a port of Android's
 // `domain/AssistantBlocks.kt`: ids and options only, the app resolves the data from the bundle
@@ -42,7 +42,6 @@ enum AssistantBlock: Hashable, Sendable {
     case summary(String)
     /// `plan` or `item:s12`.
     case share(String)
-    case calendar(ids: [Int] = [], plan: Bool = false)
     case chips([AssistantChip])
     case confirm(action: AssistantAction, prompt: String)
 
@@ -54,7 +53,7 @@ enum AssistantBlock: Hashable, Sendable {
     static let summaries: Set<String> = ["walking", "recap", "liked_counts"]
     static let types: Set<String> = [
         "text", "item_card", "place_card", "update_card", "list", "carousel", "timeline", "map", "gallery", "now_next",
-        "countdown", "compare", "plan_diff", "plan", "setting", "summary", "share", "calendar", "chips", "confirm",
+        "countdown", "compare", "plan_diff", "plan", "setting", "summary", "share", "chips", "confirm",
     ]
 
     var type: String {
@@ -76,7 +75,6 @@ enum AssistantBlock: Hashable, Sendable {
         case .setting: return "setting"
         case .summary: return "summary"
         case .share: return "share"
-        case .calendar: return "calendar"
         case .chips: return "chips"
         case .confirm: return "confirm"
         }
@@ -144,9 +142,6 @@ enum BlockJSON {
         case .setting(let setting): o["setting"] = .string(setting)
         case .summary(let kind): o["kind"] = .string(kind)
         case .share(let target): o["target"] = .string(target)
-        case .calendar(let ids, let plan):
-            o["ids"] = strings(ids.map { "s\($0)" })
-            if plan { o["plan"] = .bool(true) }
         case .chips(let chips):
             o["chips"] = .array(chips.map { chip in
                 .object(["label": .string(chip.label), "action": .string(chip.action.name.key), "params": .object(chip.action.params)])
@@ -281,15 +276,6 @@ enum BlockJSON {
         case "share":
             guard let target = str("target") else { return malformed }
             block = .share(target.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
-        case "calendar":
-            let plan = flag("plan")
-            var list: [Int] = []
-            if obj.contains("ids") {
-                guard let read = ids("ids", "s") else { return malformed }
-                list = read
-            }
-            if list.isEmpty && !plan { return malformed }
-            block = .calendar(ids: list, plan: plan)
         case "chips":
             guard let values = arr("chips") else { return malformed }
             var chips: [AssistantChip] = []
@@ -355,8 +341,8 @@ struct BlockContext: Sendable {
 /// - `gallery`: locations with an image, ≤ 8; `flyer` only when the event has one.
 /// - `now_next`: an unknown location is dropped. `compare`: both sides valid and different.
 ///   `plan_diff`, `plan` (a plan day or none), `share plan` and `summary walking` need a plan;
-///   `share item:s12` an existing item; `setting`/`summary` known kinds; `calendar` existing ids
-///   or `plan` with a plan.
+///   `share item:s12` an existing item; `setting`/`summary` known kinds. (Android's `calendar` block
+///   isn't an iOS type: it decodes as unknown and is dropped.)
 /// - `chips`: label trimmed, 1–60 characters, valid action, distinct labels, ≤ 5. `confirm`: a
 ///   valid mutating action; an empty prompt gets `ActionRegistry.confirmPrompt`.
 /// Then only the last `chips` block is kept, moved to the end, and the response is cut to 8 blocks.
@@ -467,11 +453,6 @@ enum BlockValidator {
                 return .share("item:\(ref.code)")
             }
             return nil
-        case .calendar(let ids, let plan):
-            let kept = distinct(ids.filter(item))
-            let withPlan = plan && hasPlan
-            if kept.isEmpty && !withPlan { return nil }
-            return .calendar(ids: kept, plan: withPlan)
         case .chips(let chips):
             var seen = Set<String>()
             var kept: [AssistantChip] = []

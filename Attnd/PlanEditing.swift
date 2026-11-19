@@ -1,5 +1,5 @@
 // PlanEditing.swift
-// Attnd (app target only — not in the App Clip; unit tested in PlanEditingTests)
+// Attnd (app + App Clip; unit tested in PlanEditingTests)
 //
 // Plan edits (assistant spec §4), a port of Android's `domain/PlanEditing.kt`: `PlanOp`s become
 // `PlanConstraints` plus one re-solve (`Planner.replan`, rule 20), never hand-moved entries.

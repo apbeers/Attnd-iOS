@@ -667,7 +667,7 @@ struct LocationDetailView: View {
                         .controlSize(.large)
                     }
 
-                    if !ScreenshotMode.isActive, appState.hasAssistant || AppState.isAppClip {
+                    if !ScreenshotMode.isActive, appState.hasAssistant {
                         // Assistant spec §8: the plan page's assistant (the App Clip: its search sheet).
                         Button {
                             appState.askAbout(.location(location.id))

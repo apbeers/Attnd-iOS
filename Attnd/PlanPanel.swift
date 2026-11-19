@@ -1,5 +1,5 @@
 // PlanPanel.swift
-// Attnd (app target only — not in the App Clip; pure, unit tested in PlanPanelTests)
+// Attnd (app + App Clip; pure, unit tested in PlanPanelTests)
 //
 // The rules of the plan page's dock that outlived the snapping plan panel (retired Nov 19, 2026
 // for the full-page plan, PlanPage.swift; the plan page spec in attnd-web docs/specs/

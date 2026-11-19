@@ -1,10 +1,9 @@
 // AssistantBlockView.swift
-// Attnd (app target only — not in the App Clip)
+// Attnd (app + App Clip)
 //
 // The block renderer (assistant spec §2): every `AssistantBlock` (ids and options only) is
 // resolved against the shown bundle and drawn with the component library
-// (`Components/AssistantCards.swift`, `AssistantBlocks.swift`, `ShareCard.swift`,
-// `CalendarCard.swift`). Ids that no longer exist render nothing (the validator ran when the
+// (`Components/AssistantCards.swift`, `AssistantBlocks.swift`, `ShareCard.swift`). Ids that no longer exist render nothing (the validator ran when the
 // turn was made; a content update can still remove items). One small view per block type, so
 // no view body grows big enough to slow the type checker.
 //
@@ -75,8 +74,6 @@ struct AssistantBlockView: View {
             SummaryBlock(kind: kind)
         case .share(let target):
             ShareBlock(target: target)
-        case .calendar(let ids, let plan):
-            CalendarBlock(ids: ids, plan: plan)
         case .chips(let chips):
             ChipsBlock(chips: chips)
         case .confirm(_, let prompt):
@@ -291,7 +288,7 @@ enum PlanDiffRows {
     }
 }
 
-// MARK: - Summary, share, calendar
+// MARK: - Summary, share
 
 private struct SummaryBlock: View {
     let kind: String
@@ -383,23 +380,6 @@ private struct ShareBlock: View {
     }
 }
 
-private struct CalendarBlock: View {
-    let ids: [Int]
-    let plan: Bool
-
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        if let bundle = appState.currentBundle {
-            let itemIds = plan ? (appState.planner.plan?.itemIds ?? []) : ids
-            let items = itemIds.compactMap { bundle.scheduleItem($0) }
-            if !items.isEmpty {
-                CalendarCard(items: items, title: plan ? "My plan" : nil)
-            }
-        }
-    }
-}
-
 // MARK: - Chips and confirm
 
 private struct ChipsBlock: View {
@@ -424,7 +404,6 @@ private struct ChipsBlock: View {
         case .planUndo: return "arrow.uturn.backward"
         case .planEdit, .planVersion: return "list.bullet.clipboard"
         case .sharePlan, .shareItem: return "square.and.arrow.up"
-        case .addToCalendar: return "calendar.badge.plus"
         case .planMake: return "sparkles"
         default: return nil
         }

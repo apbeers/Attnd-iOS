@@ -1,5 +1,5 @@
 // Planner.swift
-// Attnd (app target only — not in the App Clip; unit tested in PlannerTests)
+// Attnd (app + App Clip; unit tested in PlannerTests)
 //
 // The planner's deterministic core (shared spec §6, "build me a plan"). A port of Android's
 // `domain/Planner.kt`, `PlanSimilarity.kt` and `PlanCodec.kt` rule for rule, with the same

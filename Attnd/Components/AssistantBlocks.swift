@@ -2,7 +2,7 @@
 // Attnd (app + App Clip)
 //
 // The event assistant's component library, part 2 (assistant spec §2; part 1 is
-// AssistantCards.swift, the share block is ShareCard.swift, the calendar block CalendarCard.swift):
+// AssistantCards.swift, the share block is ShareCard.swift):
 //
 //   - MiniMap (`map`: pins, a numbered walking route, the user's dot; tap → the full map)
 //   - Gallery (`gallery`: location images or the flyer)

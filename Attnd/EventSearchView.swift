@@ -1,9 +1,10 @@
 // EventSearchView.swift
 // Attnd
 //
-// The search sheet of the App Clip and of screenshot mode (the full app searches from My plan's
-// input bar, AssistantView.swift, which reuses this file's result rows and destinations; there
-// this sheet only shows items of hidden tabs pushed by `navigate(to:)`): one
+// The search sheet without the on-device model and in screenshot mode (with the model, the app
+// and the App Clip search from the plan page's text box, AssistantView.swift, which reuses this
+// file's result rows and destinations; there this sheet only shows items of hidden tabs pushed
+// by `navigate(to:)`): one
 // local search across the joined event — schedule, locations, organizer updates and the
 // event itself (EventSearch). Works offline; the query never leaves the device (only the
 // fact of a search is counted, API-005).
@@ -18,11 +19,11 @@
 // brings up the keyboard on iOS 26 (programmatic focus of the bottom-bar search field
 // doesn't), and `searchFocused` asks for focus as well.
 //
-// In the full app, a question typed here offers "Ask" when the on-device model is available
+// A question typed here offers "Ask" when the on-device model is available
 // (Apple Intelligence, EventAssistant.swift): the answer cites the items it used. A request
 // that looks like a plan ("Plan my Saturday around live music") makes one instead (the
 // planner, spec §6) and offers "Open My plan". Without
-// the model (or in the App Clip) the plain results are shown, searching the question's
+// the model the plain results are shown, searching the question's
 // keywords when the question as typed finds nothing.
 
 import SwiftUI
@@ -91,7 +92,7 @@ struct EventSearchView: View {
         case thinking(query: String)
         case answered(query: String, answer: EventAssistantAnswer)
         case failed(query: String)
-        /// A plan request (spec §6, full app): planning, the plan made, or why nothing fits.
+        /// A plan request (spec §6): planning, the plan made, or why nothing fits.
         case planning(query: String)
         case planned(query: String, summary: String, itemIds: [Int])
         case planFailed(query: String, message: String)
@@ -232,9 +233,6 @@ struct EventSearchView: View {
 
     /// "Ask" is offered for questions while Apple Intelligence's on-device model is available.
     private var canAsk: Bool {
-        #if APP_CLIP
-        return false
-        #else
         guard !query.isEmpty, !ScreenshotMode.isActive, EventAssistant.isAvailable else { return false }
         // A question already put to the model (e.g. onboarding's "What's on near me right now?").
         switch assistant {
@@ -247,7 +245,6 @@ struct EventSearchView: View {
         // Plan requests ("Kid-friendly afternoon") make a plan (spec §6).
         if AppState.plannerAvailable, PlanRequest.looksLikePlan(query) { return true }
         return EventSearch.looksLikeQuestion(query) || EventSearch.words(query).count >= 4
-        #endif
     }
 
     @ViewBuilder
@@ -312,13 +309,10 @@ struct EventSearchView: View {
     }
 
     private func openMyPlan() {
-        #if !APP_CLIP
         appState.showMyPlan()
-        #endif
     }
 
     private func ask(_ question: String) async {
-        #if !APP_CLIP
         guard let bundle = appState.currentBundle else { return }
         if AppState.plannerAvailable, PlanRequest.looksLikePlan(question) {
             await plan(question)
@@ -326,17 +320,15 @@ struct EventSearchView: View {
         }
         assistant = .thinking(query: question)
         do {
-            let answer = try await EventAssistant.answer(question, bundle: bundle, now: .now, forecast: appState.weather.promptLines(bundle))
+            let answer = try await EventAssistant.answer(question, bundle: bundle, now: .now)
             guard query == question else { return }
             assistant = .answered(query: question, answer: answer)
         } catch {
             guard query == question else { return }
             assistant = .failed(query: question)
         }
-        #endif
     }
 
-    #if !APP_CLIP
     /// A plan request: the planner makes and stores the plan (the plan panel); the answer
     /// is its summary and items, with "Open My plan".
     private func plan(_ request: String) async {
@@ -353,7 +345,6 @@ struct EventSearchView: View {
             assistant = .planFailed(query: request, message: appState.planner.error ?? AppState.nothingFitsMessage)
         }
     }
-    #endif
 }
 
 // MARK: - Result row

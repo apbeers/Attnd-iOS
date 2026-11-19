@@ -1,5 +1,5 @@
 // AssistantController.swift
-// Attnd (app target only — not in the App Clip)
+// Attnd (app + App Clip)
 //
 // The event assistant at runtime behind the plan page (the floating "My plan" button over every
 // tab, AssistantView.swift / PlanView.swift, rules in PlanPage.swift and PlanPanel.swift; iOS,
@@ -158,8 +158,7 @@ final class AssistantController {
             modelAvailable: available,
             history: appState.planner.history,
             units: DistanceText.usesImperial() ? .imperial : .metric,
-            locale: .current,
-            weather: appState.weather.promptLines(bundle)
+            locale: .current
         )
     }
 
@@ -303,7 +302,7 @@ final class AssistantController {
             var raw: String?
             var toolCalls = 0
             do {
-                let reply = try await EventAssistant.assistantTurn(prompt, bundle: ctx.bundle, now: ctx.now, forecast: ctx.weather) { [weak self] partial in
+                let reply = try await EventAssistant.assistantTurn(prompt, bundle: ctx.bundle, now: ctx.now) { [weak self] partial in
                     guard let self, self.answer?.id == id else { return }
                     let shown = AssistantModel.completeBlocks(partial, ctx).filter { !$0.isChips }
                     if shown != self.answer?.blocks { self.answer?.blocks = shown }
@@ -763,14 +762,6 @@ final class AssistantController {
                 text = on ? "Notifications from the organizer are on." : "Notifications from the organizer are off."
             }
             return .done(message: text, blocks: [.setting(name.key)])
-        case .addToCalendar:
-            if action.bool("plan") == true {
-                guard plan != nil else { return .failed(AssistantRouter.noPlanText) }
-                return .done(blocks: [.calendar(plan: true)])
-            }
-            let ids = action.refs("ids").filter { $0.kind == .schedule }.map(\.id)
-            guard !CalendarEntries.forItems(ids, bundle).isEmpty else { return .failed("There's nothing with a time to add.") }
-            return .done(blocks: [.calendar(ids: ids)])
         case .sharePlan:
             guard plan != nil else { return .failed(AssistantRouter.noPlanText) }
             return .done(blocks: [.share("plan")])

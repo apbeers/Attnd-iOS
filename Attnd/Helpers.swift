@@ -174,6 +174,11 @@ enum DeepLink {
 /// How often an open app re-checks the bundle while the scene is active. A silent
 /// `content_updated` push does the real work; the timer is only a fallback.
 enum LiveRefreshPolicy {
+    /// Whether this bundle's Info.plist declares the `remote-notification` background mode.
+    static func declaresSilentPush(_ info: [String: Any]?) -> Bool {
+        (info?["UIBackgroundModes"] as? [String])?.contains("remote-notification") ?? false
+    }
+
     /// No push token (not registered, or registration failed).
     static let withoutPush: Duration = .seconds(60)
     /// Push works: a slow safety poll in case a silent push is dropped or throttled.
@@ -186,9 +191,11 @@ enum LiveRefreshPolicy {
         return canReceivePush ? withPush : withoutPush
     }
 
-    /// Silent pushes can reach this install only with a token and a working registration.
-    static func canReceivePush(pushToken: String?, registrationFailed: Bool) -> Bool {
-        guard !registrationFailed, let pushToken else { return false }
+    /// Silent pushes can reach this install only with a token, a working registration and the
+    /// `remote-notification` background mode (the App Clip may not declare background modes, so it
+    /// keeps the 60 s poll even with a token: its pushes still alert, but silent ones never arrive).
+    static func canReceivePush(pushToken: String?, registrationFailed: Bool, silentPushAllowed: Bool = true) -> Bool {
+        guard silentPushAllowed, !registrationFailed, let pushToken else { return false }
         return !pushToken.isEmpty
     }
 }

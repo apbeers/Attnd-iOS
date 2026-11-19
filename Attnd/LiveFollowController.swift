@@ -617,7 +617,7 @@ final class LiveFollowController {
             if prompt == nil, lastFollowPrompt == nil { return }
         }
         followPromptSynced = true
-        lastFollowPrompt = prompt.map { ($0.eventId, $0.at) }
+        lastFollowPrompt = prompt.map { (eventId: $0.eventId, at: $0.at) }
         await Self.postFollowPrompt(prompt)
     }
 

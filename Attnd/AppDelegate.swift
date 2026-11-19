@@ -66,7 +66,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         let key = "pref.spotlightRemoved"
         guard !UserDefaults.standard.bool(forKey: key) else { return }
         UserDefaults.standard.set(true, forKey: key)
-        Task {
+        Task.detached(priority: .utility) {
             do {
                 try await CSSearchableIndex.default().deleteAllSearchableItems()
             } catch {

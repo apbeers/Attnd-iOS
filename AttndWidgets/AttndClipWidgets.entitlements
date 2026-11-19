@@ -4,9 +4,5 @@
 <dict>
 	<key>com.apple.developer.on-demand-install-capable</key>
 	<true/>
-	<key>com.apple.developer.parent-application-identifiers</key>
-	<array>
-		<string>$(AppIdentifierPrefix)com.arcu.Attnd</string>
-	</array>
 </dict>
 </plist>

@@ -71,7 +71,7 @@ signing=()
 mkdir -p build
 if [ "$manual" = 1 ]; then
   echo "Manual signing: Apple Distribution + App Store profiles"
-  python3 scripts/ci/signing_profiles.py build
+  python3 -I scripts/ci/signing_profiles.py build  # -I: scripts/ci/warnings.py would shadow the stdlib module
   signing=(-xcconfig build/Signing.xcconfig)
   # The checked-in entitlements say aps-environment=development (local Xcode runs); an App Store
   # profile only allows production, and the export would switch it anyway.

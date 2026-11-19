@@ -276,7 +276,7 @@ private struct DaySummaryText: View {
 
     var body: some View {
         if let bundle = appState.currentBundle {
-            let summary = appState.daySummaries.summary(plan, date, bundle, modelAvailable: appState.hasAssistant)
+            let summary = appState.daySummaries.summary(plan, date, bundle)
             VStack(alignment: .leading, spacing: 4) {
                 Text(summary.line)
                     .font(.subheadline)
@@ -1178,13 +1178,11 @@ private struct NoPlanSection: View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Plan your day", systemImage: "sparkles")
                 .font(.title3.weight(.semibold))
-            Text(assistant.modelAvailable
-                 ? "Say what you'd like below, or try one of these. Your iPhone plans it from the schedule, your likes and walking times. Nothing leaves your iPhone."
-                 : "Try one of these, or type what you'd like. Your plan is made from the schedule, your likes and walking times, on your iPhone.")
+            Text("Say what you'd like below, or try one of these. Your iPhone plans it from the schedule, your likes and walking times. Nothing leaves your iPhone.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             if !appState.likeSet.isEmpty {
-                // Liked items are must-includes: a plan around them works without on-device AI too.
+                // Liked items are must-includes.
                 Button {
                     assistant.makePlan("Plan my day around what I liked")
                 } label: {
@@ -1199,7 +1197,7 @@ private struct NoPlanSection: View {
                     if example.isPlan {
                         assistant.makePlan(example.text)
                     } else {
-                        assistant.submit(example.text, forced: assistant.modelAvailable ? .ask : .search)
+                        assistant.submit(example.text, forced: .ask)
                     }
                 } label: {
                     Label(example.text, systemImage: example.isPlan ? "sparkles" : "questionmark.bubble")

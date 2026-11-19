@@ -41,7 +41,6 @@ enum JSONValue: Hashable, Sendable {
         }
     }
 
-    var isString: Bool { if case .string = self { return true } else { return false } }
     var isNull: Bool { if case .null = self { return true } else { return false } }
     var isPrimitive: Bool { content != nil }
 

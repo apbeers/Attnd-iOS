@@ -26,8 +26,9 @@ import UserNotifications
 
 /// What the event screens present over the tabs. The tab bar holds only the event's own
 /// tabs (`display.tabs`, at most `DisplayConfig.maxTabs`, so there is never a "More" tab);
-/// search and Options are sheets opened from the floating search button and the Options
-/// toolbar item (ContentView).
+/// search (without the on-device model; with it the plan page is a full-screen cover), Options
+/// and the tour are sheets opened from the floating search button, the Options toolbar item and
+/// onboarding (ContentView).
 enum EventSheet: String, Identifiable, Hashable, Sendable {
     /// Local search across the event (EventSearchView), with its own navigation stack.
     case search
@@ -100,7 +101,7 @@ final class AppState {
     // MARK: - Navigation
 
     /// The selected tab (TabLayout: the event's own tabs, `display.tabs`). The plan is the
-    /// floating "My plan" button's panel over every tab (PlanPanel.swift), not a tab.
+    /// plan page from the floating "My plan" button (AssistantView.swift), not a tab.
     var selectedTab: EventTab = .map {
         didSet {
             guard oldValue != selectedTab else { return }
@@ -135,10 +136,6 @@ final class AppState {
 
     /// The search sheet's query. Never sent anywhere.
     var searchText = ""
-
-    /// A question to put to the on-device model as soon as the search sheet shows it
-    /// (onboarding's "What's on near me right now?"); consumed by EventSearchView.
-    var autoAskQuery: String?
 
     /// The onboarding cards are due (first join); ContentView presents them once it is on screen.
     var pendingTour = false
@@ -180,12 +177,14 @@ final class AppState {
     /// The plan page's day summaries (on-device model, cached on disk per event).
     let daySummaries = PlanSummaryStore()
 
-    /// Apple Intelligence's on-device model can be used (planner_view_spec §1: the plan button,
-    /// plan page, planner and assistant exist only then). Checked at launch and every scene
+    /// Apple Intelligence's on-device model can be used, never in screenshot mode
+    /// (planner_view_spec §1: the My plan button, plan page, planner and assistant exist only
+    /// then; otherwise the search button and sheet). Checked at launch and every scene
     /// activation (`refreshOnDeviceModel`), so a model that finished downloading shows them.
-    private(set) var onDeviceModelReady = false
-    /// The same for static callers (`hasPlanPanel`, `assistantAvailable`, `plannerAvailable`).
-    private static var modelReady = false
+    /// Observable, for views.
+    private(set) var hasAssistant = false
+    /// The same for static and non-view callers.
+    private(set) static var modelReady = false
 
     // MARK: - Device
 
@@ -341,8 +340,8 @@ final class AppState {
     func refreshOnDeviceModel() {
         let ready = !ScreenshotMode.isActive && EventAssistant.isAvailable
         Self.modelReady = ready
-        guard onDeviceModelReady != ready else { return }
-        onDeviceModelReady = ready
+        guard hasAssistant != ready else { return }
+        hasAssistant = ready
         AppLog.info(.planner, "planner.availability", "On-device model \(ready ? "available" : "unavailable")", [
             "status": .string(ready ? "available" : "unavailable"),
         ])
@@ -392,18 +391,6 @@ final class AppState {
     /// The tab's title ("Places" for Locations; "Locations" in screenshot mode).
     func title(of tab: EventTab) -> String { TabLayout.title(tab, screenshotMode: ScreenshotMode.isActive) }
 
-    /// The floating "My plan" button and its plan page exist: the app or the App Clip, not in
-    /// screenshot mode, with the on-device model available (planner_view_spec §1). Otherwise the
-    /// search button and sheet.
-    static var hasPlanPanel: Bool {
-        return modelReady
-    }
-
-    /// `hasPlanPanel` for views (observable: re-evaluated when the model's availability changes).
-    var hasAssistant: Bool {
-        return onDeviceModelReady
-    }
-
     /// `tab` (Map, Places, Schedule, Flyer, Updates) is one of the tabs.
     func shows(_ tab: EventTab) -> Bool { tabLayout.contains(tab) }
 
@@ -413,11 +400,6 @@ final class AppState {
         guard shows(tab) else { return false }
         selectedTab = tab
         return true
-    }
-
-    /// Whether `tab` is on screen now.
-    func isShowing(_ tab: EventTab) -> Bool {
-        selectedTab == tab
     }
 
     /// `display.accent_color`, falling back to the event's. nil → views use the
@@ -741,7 +723,6 @@ final class AppState {
         focusRequest = nil
         presentedSheet = nil
         searchIndex = nil
-        autoAskQuery = nil
         pendingTour = false
         pendingSharedPlan = nil
         loadPersonalState(for: nil)
@@ -883,8 +864,8 @@ final class AppState {
     /// Shows one item: in its own tab when that tab is visible (Locations / Schedule select
     /// it, Updates scrolls to and highlights it; the event opens Options), closing any sheet;
     /// otherwise in the search sheet with the item pushed on its stack, so hidden tabs
-    /// (`display.tabs`) work too (Back returns to the search results). An open plan panel
-    /// collapses to its summary line, so the item is in view.
+    /// (`display.tabs`) work too (Back returns to the search results). An open plan page
+    /// closes first, so the item is in view.
     func navigate(to target: SearchTarget) {
         guard currentEvent != nil else { return }
         // The plan page is a full-screen cover: it closes first, then the tab (or the search
@@ -927,36 +908,11 @@ final class AppState {
         navigate(to: target)
     }
 
-    /// Opens the search sheet with `query` (onboarding's question). `ask`: also put it to the
-    /// on-device model right away (onboarding's question example; its plan examples plan).
-    func showSearch(_ query: String, ask: Bool = false) {
-        guard currentEvent != nil else { return }
-        searchPath = NavigationPath()
-        searchText = query
-        autoAskQuery = ask && Self.assistantAvailable ? query : nil
-        // The plan page's text box is the search there: the text goes into it, or runs at
-        // once when it was to be asked.
-        if Self.hasPlanPanel {
-            autoAskQuery = nil
-            showPlanPanel()
-            assistant.request(query, send: ask)
-            return
-        }
-        presentedSheet = .search
-    }
-
-    /// Whether "Ask" (Apple Intelligence's on-device model) can answer: never in screenshot
-    /// mode. The plan page, the planner and onboarding's "Plan your day" card
-    /// exist only when this is true (the last check, `refreshOnDeviceModel`).
-    static var assistantAvailable: Bool {
-        return modelReady
-    }
-
     /// "Ask About This" on a location, schedule item or update detail (assistant spec §8): the
-    /// assistant with the item as context ("Tell me about X": the model's answer, else the
-    /// item's card and chips). Without the model, the search sheet with the item's name.
+    /// plan page's assistant with the item as context ("Tell me about X"). Only with the
+    /// on-device model (the button is hidden without it).
     func askAbout(_ target: SearchTarget) {
-        guard currentEvent != nil, !ScreenshotMode.isActive else { return }
+        guard currentEvent != nil, Self.modelReady else { return }
         let name: String?
         switch target {
         case .location(let id):     name = location(id: id)?.name
@@ -966,23 +922,19 @@ final class AppState {
         }
         guard let name, !name.isEmpty else { return }
         AppLog.debug(.ui, "ui.action", "Ask about this", ["name": "ask_about", "id": .string(target.reference)])
-        if Self.hasPlanPanel {
-            let ref: EntityRef?
-            switch target {
-            case .location(let id):     ref = EntityRef(kind: .location, id: id)
-            case .scheduleItem(let id): ref = EntityRef(kind: .schedule, id: id)
-            case .notification(let id): ref = EntityRef(kind: .update, id: id)
-            case .event:                ref = nil
-            }
-            showPlanPanel()
-            if let ref {
-                assistant.askAbout(ref)
-            } else {
-                assistant.submit("Tell me about \(name)")
-            }
-            return
+        let ref: EntityRef?
+        switch target {
+        case .location(let id):     ref = EntityRef(kind: .location, id: id)
+        case .scheduleItem(let id): ref = EntityRef(kind: .schedule, id: id)
+        case .notification(let id): ref = EntityRef(kind: .update, id: id)
+        case .event:                ref = nil
         }
-        showSearch(name)
+        openPlanPage()
+        if let ref {
+            assistant.askAbout(ref)
+        } else {
+            assistant.submit("Tell me about \(name)")
+        }
     }
 
     /// The floating search button (no on-device model, screenshot mode): opens the search sheet on
@@ -990,8 +942,8 @@ final class AppState {
     /// the model the floating button is "My plan" and opens the plan page instead.
     func openSearch() {
         guard currentEvent != nil else { return }
-        if Self.hasPlanPanel {
-            showPlanPanel()
+        if Self.modelReady {
+            openPlanPage()
             return
         }
         searchPath = NavigationPath()
@@ -1000,8 +952,8 @@ final class AppState {
 
     /// Opens the plan page (a full-screen cover over the tabs; no-op without the on-device model).
     /// A sheet that is shown closes first; the cover follows once it has gone.
-    func showPlanPanel() {
-        guard Self.hasPlanPanel, currentEvent != nil else { return }
+    func openPlanPage() {
+        guard Self.modelReady, currentEvent != nil else { return }
         guard presentedSheet != nil else {
             assistant.openPage()
             return
@@ -1044,8 +996,8 @@ final class AppState {
             guard await join(code: shared.eventCode, via: "link") else { return }
             if let payload = shared.payload {
                 pendingSharedPlan = PendingSharedPlan(eventCode: shared.eventCode, payload: payload, receivedAt: .now)
-                // The plan panel shows it as a proposal ("Use This Plan" / "Merge with Mine").
-                showPlanPanel()
+                // The plan page shows it as a proposal ("Use This Plan" / "Merge with Mine").
+                openPlanPage()
             }
             return
         }

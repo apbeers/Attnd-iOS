@@ -41,26 +41,13 @@ enum SearchTarget: Hashable, Sendable {
         }
     }
 
-    /// Short stable reference, e.g. "s12", used when the on-device model cites items.
+    /// Short stable reference, e.g. "s12" (logs and tie-breaks).
     var reference: String {
         switch self {
         case .scheduleItem(let id): return "s\(id)"
         case .location(let id):     return "l\(id)"
         case .notification(let id): return "n\(id)"
         case .event(let id):        return "e\(id)"
-        }
-    }
-
-    /// Parses `reference` ("s12", "[l3]", "N5"); nil for anything else.
-    init?(reference raw: String) {
-        let trimmed = raw.trimmingCharacters(in: CharacterSet(charactersIn: "[] \n\t")).lowercased()
-        guard let prefix = trimmed.first, let id = Int(trimmed.dropFirst()) else { return nil }
-        switch prefix {
-        case "s": self = .scheduleItem(id)
-        case "l": self = .location(id)
-        case "n": self = .notification(id)
-        case "e": self = .event(id)
-        default:  return nil
         }
     }
 }
@@ -107,13 +94,6 @@ struct EventSearchResult: Identifiable, Hashable, Sendable {
 
     var id: SearchTarget { target }
     var kind: SearchResultKind { target.kind }
-}
-
-/// An answer from the on-device model ("Ask about this event"): the text plus the items it
-/// is based on, so people can jump to them.
-struct EventAssistantAnswer: Hashable, Sendable {
-    var text: String
-    var sources: [SearchTarget]
 }
 
 /// A chip shown for an empty query; tapping it searches for `query`.

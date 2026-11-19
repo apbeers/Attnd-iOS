@@ -72,7 +72,7 @@ final class PlanPageTests: XCTestCase {
     }
 
     func testPreviewMarksAndSuggestionsInPlace() {
-        guard case .proposal(let p) = PlanPanel.addToPlan(112, AssistantFixture.ctx()) else { return XCTFail("expected a proposal") }
+        guard case .proposal(let p) = PlanDock.addToPlan(112, AssistantFixture.ctx()) else { return XCTFail("expected a proposal") }
         let preview = PlanPreview.of(p, plan: plan, bundle)
         let page = model(plan, preview: preview)
         let marked = page.rows.compactMap { row -> Int? in

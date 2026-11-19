@@ -4,9 +4,9 @@
 // The event assistant's action layer (assistant spec §1), a port of Android's
 // `domain/AssistantActions.kt`: one registry (`ActionName`: name, params, mutates, confirm,
 // result, undo, location) used by the assistant (model tool calls and the rule-based router),
-// buttons, App Intents and Live Activity buttons. `ActionRegistry.check` validates names and
+// the plan page's buttons and Live Activity buttons. `ActionRegistry.check` validates names and
 // params against the bundle; `ActionDispatcher` confirms and runs them through the platform's
-// `ActionExecutor` (AppState) and hands back the Undo.
+// `ActionExecutor` (AssistantController) and hands back the Undo.
 
 import Foundation
 
@@ -291,7 +291,6 @@ struct AssistantAction: Hashable, Sendable {
     static func planMake(_ request: String) -> AssistantAction { AssistantAction(name: .planMake, params: ["request": .string(request)]) }
     static func planVersion(_ kind: PlanVersionKind) -> AssistantAction { AssistantAction(name: .planVersion, params: ["kind": .string(kind.key)]) }
     static func directions(_ locationId: Int) -> AssistantAction { AssistantAction(name: .directions, params: ["location": .string("l\(locationId)")]) }
-    static func simple(_ name: ActionName) -> AssistantAction { AssistantAction(name: name) }
 }
 
 /// Where an action came from: the model and the rule-based router are the assistant; buttons are manual.
@@ -410,7 +409,7 @@ enum ActionOutcome: Hashable, Sendable {
     case failed(String)
 }
 
-/// The platform side of the action layer (AppState / App Intents). It only runs already-validated,
+/// The platform side of the action layer (AssistantController). It only runs already-validated,
 /// already-confirmed actions.
 protocol ActionExecutor {
     func execute(_ action: AssistantAction) -> ActionOutcome

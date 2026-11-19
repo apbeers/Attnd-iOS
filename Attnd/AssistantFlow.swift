@@ -1,30 +1,21 @@
 // AssistantFlow.swift
 // Attnd (app + App Clip; unit tested in AssistantFlowTests)
 //
-// The assistant screen's pure helpers (assistant spec §3, §6–8), a port of Android's
-// `domain/AssistantFlow.kt` with the same tests:
-//   - AssistantFlow: which path a typed turn takes (the input bar's "Searching…" / "Asking…" /
-//     "Editing plan…" chip), forced search / plan turns, the text the model's conversation keeps
-//     of an answer, "Ask about this".
+// The plan page's pure assistant helpers (assistant spec §3, §6–8), a port of Android's
+// `domain/AssistantFlow.kt` with the same tests (iOS has no stored transcript, so Android's
+// `AssistantTranscript` isn't ported):
+//   - AssistantFlow: which path a typed turn takes, forced search / plan turns, the text the
+//     model's conversation keeps of an answer, "Ask about this".
 //   - BlockData: what a block shows, resolved from the bundle (timeline sources, compare sides,
 //     summaries).
 //   - LiveHintRules: the pinned plan's live hints (running late, gaps, skipped, changes, recap).
 //   - SharedPlans: "Use this plan" / "Merge with mine" for shared plan links (API-015).
-//   - AssistantTranscript: the conversation as stored per event (`pref.assistant.<id>`).
 
 import Foundation
 
-/// Which path a typed turn takes: the input bar's intent chip.
+/// Which path a typed turn takes.
 enum TurnPath: String, CaseIterable, Hashable, Sendable {
     case search, ask, plan
-
-    var label: String {
-        switch self {
-        case .search: return "Searching…"
-        case .ask: return "Asking…"
-        case .plan: return "Editing plan…"
-        }
-    }
 }
 
 /// How a turn runs (Android `AssistantFlow`, rule for rule):
@@ -269,50 +260,5 @@ enum SharedPlans {
 
     static func decode(_ text: String?) -> [[Int]] {
         (text ?? "").split(separator: "\n").map { line in line.split(separator: ",").compactMap { Int($0) } }.filter { !$0.isEmpty }
-    }
-}
-
-/// One stored assistant turn: what was typed (nil for a chip or a turn the app added) and the
-/// validated turn.
-struct StoredTurn: Hashable, Sendable {
-    var input: String?
-    var turn: AssistantTurn
-}
-
-/// The assistant screen's transcript, stored with the plan per event (on the device, kept after
-/// leaving like the plan): the last 30 turns as `[{"input":…,"blocks":[…],"actions":[…]}]` in the
-/// block JSON. Lenient: unknown blocks are dropped, a malformed turn is skipped, broken text is
-/// empty. Stored turns are re-validated against the bundle when shown.
-enum AssistantTranscript {
-    static let max = 30
-
-    static func encode(_ turns: [StoredTurn]) -> String {
-        JSONValue.array(turns.suffix(max).map { stored in
-            var o = JSONObject()
-            if let input = stored.input { o["input"] = .string(input) }
-            let encoded = BlockJSON.encode(stored.turn)
-            for key in encoded.keys { o[key] = encoded[key] }
-            return .object(o)
-        }).encoded
-    }
-
-    static func decode(_ text: String?) -> [StoredTurn] {
-        guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let array = JSONValue.parse(text)?.arrayValue else { return [] }
-        let turns: [StoredTurn] = array.compactMap { element in
-            guard let obj = element.objectValue, let blocksArray = obj["blocks"]?.arrayValue else { return nil }
-            let input = obj["input"].flatMap { $0.isNull ? nil : $0.content }
-            let blocks = blocksArray.compactMap { value -> AssistantBlock? in
-                if case .ok(let block) = BlockJSON.decode(value) { return block }
-                return nil
-            }
-            let actions = (obj["actions"]?.arrayValue ?? []).compactMap { value -> AssistantAction? in
-                guard let a = value.objectValue, let name = ActionName.of(a["name"]?.content) else { return nil }
-                return AssistantAction(name: name, params: a["params"]?.objectValue ?? JSONObject())
-            }
-            if blocks.isEmpty && input == nil { return nil }
-            return StoredTurn(input: input, turn: AssistantTurn(blocks: blocks, actions: actions))
-        }
-        return Array(turns.suffix(max))
     }
 }

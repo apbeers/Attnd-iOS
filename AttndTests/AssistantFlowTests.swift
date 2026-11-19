@@ -92,19 +92,6 @@ final class AssistantFlowTests: XCTestCase {
         XCTAssertNil(BlockData.summary("walking", nil, bundle, likes, now: now, units: .imperial, locale: enUS))
     }
 
-    func testTranscriptRoundTripsAndIsLenient() {
-        let routed = AssistantRouter.route("tacos", ctx())
-        let turns = [StoredTurn(input: "tacos", turn: AssistantTurn(blocks: routed.blocks)), StoredTurn(input: nil, turn: AssistantTurn(blocks: [.text("Hi")]))]
-        let decoded = AssistantTranscript.decode(AssistantTranscript.encode(turns))
-        XCTAssertEqual(decoded, turns)
-        let text = #"[{"input":"x","blocks":[{"type":"hologram"},{"type":"text","text":"ok"}],"actions":[{"name":"nope"}]},{"blocks":"no"},7]"#
-        XCTAssertEqual(AssistantTranscript.decode(text), [StoredTurn(input: "x", turn: AssistantTurn(blocks: [.text("ok")]))])
-        XCTAssertEqual(AssistantTranscript.decode("{"), [])
-        XCTAssertEqual(AssistantTranscript.decode(nil), [])
-        let many = (1...40).map { StoredTurn(input: "\($0)", turn: AssistantTurn(blocks: [.text("\($0)")])) }
-        XCTAssertEqual(AssistantTranscript.decode(AssistantTranscript.encode(many)).first?.input, "11")
-    }
-
     func testSharedPlanUseIsExactlyTheSharedItemsAhead() {
         let used = SharedPlans.use([109, 103, 999, 101], day: PlanDate(year: 2026, month: 11, day: 14), bundle, .none, now: now)
         XCTAssertEqual(used?.itemIds, [109, 103, 101])

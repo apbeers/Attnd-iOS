@@ -272,11 +272,6 @@ enum AssistantModel {
         return ResolvedTurn(source: .rules, turn: routed.turn, routed: routed)
     }
 
-    /// For logs: the turn's shape only (types and counts, never text).
-    static func shape(_ turn: AssistantTurn) -> [String: String] {
-        ["blocks": String(turn.blocks.count), "types": turn.blocks.map(\.type).joined(separator: ","), "actions": turn.actions.map(\.name.key).joined(separator: ",")]
-    }
-
     /// Blocks that are complete in a partial reply (`{"blocks":[ {...}, {...}`), for streaming.
     static func completeBlocks(_ partial: String, _ ctx: RouterContext) -> [AssistantBlock] {
         let chars = Array(partial)

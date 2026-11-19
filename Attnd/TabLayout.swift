@@ -5,8 +5,8 @@
 // tab spec's My plan + Explore tabs for now):
 //   - The tabs `display.tabs` lists, in its order (Map, Places, Schedule, Flyer, Updates; Flyer only
 //     when listed or, by default, when the event has a flyer), at most `DisplayConfig.maxTabs` (5),
-//     so never a More tab. No My plan tab and no Explore tab: the plan is the floating "My plan"
-//     button's panel (PlanPanel.swift) over every tab.
+//     so never a More tab. No My plan tab and no Explore tab: the plan is the plan page, a
+//     full-screen cover opened by the floating "My plan" button on every tab (AssistantView.swift).
 //   - The tab selected after joining: `default_tab` when listed, else Map, else the first.
 //   - The Locations tab is titled "Places" (the app's word for locations); screenshot mode keeps
 //     "Locations" so the store screenshots stay exactly as they were.

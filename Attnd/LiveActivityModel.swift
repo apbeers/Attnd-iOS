@@ -203,15 +203,6 @@ struct EventActivityAttributes: ActivityAttributes {
             body = try? c.decodeIfPresent(String.self, forKey: .body)
             sentAt = try? c.decodeIfPresent(String.self, forKey: .sentAt)
         }
-
-        /// `sent_at` as a date (with or without fractional seconds); nil when missing or unreadable.
-        var sentDate: Date? {
-            guard let sentAt else { return nil }
-            let fractional = ISO8601DateFormatter()
-            fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            if let date = fractional.date(from: sentAt) { return date }
-            return ISO8601DateFormatter().date(from: sentAt)
-        }
     }
 }
 
@@ -230,7 +221,7 @@ enum LiveActivityLink: Hashable, Sendable {
     case updates(notificationId: Int?)
     /// Open the app and start following on the Lock Screen (the "tap to follow" notification).
     case follow
-    /// The plan panel (spec §6), when the activity follows the plan.
+    /// The plan page (spec §6), when the activity follows the plan.
     case plan
 
     static let scheme = "attnd-live"

@@ -389,7 +389,4 @@ enum PlanOpJSON {
         let calendar = PlanCalendar.calendar(zone)
         return PlanDate(now, in: calendar).at(time, in: calendar)
     }
-
-    /// "1:00 PM" for notes and chips.
-    static func clockText(_ time: PlanClock, locale: Locale) -> String { AssistantText.clock(time, locale: locale) }
 }

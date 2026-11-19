@@ -6,7 +6,7 @@
 // so push callbacks can reach it.
 //
 // Pushes (see API_V2.md):
-//   - type "notification": visible alert. Tapping it opens the Notifications tab.
+//   - type "notification": visible alert. Tapping it opens the Updates tab.
 //   - type "content_updated": silent (content-available), sent to every device in
 //     the event with a token, opted in or not (API-007). Refetch the bundle when its
 //     content_version is newer, after a random 0–10 s delay.
@@ -18,7 +18,6 @@
 // Lock Screen"; LiveFollowController) carry `attnd_local` instead of `type`: a tap opens the
 // item (and starts following), and they never trigger a bundle refresh.
 
-import CoreSpotlight
 import SwiftUI
 import UIKit
 import UserNotifications
@@ -36,10 +35,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         if application.applicationState == .background {
             AppLog.info(.background, "background.wake", "Launched in the background", ["reason": .string(Self.launchReason(launchOptions))])
         }
-        // MetricKit: crash / hang reports (API-013) and launch-time buckets (API-014).
+        // MetricKit: crash / hang and other diagnostic reports (API-013); launch times are LaunchTiming's.
         MetricKitReporter.shared.start()
         UNUserNotificationCenter.current().delegate = self
-        Self.removeOldSpotlightItems()
         // Live Activity and reminders; also handles Live Activity buttons, which
         // may launch the app in the background.
         LiveFollowController.shared.install(appState: appState)
@@ -58,21 +56,6 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // Simulators without APNs and devices without the entitlement end up here.
         // The app keeps working; it polls every 60 s instead of waiting for pushes.
         appState.pushRegistrationDidFail(error)
-    }
-
-    /// Builds before Nov 19, 2026 indexed the event's items in Spotlight (App Intents entities,
-    /// since removed): their entries are deleted once.
-    private static func removeOldSpotlightItems() {
-        let key = "pref.spotlightRemoved"
-        guard !UserDefaults.standard.bool(forKey: key) else { return }
-        UserDefaults.standard.set(true, forKey: key)
-        Task.detached(priority: .utility) {
-            do {
-                try await CSSearchableIndex.default().deleteAllSearchableItems()
-            } catch {
-                AppLog.caught(error, .lifecycle, "spotlight_cleanup", level: .notice)
-            }
-        }
     }
 
     /// Why iOS launched the app in the background (`background.wake` reason).

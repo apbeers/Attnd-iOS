@@ -95,8 +95,6 @@ final class LiveFollowController {
         for activity in Activity<EventActivityAttributes>.activities {
             observe(activity)
         }
-        // Builds before Nov 19, 2026 could monitor the venue ("Tell me when I arrive").
-        UserDefaults.standard.removeObject(forKey: "pref.venueMonitorKey")
     }
 
     /// Something changed (bundle, hearts, settings, scene, location): update soon, coalesced.

@@ -100,22 +100,6 @@ final class BusinessLogicTests: XCTestCase {
         XCTAssertNil(HexColor.components("#GGGGGG"))
     }
 
-    // MARK: - Event days
-
-    func testIsEventDay_UsesEventTimeZone() throws {
-        let chicago = try XCTUnwrap(TimeZone(identifier: "America/Chicago"))
-        let start = try XCTUnwrap(ISODate.parse("2026-11-14T18:00:00-06:00"))
-        let end = try XCTUnwrap(ISODate.parse("2026-11-15T22:00:00-06:00"))
-        // 23:30 on the 15th in Chicago is already the 16th in UTC — still an event day.
-        let lateSunday = try XCTUnwrap(ISODate.parse("2026-11-15T23:30:00-06:00"))
-        XCTAssertTrue(ScheduleTiming.isEventDay(now: lateSunday, start: start, end: end, timeZone: chicago))
-        let monday = try XCTUnwrap(ISODate.parse("2026-11-16T09:00:00-06:00"))
-        XCTAssertFalse(ScheduleTiming.isEventDay(now: monday, start: start, end: end, timeZone: chicago))
-        let dayBefore = try XCTUnwrap(ISODate.parse("2026-11-13T12:00:00-06:00"))
-        XCTAssertFalse(ScheduleTiming.isEventDay(now: dayBefore, start: start, end: nil, timeZone: chicago))
-        XCTAssertTrue(ScheduleTiming.isEventDay(now: dayBefore, start: nil, end: nil, timeZone: chicago))
-    }
-
     // MARK: - Usage counts (API-005)
 
     func testUsageBucketStart_TruncatesToUTCFiveMinutes() throws {

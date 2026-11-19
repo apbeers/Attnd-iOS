@@ -47,17 +47,6 @@ enum ScheduleTiming {
         guard let end = effectiveEnd(of: item) else { return false }
         return end <= now
     }
-
-    /// True when `now` falls on a day of the event (start day through end day,
-    /// in the event's time zone). Unknown start → true, so refreshes keep running.
-    static func isEventDay(now: Date, start: Date?, end: Date?, timeZone: TimeZone) -> Bool {
-        guard let start else { return true }
-        let cal = EventTimeFormat.calendar(in: timeZone)
-        let firstDay = cal.startOfDay(for: start)
-        let lastDay = cal.startOfDay(for: max(end ?? start, start))
-        let today = cal.startOfDay(for: now)
-        return firstDay <= today && today <= lastDay
-    }
 }
 
 // MARK: - Schedule grouping

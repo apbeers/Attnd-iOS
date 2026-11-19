@@ -1,27 +1,27 @@
-// PlanPanel.swift
-// Attnd (app + App Clip; pure, unit tested in PlanPanelTests)
+// PlanDock.swift
+// Attnd (app + App Clip; pure, unit tested in PlanDockTests)
 //
 // The rules of the plan page's dock that outlived the snapping plan panel (retired Nov 19, 2026
 // for the full-page plan, PlanPage.swift; the plan page spec in attnd-web docs/specs/
 // planner_view_spec.md). There is no Search / Ask / Plan toggle: the app picks the path for
 // every turn (`AssistantFlow.path`).
-//   - `PlanPanel.pane`: what the small pane above the text box shows. While typing it keeps the
+//   - `PlanDock.pane`: what the small pane above the text box shows. While typing it keeps the
 //     last results until the next ones are ready (never blank between keystrokes); a typed answer
 //     to a proposal ("do it", "the second one", "no") shows nothing; with an empty box the last
 //     answer card.
-//   - `PlanPanel.resultAction`: the inline action of a search result — "Add to plan" on a
+//   - `PlanDock.resultAction`: the inline action of a search result — "Add to plan" on a
 //     schedule item that hasn't started and isn't planned ("In your plan" when it is), "Plan
 //     around this" on a place with something still to come; nothing on updates.
-//   - `PlanPanel.addToPlan` / `planAround`: those actions as in-place proposals (PlanProposal.swift):
+//   - `PlanDock.addToPlan` / `planAround`: those actions as in-place proposals (PlanProposal.swift):
 //     an item that clashes with a planned one → a replace ("instead of X", the clashing row crossed
 //     out), else an add; a place → its next unplanned items (≤ 4) as add options. Without a plan
 //     both propose a new plan built around the item (pinned) or the place (counted as liked).
-//   - `PlanPanel.summaryLine`: the My plan button's peek ("Now: …", "Next: … · 7:00 PM · …").
+//   - `PlanDock.summaryLine`: the My plan button's peek ("Now: …", "Next: … · 7:00 PM · …").
 
 import Foundation
 
 /// What the results pane above the input bar shows.
-enum PlanPanelPane: Hashable, Sendable {
+enum PlanDockPane: Hashable, Sendable {
     case none
     /// Search results for the typed text (possibly still the previous text's).
     case results
@@ -30,7 +30,7 @@ enum PlanPanelPane: Hashable, Sendable {
 }
 
 /// A search result's inline action.
-enum PanelResultAction: Hashable, Sendable {
+enum DockResultAction: Hashable, Sendable {
     case addToPlan(Int)
     /// A place: a plan (or options) around what's on there.
     case planAround(Int)
@@ -55,29 +55,29 @@ enum PanelResultAction: Hashable, Sendable {
 }
 
 /// The result of an inline plan action.
-enum PanelPlanChange: Hashable, Sendable {
+enum DockPlanChange: Hashable, Sendable {
     case proposal(PlanProposal)
     case message(String)
 }
 
-enum PlanPanel {
+enum PlanDock {
 
     /// See the file comment. `resultsQuery`: the text the shown results are for (nil: none yet);
     /// `proposalOptions`: the shown proposal's option count (nil: no proposal).
-    static func pane(draft: String, resultsQuery: String?, hasAnswer: Bool, proposalOptions: Int?) -> PlanPanelPane {
+    static func pane(draft: String, resultsQuery: String?, hasAnswer: Bool, proposalOptions: Int?) -> PlanDockPane {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        if text.isEmpty { return hasAnswer ? .answer : PlanPanelPane.none }
+        if text.isEmpty { return hasAnswer ? .answer : PlanDockPane.none }
         if let options = proposalOptions {
             switch ProposalReply.parse(text, options: options) {
-            case .apply, .cancel: return PlanPanelPane.none
+            case .apply, .cancel: return PlanDockPane.none
             case .none: break
             }
         }
         if resultsQuery != nil { return .results }
-        return hasAnswer ? .answer : PlanPanelPane.none
+        return hasAnswer ? .answer : PlanDockPane.none
     }
 
-    static func resultAction(_ ref: EntityRef, _ ctx: RouterContext) -> PanelResultAction? {
+    static func resultAction(_ ref: EntityRef, _ ctx: RouterContext) -> DockResultAction? {
         guard ctx.canPlan else { return nil }
         switch ref.kind {
         case .schedule:
@@ -91,7 +91,7 @@ enum PlanPanel {
     }
 
     /// "Add to plan" on a schedule item.
-    static func addToPlan(_ itemId: Int, _ ctx: RouterContext) -> PanelPlanChange {
+    static func addToPlan(_ itemId: Int, _ ctx: RouterContext) -> DockPlanChange {
         guard let item = ctx.bundle.scheduleItem(itemId) else { return .message("That item isn't on the schedule any more.") }
         guard let start = item.startTime, start > ctx.now else { return .message("\(item.name) has already started.") }
         guard let plan = ctx.plan else {
@@ -117,7 +117,7 @@ enum PlanPanel {
     }
 
     /// "Plan around this" on a place.
-    static func planAround(_ locationId: Int, _ ctx: RouterContext) -> PanelPlanChange {
+    static func planAround(_ locationId: Int, _ ctx: RouterContext) -> DockPlanChange {
         guard let location = ctx.bundle.location(locationId) else { return .message("That place isn't on the map any more.") }
         let coming = upcoming(at: locationId, ctx)
         guard let first = coming.first, let start = first.startTime else {

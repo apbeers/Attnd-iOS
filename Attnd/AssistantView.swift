@@ -6,7 +6,7 @@
 // (and in screenshot mode) the floating search button and sheet instead.
 //   - Closed: the floating Liquid Glass "My plan" button (`sparkles`, bottom-trailing on every
 //     tab) with a small peek of the plan ("Next: Juniper Lane · 11:00 AM · Main Stage",
-//     `PlanPanel.summaryLine`).
+//     `PlanDock.summaryLine`).
 //   - Open: a full-screen cover (`PlanPageHost`, presented by ContentView) with its own
 //     navigation stack (`AssistantController.pagePath`: cards tapped on the page push the item's
 //     normal detail; Back returns to the plan) and a Close button.
@@ -26,8 +26,8 @@ import SwiftUI
 // MARK: - The My plan button (every tab)
 
 extension View {
-    /// The floating "My plan" button (with its peek) over `tab`'s content.
-    func planButton(tab: EventTab) -> some View {
+    /// The floating "My plan" button (with its peek) over a tab's content.
+    func planButton() -> some View {
         modifier(PlanButtonModifier())
     }
 }
@@ -47,7 +47,7 @@ private struct PlanButtonModifier: ViewModifier {
                     HStack(spacing: 0) {
                         Spacer(minLength: 0)
                         FloatingPlanButton(peek: peek) {
-                            appState.showPlanPanel()
+                            appState.openPlanPage()
                         }
                         .padding(.trailing, FloatingSearchButtonMetrics.trailingPadding)
                         .padding(.bottom, FloatingSearchButtonMetrics.bottomPadding)
@@ -62,7 +62,7 @@ private struct PlanButtonModifier: ViewModifier {
     /// "Next: …" once there is a plan; nil without one (just the icon).
     private var peek: String? {
         guard let bundle = appState.currentBundle, let plan = appState.planner.plan, !plan.isEmpty else { return nil }
-        return PlanPanel.summaryLine(plan: plan, bundle, now: .now)
+        return PlanDock.summaryLine(plan: plan, bundle, now: .now)
     }
 }
 
@@ -150,7 +150,7 @@ private struct PlanPageStack: View {
                     VStack(spacing: 8) {
                         PlanBottomBar()
                         if showsDock {
-                            PlanDock(maxPaneHeight: max(160, available / 3))
+                            PlanDockView(maxPaneHeight: max(160, available / 3))
                         }
                     }
                     .padding(.horizontal, 10)
@@ -216,7 +216,7 @@ private struct PlanArrangement<Primary: View, Secondary: View>: View {
 
 // MARK: - Dock (phones; the chat column has its own)
 
-private struct PlanDock: View {
+private struct PlanDockView: View {
     let maxPaneHeight: CGFloat
 
     @Environment(AppState.self) private var appState
@@ -226,7 +226,7 @@ private struct PlanDock: View {
 
     var body: some View {
         let assistant = appState.assistant
-        let pane = PlanPanel.pane(
+        let pane = PlanDock.pane(
             draft: assistant.draft, resultsQuery: resultsQuery,
             hasAnswer: assistant.answer != nil, proposalOptions: assistant.proposal?.options.count
         )
@@ -384,7 +384,7 @@ private struct ChatColumn: View {
 
     var body: some View {
         let assistant = appState.assistant
-        let pane = PlanPanel.pane(
+        let pane = PlanDock.pane(
             draft: assistant.draft, resultsQuery: resultsQuery,
             hasAnswer: false, proposalOptions: assistant.proposal?.options.count
         )
@@ -542,15 +542,13 @@ private struct ResultsPane: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 6) {
                 if results.isEmpty {
-                    Text(appState.assistant.modelAvailable
-                         ? "Nothing matches “\(query)”. Press Return to ask."
-                         : "Nothing matches “\(query)”. Press Return to try it as a request.")
+                    Text("Nothing matches “\(query)”. Press Return to ask.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 ForEach(results) { result in
-                    let action = ctx.flatMap { ctx in Self.ref(result.target).flatMap { PlanPanel.resultAction($0, ctx) } }
+                    let action = ctx.flatMap { ctx in Self.ref(result.target).flatMap { PlanDock.resultAction($0, ctx) } }
                     ResultLine(result: result, action: action, focused: focused)
                     if result.id != results.last?.id { Divider() }
                 }
@@ -576,7 +574,7 @@ private struct ResultsPane: View {
 
 private struct ResultLine: View {
     let result: EventSearchResult
-    let action: PanelResultAction?
+    let action: DockResultAction?
     var focused: FocusState<Bool>.Binding
 
     @Environment(AppState.self) private var appState
@@ -599,7 +597,7 @@ private struct ResultLine: View {
     }
 
     @ViewBuilder
-    private func actionView(_ action: PanelResultAction) -> some View {
+    private func actionView(_ action: DockResultAction) -> some View {
         switch action {
         case .inPlan:
             Image(systemName: action.systemImage)

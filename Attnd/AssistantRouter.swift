@@ -27,8 +27,7 @@
 
 import Foundation
 
-/// Everything the router (and the model prompt) may use. All local. (Not `AssistantContext`,
-/// which is EventAssistant.swift's tool context.)
+/// Everything the router (and the model prompt) may use. All local.
 struct RouterContext: Sendable {
     var bundle: EventBundle
     var likes: LikeSet

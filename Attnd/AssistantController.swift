@@ -2,7 +2,7 @@
 // Attnd (app + App Clip)
 //
 // The event assistant at runtime behind the plan page (the floating "My plan" button over every
-// tab, AssistantView.swift / PlanView.swift, rules in PlanPage.swift and PlanPanel.swift; iOS,
+// tab, AssistantView.swift / PlanView.swift, rules in PlanPage.swift and PlanDock.swift; iOS,
 // planner_view_spec Nov 19, 2026 — only with Apple Intelligence's on-device model; Android keeps
 // the plan tab spec's My plan tab; the assistant spec's router, blocks, actions, edits, undo and
 // live rules are unchanged and shared):
@@ -14,10 +14,10 @@
 //     windows (iPhone Duo unfolded) add a chat column with this session's turns (`transcript`,
 //     in memory, ≤ 30).
 //   - Turns: no Search / Ask / Plan toggle. Every typed turn goes through `PlanProposals.swap`, the
-//     rule-based `AssistantRouter` or — when Apple Intelligence's on-device model is available and
-//     `AssistantFlow.path` says so — the model (`EventAssistant.assistantTurn`, streamed; any
+//     rule-based `AssistantRouter` or — when `AssistantFlow.path` says so — the on-device
+//     model (`EventAssistant.assistantTurn`, streamed; any
 //     error or invalid output → the router's answer, `AssistantModel.resolve`).
-//   - Search results' inline actions ("Add to plan", "Plan around this"; `PlanPanel`) become
+//   - Search results' inline actions ("Add to plan", "Plan around this"; `PlanDock`) become
 //     proposals like typed edits (`addToPlan`, `planAround`).
 //   - Plan edits (router or model, pick chips, like clash, shared plan links) are not applied at
 //     once: they become `proposal` (PlanProposal.swift), previewed in the timeline (suggested /
@@ -72,7 +72,7 @@ final class AssistantController {
     private(set) var proposal: PlanProposal? {
         didSet {
             guard proposal != nil, oldValue != proposal, appState?.currentEvent != nil, !pageOpen else { return }
-            appState?.showPlanPanel()
+            appState?.openPlanPage()
         }
     }
     /// This session's turns for the wide layout's chat column (≤ 30, not stored).
@@ -141,21 +141,18 @@ final class AssistantController {
         refreshLive()
     }
 
-    var modelAvailable: Bool { AppState.assistantAvailable }
-
     /// What the router, the model prompt and the validator use. nil outside an event.
     func context(now: Date = .now) -> RouterContext? {
         guard let appState, let bundle = appState.currentBundle else { return nil }
-        let available = modelAvailable
         return RouterContext(
             bundle: bundle,
             likes: appState.likeSet,
             plan: appState.planner.plan.flatMap { $0.isEmpty ? nil : $0 },
             now: now,
             user: userPoint(now: now),
-            // Plans are made with or without the model (plan tab spec).
-            canPlan: AppState.plannerAvailable,
-            modelAvailable: available,
+            // The controller runs only with the on-device model (the plan page).
+            canPlan: AppState.modelReady,
+            modelAvailable: AppState.modelReady,
             history: appState.planner.history,
             units: DistanceText.usesImperial() ? .imperial : .metric,
             locale: .current
@@ -485,19 +482,19 @@ final class AssistantController {
         proposal = p
     }
 
-    /// A search result's "Add to plan" / a place's "Plan around this" (PlanPanel.swift): the
+    /// A search result's "Add to plan" / a place's "Plan around this" (PlanDock.swift): the
     /// in-place proposal (add, replace on a clash, or a new plan), or a short answer.
     func addToPlan(_ itemId: Int) {
         guard let ctx = context() else { return }
-        inline(PlanPanel.addToPlan(itemId, ctx), "add_to_plan", itemId)
+        inline(PlanDock.addToPlan(itemId, ctx), "add_to_plan", itemId)
     }
 
     func planAround(_ locationId: Int) {
         guard let ctx = context() else { return }
-        inline(PlanPanel.planAround(locationId, ctx), "plan_around", locationId)
+        inline(PlanDock.planAround(locationId, ctx), "plan_around", locationId)
     }
 
-    private func inline(_ change: PanelPlanChange, _ name: String, _ id: Int) {
+    private func inline(_ change: DockPlanChange, _ name: String, _ id: Int) {
         AppLog.debug(.ui, "ui.action", "Inline plan action", ["name": .string(name), "id": .int(id)])
         switch change {
         case .proposal(let p):
@@ -811,13 +808,6 @@ final class AssistantController {
         ])
     }
 
-    /// A plan edit from the plan rows (My plan, the pinned plan): dispatched as the person's own
-    /// button and shown in the conversation with its Undo.
-    func edit(_ ops: [PlanOp], label: String) {
-        guard let bundle = appState?.currentBundle else { return }
-        run(.planEdit(ops, bundle), label: label, source: .manual)
-    }
-
     // MARK: - Plans
 
     /// Makes a plan in place (progress in the timeline; the model reads the request when available).
@@ -900,35 +890,21 @@ final class AssistantController {
         ])
     }
 
-    /// "Ask about this" from a detail screen: "Tell me about X" (the model when available, else
-    /// the item's card and chips) in the answer card.
+    /// "Ask about this" from a detail screen: "Tell me about X", put to the model, in the
+    /// answer card.
     func askAbout(_ ref: EntityRef) {
         guard let ctx = context(), let text = AssistantFlow.askAbout(ref, ctx.bundle) else { return }
         proposal = nil
-        if ctx.modelAvailable {
-            submit(text, forced: .ask)
-        } else {
-            finish(text, AssistantFlow.aboutTurn(ref, ctx), .rules, .search, ContinuousClock.now, ctx)
-        }
+        submit(text, forced: .ask)
     }
 
-    /// Text typed elsewhere (onboarding's question): into the input bar, or run.
-    func request(_ text: String, send: Bool) {
-        if send {
-            submit(text, forced: modelAvailable ? .ask : nil)
-        } else {
-            draft = text
-            focusInput()
-        }
-    }
-
-    /// Puts the keyboard up on the plan panel's bar (now, or as soon as the panel is shown).
+    /// Puts the keyboard up on the plan page's text box (now, or as soon as the page is shown).
     func focusInput() {
         focusPending = true
         focusSerial += 1
     }
 
-    /// The panel takes a pending keyboard request (true once per request).
+    /// The page takes a pending keyboard request (true once per request).
     func consumeFocusRequest() -> Bool {
         guard focusPending, pageOpen else { return false }
         focusPending = false
@@ -1018,10 +994,7 @@ extension AppState {
         LikeSet(locations: personal.heartedLocations, scheduleItems: personal.heartedScheduleItems)
     }
 
-    /// The assistant runs (not in screenshot mode, with the on-device model): the plan page.
-    static var assistantEnabled: Bool { hasPlanPanel }
-
-    /// `open(screen, id?)`: a manual screen (its own tab; the plan panel collapses).
+    /// `open(screen, id?)`: a manual screen (its own tab; the plan page closes).
     func openAssistantScreen(_ screen: String, _ ref: EntityRef?) {
         func target(_ ref: EntityRef) -> SearchTarget {
             switch ref.kind {

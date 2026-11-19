@@ -4,10 +4,9 @@
 // The search sheet without the on-device model and in screenshot mode (with the model, the app
 // and the App Clip search from the plan page's text box, AssistantView.swift, which reuses this
 // file's result rows and destinations; there this sheet only shows items of hidden tabs pushed
-// by `navigate(to:)`): one
-// local search across the joined event — schedule, locations, organizer updates and the
-// event itself (EventSearch). Works offline; the query never leaves the device (only the
-// fact of a search is counted, API-005).
+// by `navigate(to:)`): one local search across the joined event — schedule, locations,
+// organizer updates and the event itself (EventSearch). Works offline; the query never leaves
+// the device (only the fact of a search is counted, API-005).
 //
 // The sheet has its own navigation stack (`AppState.searchPath`): tapping a result pushes
 // its detail, so Back returns to the results and items in tabs the organizer hid
@@ -19,12 +18,8 @@
 // brings up the keyboard on iOS 26 (programmatic focus of the bottom-bar search field
 // doesn't), and `searchFocused` asks for focus as well.
 //
-// A question typed here offers "Ask" when the on-device model is available
-// (Apple Intelligence, EventAssistant.swift): the answer cites the items it used. A request
-// that looks like a plan ("Plan my Saturday around live music") makes one instead (the
-// planner, spec §6) and offers "Open My plan". Without
-// the model the plain results are shown, searching the question's
-// keywords when the question as typed finds nothing.
+// There is no AI here: the sheet exists where the on-device model doesn't (or in screenshot
+// mode). A question that matches nothing as typed shows the results for its keywords.
 
 import SwiftUI
 
@@ -77,22 +72,9 @@ struct EventSearchView: View {
 
     @Environment(AppState.self) private var appState
 
-    /// The assistant's answer for `answeredQuery`, or its progress.
-    @State private var assistant: AssistantPhase = .idle
     /// Whether the search field is active (`searchable(isPresented:)`).
     @State private var isSearchPresented = false
     @FocusState private var isSearchFocused: Bool
-
-    private enum AssistantPhase: Equatable {
-        case idle
-        case thinking(query: String)
-        case answered(query: String, answer: EventAssistantAnswer)
-        case failed(query: String)
-        /// A plan request (spec §6): planning, the plan made, or why nothing fits.
-        case planning(query: String)
-        case planned(query: String, summary: String, itemIds: [Int])
-        case planFailed(query: String, message: String)
-    }
 
     private var query: String {
         appState.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -117,17 +99,6 @@ struct EventSearchView: View {
         .modifier(SearchUsageCounting(text: appState.searchText, source: "sheet"))
         // Distances to places in the results.
         .usesUserLocation(heading: true)
-        .onChange(of: appState.searchText) {
-            if case .idle = assistant { return }
-            assistant = .idle
-        }
-        // Onboarding's "Plan your day" examples ask straight away.
-        .task(id: appState.autoAskQuery) {
-            guard let question = appState.autoAskQuery else { return }
-            appState.autoAskQuery = nil
-            guard question == query else { return }
-            await ask(question)
-        }
         .task {
             guard pendingFocus else { return }
             pendingFocus = false
@@ -151,9 +122,6 @@ struct EventSearchView: View {
                 if query.isEmpty {
                     suggestions
                 } else {
-                    if canAsk {
-                        askSection(index: index, now: now)
-                    }
                     if let fallback, !fallback.results.isEmpty {
                         Section {
                             resultRows(fallback.results)
@@ -168,7 +136,7 @@ struct EventSearchView: View {
                 }
             }
             .overlay {
-                if !query.isEmpty, results.isEmpty, !canAsk {
+                if !query.isEmpty, results.isEmpty {
                     ContentUnavailableView.search(text: query)
                 }
             }
@@ -224,128 +192,12 @@ struct EventSearchView: View {
         }
     }
 
-    // MARK: Ask (on-device model)
-
-    /// "Ask" is offered for questions while Apple Intelligence's on-device model is available.
-    private var canAsk: Bool {
-        guard !query.isEmpty, !ScreenshotMode.isActive, EventAssistant.isAvailable else { return false }
-        // A question already put to the model (e.g. onboarding's "What's on near me right now?").
-        switch assistant {
-        case .thinking(let asked), .answered(let asked, _), .failed(let asked),
-             .planning(let asked), .planned(let asked, _, _), .planFailed(let asked, _):
-            if asked == query { return true }
-        case .idle:
-            break
-        }
-        // Plan requests ("Kid-friendly afternoon") make a plan (spec §6).
-        if AppState.plannerAvailable, PlanRequest.looksLikePlan(query) { return true }
-        return EventSearch.looksLikeQuestion(query) || EventSearch.words(query).count >= 4
-    }
-
-    @ViewBuilder
-    private func askSection(index: EventSearchIndex, now: Date) -> some View {
-        Section {
-            switch assistant {
-            case .answered(let asked, let answer) where asked == query:
-                Text(answer.text)
-                    .textSelection(.enabled)
-                ForEach(answer.sources.compactMap { index.result(for: $0, now: now) }) { result in
-                    NavigationLink(value: result.target) {
-                        SearchResultRow(result: result)
-                    }
-                }
-            case .thinking(let asked) where asked == query:
-                HStack(spacing: 12) {
-                    ProgressView()
-                    Text("Looking through the event…")
-                        .foregroundStyle(.secondary)
-                }
-            case .failed(let asked) where asked == query:
-                Label("Couldn't answer that. Try the results below or rephrase.", systemImage: "exclamationmark.bubble")
-                    .foregroundStyle(.secondary)
-            case .planning(let asked) where asked == query:
-                HStack(spacing: 12) {
-                    ProgressView()
-                    Text("Planning on your iPhone…")
-                        .foregroundStyle(.secondary)
-                }
-            case .planned(let asked, let summary, let itemIds) where asked == query:
-                Text("Here's your plan: \(summary). It's in My plan.")
-                    .textSelection(.enabled)
-                if AppState.hasPlanPanel {
-                    Button("Open My Plan", systemImage: "list.bullet.clipboard") {
-                        openMyPlan()
-                    }
-                }
-                ForEach(itemIds.compactMap { index.result(for: .scheduleItem($0), now: now) }) { result in
-                    NavigationLink(value: result.target) {
-                        SearchResultRow(result: result)
-                    }
-                }
-            case .planFailed(let asked, let message) where asked == query:
-                Label(message, systemImage: "calendar.badge.exclamationmark")
-                    .foregroundStyle(.secondary)
-            default:
-                Button {
-                    Task { await ask(query) }
-                } label: {
-                    Label("Ask about this event", systemImage: "sparkles")
-                }
-            }
-        } header: {
-            Text("Ask")
-        } footer: {
-            if case .answered(let asked, _) = assistant, asked == query {
-                Text("Answered on this device from the event's info. Tap an item to check the details.")
-            } else if case .planned(let asked, _, _) = assistant, asked == query {
-                Text("Planned on this device from the schedule, your likes and walking times.")
-            }
-        }
-    }
-
-    private func openMyPlan() {
-        appState.showMyPlan()
-    }
-
-    private func ask(_ question: String) async {
-        guard let bundle = appState.currentBundle else { return }
-        if AppState.plannerAvailable, PlanRequest.looksLikePlan(question) {
-            await plan(question)
-            return
-        }
-        assistant = .thinking(query: question)
-        do {
-            let answer = try await EventAssistant.answer(question, bundle: bundle, now: .now)
-            guard query == question else { return }
-            assistant = .answered(query: question, answer: answer)
-        } catch {
-            guard query == question else { return }
-            assistant = .failed(query: question)
-        }
-    }
-
-    /// A plan request: the planner makes and stores the plan (the plan panel); the answer
-    /// is its summary and items, with "Open My plan".
-    private func plan(_ request: String) async {
-        assistant = .planning(query: request)
-        let plan = await appState.makePlan(request)
-        guard query == request else { return }
-        if let plan, !plan.isEmpty {
-            assistant = .planned(
-                query: request,
-                summary: Planner.summary(plan, timeZone: appState.timeZone),
-                itemIds: plan.itemIds
-            )
-        } else {
-            assistant = .planFailed(query: request, message: appState.planner.error ?? AppState.nothingFitsMessage)
-        }
-    }
 }
 
 // MARK: - Result row
 
 /// A search result with a heart (schedule items and places) and, for places, the distance.
-/// The plain `SearchResultRow` needs no app state (assistant citations use it too).
+/// The plain `SearchResultRow` needs no app state.
 struct HeartableResultRow: View {
     let result: EventSearchResult
 

@@ -228,7 +228,6 @@ final class LiveFollowTests: XCTestCase {
         XCTAssertEqual(state.urgent?.id, 9)
         XCTAssertEqual(state.urgent?.title, "Main Stage closed")
         XCTAssertEqual(state.urgent?.sentAt, "2026-11-15T16:40:00+00:00")
-        XCTAssertEqual(state.urgent?.sentDate, date("2026-11-15T16:40:00Z"))
         XCTAssertNil(state.current)
         XCTAssertNil(state.next)
         XCTAssertNil(state.walkMinutesToNext)

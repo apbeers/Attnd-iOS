@@ -9,9 +9,9 @@
 //   2. Location: walk times, the compass arrow, what's nearby → the permission prompt.
 //   3. Notifications: set-time changes and reminders for hearts → the prompt.
 //   4. "Plan your day", only when Apple Intelligence's on-device model is available
-//      (`AppState.plannerAvailable`; app and App Clip): example requests built from this
+//      (`AppState.modelReady`; app and App Clip): example requests built from this
 //      event's tags (`PlanRequest.examples`, the same as Android's). A plan chip makes the plan
-//      and opens the plan page (spec §6); the question chip opens Ask with it.
+//      and opens the plan page (spec §6); the question chip opens the plan page and asks it.
 
 import CoreLocation
 import SwiftUI
@@ -39,7 +39,7 @@ struct OnboardingView: View {
     }
 
     private var hasPlanCard: Bool {
-        return AppState.plannerAvailable && !examples.isEmpty
+        return AppState.modelReady && !examples.isEmpty
     }
 
     private var examples: [PlanExample] {
@@ -162,7 +162,7 @@ struct OnboardingView: View {
                 .foregroundStyle(.secondary)
             ForEach(examples) { example in
                 Button {
-                    // A plan opens the plan panel, the question opens Ask (either replaces this sheet).
+                    // Both open the plan page (replacing this sheet): a plan is made, the question asked.
                     appState.useExample(example)
                 } label: {
                     Label(example.text, systemImage: example.isPlan ? "sparkles" : "bubble.left")

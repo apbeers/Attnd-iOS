@@ -9,7 +9,7 @@
 //     (EventAssistant.planPreferences, validated against the bundle) merged with the plain-rule
 //     reading (PlanRequest.heuristic, which alone is used when the model fails); the
 //     deterministic Planner then schedules. Offered only where the plan page exists
-//     (`AppState.plannerAvailable`: Apple Intelligence's on-device model is available;
+//     (`AppState.modelReady`: Apple Intelligence's on-device model is available;
 //     planner_view_spec §1); when the model fails for a request the plain-rule reading plans alone.
 //   - Every stored change updates the Live Activity and reminders (plan > hearts > now/next).
 //
@@ -38,7 +38,6 @@ final class PlanStore {
 
     private static func key(_ eventId: Int) -> String { "pref.plan.\(eventId)" }
     private static func historyKey(_ eventId: Int) -> String { "pref.planHistory.\(eventId)" }
-    private static func transcriptKey(_ eventId: Int) -> String { "pref.assistant.\(eventId)" }
     private static func conversationKey(_ eventId: Int) -> String { "pref.assistantConversation.\(eventId)" }
     private static func sharedKey(_ eventId: Int) -> String { "pref.sharedPlans.\(eventId)" }
 
@@ -92,19 +91,6 @@ final class PlanStore {
 
     // MARK: Assistant storage (per event, on the device, kept after leaving like the plan)
 
-    func transcript(_ eventId: Int) -> [StoredTurn] {
-        AssistantTranscript.decode(UserDefaults.standard.string(forKey: Self.transcriptKey(eventId)))
-    }
-
-    func setTranscript(_ turns: [StoredTurn], eventId: Int) {
-        guard !ScreenshotMode.isActive else { return }
-        if turns.isEmpty {
-            UserDefaults.standard.removeObject(forKey: Self.transcriptKey(eventId))
-        } else {
-            UserDefaults.standard.set(AssistantTranscript.encode(turns), forKey: Self.transcriptKey(eventId))
-        }
-    }
-
     func conversation(_ eventId: Int) -> AssistantConversation {
         AssistantConversation.decode(UserDefaults.standard.string(forKey: Self.conversationKey(eventId)))
     }
@@ -143,17 +129,6 @@ final class PlanStore {
 extension AppState {
     static let nothingFitsMessage = "Nothing on the schedule fits that. Try another day or fewer limits."
 
-    /// The planner is offered (the plan page, Ask plans, onboarding's plan chips) only where the
-    /// plan page exists: Apple Intelligence's on-device model (planner_view_spec
-    /// §1; no model → no planner UI at all). Never in screenshot mode.
-    static var plannerAvailable: Bool { hasPlanPanel }
-
-    /// A planned item changed or disappeared in a content update since the plan was made.
-    var planChanged: Bool {
-        guard let plan = planner.plan, !plan.isEmpty else { return false }
-        return Planner.changed(plan, schedule: schedule)
-    }
-
     /// The plan's items (the Live Activity follows them; reminders include them).
     var plannedItemIds: Set<Int> { Set(planner.plan?.itemIds ?? []) }
 
@@ -174,7 +149,7 @@ extension AppState {
     @discardableResult
     func makePlan(_ request: String) async -> Plan? {
         let trimmed = request.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !planner.isPlanning, Self.plannerAvailable, let bundle = currentBundle else { return nil }
+        guard !trimmed.isEmpty, !planner.isPlanning, Self.modelReady, let bundle = currentBundle else { return nil }
         planner.isPlanning = true
         planner.error = nil
         defer { planner.isPlanning = false }
@@ -184,15 +159,13 @@ extension AppState {
         let modelStarted = ContinuousClock.now
         var model: PlanPreferences?
         // The model reads the request; when it fails the plain-rule reading alone plans.
-        if Self.assistantAvailable {
-            do {
-                model = try await EventAssistant.planPreferences(
-                    trimmed, bundle: bundle, heartedItems: personal.heartedScheduleItems, now: now
-                )
-            } catch {
-                AppLog.caught(error, .planner, "plan_preferences", level: .notice)
-                model = nil
-            }
+        do {
+            model = try await EventAssistant.planPreferences(
+                trimmed, bundle: bundle, heartedItems: personal.heartedScheduleItems, now: now
+            )
+        } catch {
+            AppLog.caught(error, .planner, "plan_preferences", level: .notice)
+            model = nil
         }
         let modelMs = (ContinuousClock.now - modelStarted).wholeMilliseconds
         AppLog.info(.planner, "planner.extract", "Preferences read in \(modelMs) ms", [
@@ -243,14 +216,6 @@ extension AppState {
         }
     }
 
-    /// Swap: one of the item's alternatives takes its slot (walks, meals and alternatives rebuilt).
-    func swapPlanItem(_ oldId: Int, for newId: Int) {
-        guard let bundle = currentBundle, let plan = planner.plan,
-              let swapped = makePlanner(bundle, plan.preferences, constraints: plan.constraints).swap(plan, oldId: oldId, newId: newId) else { return }
-        AppLog.info(.planner, "planner.swap", "Swapped a plan item", ["item_id": .int(newId), "replaced": .int(oldId)])
-        planner.apply(swapped)
-    }
-
     /// "Keep as is" after a content change: removed items leave the plan, changed ones are
     /// accepted as they are now.
     func keepChangedPlan() {
@@ -279,25 +244,26 @@ extension AppState {
         planner.apply(nil)
     }
 
-    /// Opens the plan page (after planning from Ask or onboarding, the Live Activity's plan link),
-    /// closing any sheet. Without the on-device model (no plan page) the Schedule tab instead.
+    /// Opens the plan page (onboarding, the Live Activity's plan link), closing any sheet.
+    /// Without the on-device model (no plan page) the Schedule tab instead.
     func showMyPlan() {
         guard currentEvent != nil else { return }
-        guard Self.hasPlanPanel else {
+        guard Self.modelReady else {
             select(.schedule)
             return
         }
-        showPlanPanel()
+        openPlanPage()
     }
 
     /// An onboarding / plan-card example: a plan request plans (and opens My plan), the
-    /// question opens Ask with it.
+    /// question ("What's on near me right now?") opens the plan page and asks it as a turn.
     func useExample(_ example: PlanExample) {
         if example.isPlan {
             showMyPlan()
             Task { await makePlan(example.text) }
         } else {
-            showSearch(example.text, ask: true)
+            showMyPlan()
+            assistant.submit(example.text, forced: .ask)
         }
     }
 }

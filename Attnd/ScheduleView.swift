@@ -95,11 +95,11 @@ struct ScheduleView: View {
             )
             list(sections: sections, now: now)
                 .overlay {
-                    if sections.isEmpty, !inPlan { emptyState }
+                    if sections.isEmpty { emptyState }
                 }
         }
         .navigationTitle(title)
-        .modifier(SearchableIf(enabled: appState.display.enableSearch && !inPlan, text: $searchText, prompt: "Search schedule"))
+        .modifier(SearchableIf(enabled: appState.display.enableSearch, text: $searchText, prompt: "Search schedule"))
         .refreshable { await appState.pullToRefresh() }
         // Walk times to each item's location (no compass needed here).
         .usesUserLocation(heading: false)
@@ -131,11 +131,9 @@ struct ScheduleView: View {
         }
     }
 
-    /// The Hearted chip appears once something is hearted (or while it is on); not in My plan.
-    private var showsHeartedChip: Bool { !inPlan && (appState.hasHearts || heartedOnly) }
-
-    /// The plan is the plan panel's (AssistantView.swift); the Schedule list never shows it.
-    private var inPlan: Bool { false }
+    /// The Liked chip appears once something is liked (or while it is on). The plan is the plan
+    /// page's (PlanView.swift); the Schedule list never shows it.
+    private var showsHeartedChip: Bool { appState.hasHearts || heartedOnly }
 
     @ViewBuilder
     private func listContent(sections: [ScheduleSection], now: Date) -> some View {
@@ -462,7 +460,7 @@ struct ScheduleItemDetailView: View {
 
             Section {
                 // Assistant spec §8: the plan page's assistant (only with the on-device model).
-                if !ScreenshotMode.isActive, appState.hasAssistant {
+                if appState.hasAssistant {
                     Button {
                         appState.askAbout(.scheduleItem(item.id))
                     } label: {

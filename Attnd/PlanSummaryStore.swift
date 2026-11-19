@@ -4,9 +4,9 @@
 // The plan page's one-line day summaries + "Read more" (`AppState.daySummaries`), written by
 // Foundation Models (`EventAssistant.daySummary`) from `PlanPage.summaryPrompt`, cached on disk
 // per (plan version, day) — `PlanPage.summaryKey` — in
-// `Application Support/attnd-plan/summaries-<event id>.json` (excluded from backup); without the
-// model or when it fails, `PlanPage.fallbackSummary`. Nothing here runs in screenshot mode or
-// without the on-device model's plan page.
+// `Application Support/attnd-plan/summaries-<event id>.json` (excluded from backup); while the
+// model writes one, or when it fails, `PlanPage.fallbackSummary`. Used only by the plan page,
+// which exists only with the on-device model (never in screenshot mode).
 
 import Foundation
 import Observation
@@ -37,7 +37,6 @@ final class PlanSummaryStore {
     }
 
     func load(eventId: Int?) {
-        Self.removeOldWeatherFolder()
         guard self.eventId != eventId else { return }
         self.eventId = eventId
         working = []
@@ -46,12 +45,12 @@ final class PlanSummaryStore {
     }
 
     /// The day's summary: the cached one, else the fallback while (once) the model writes one.
-    func summary(_ plan: Plan, _ date: PlanDate, _ bundle: EventBundle, modelAvailable: Bool) -> Summary {
+    func summary(_ plan: Plan, _ date: PlanDate, _ bundle: EventBundle) -> Summary {
         let key = PlanPage.summaryKey(plan, date)
         if let cached = summaries[key] { return cached }
         let fallback = Summary(line: PlanPage.fallbackSummary(plan, date, timeZone: bundle.event.timeZone, locale: .current),
                                more: "", generated: false)
-        guard modelAvailable, !working.contains(key) else { return fallback }
+        guard !working.contains(key) else { return fallback }
         working.insert(key)
         let prompt = PlanPage.summaryPrompt(plan, date, bundle, locale: .current)
         let eventId = bundle.event.id
@@ -65,18 +64,6 @@ final class PlanSummaryStore {
             }
         }
         return fallback
-    }
-
-    /// Builds before Nov 19, 2026 kept a WeatherKit forecast and these summaries in
-    /// `attnd-weather/`; weather is gone, so the old folder is deleted once.
-    private static var removedOldFolder = false
-    private static func removeOldWeatherFolder() {
-        guard !removedOldFolder else { return }
-        removedOldFolder = true
-        guard let old = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("attnd-weather", isDirectory: true),
-              FileManager.default.fileExists(atPath: old.path) else { return }
-        try? FileManager.default.removeItem(at: old)
     }
 
     private func store(_ key: String, _ summary: Summary, eventId: Int) {

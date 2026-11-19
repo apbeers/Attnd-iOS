@@ -181,8 +181,6 @@ final class LogStore: @unchecked Sendable {
         return result
     }
 
-    var hasPending: Bool { !pending.isEmpty }
-
     func acknowledge(through seq: Int) {
         pending.removeAll { $0.seq <= seq }
         uploadNudged = false
@@ -429,9 +427,6 @@ enum PerfBucket {
         default:          return "offline"
         }
     }
-
-    /// `perf_live_start_fail`: "disabled", "denied", "limit" or "error".
-    static let liveStartReasons: Set<String> = ["disabled", "denied", "limit", "error"]
 
     private static func bucket(_ ms: Int, _ limits: [(Int, String)], last: String) -> String {
         for (limit, name) in limits where ms < limit { return name }

@@ -195,7 +195,7 @@ struct ContentView: View {
                 Tab(appState.title(of: tab), systemImage: tab.systemImage, value: tab) {
                     EventTabContent(tab: tab)
                         .latestUpdateBanner(enabled: tab != .notifications)
-                        .floatingActionButton(tab: tab)
+                        .floatingActionButton()
                 }
                 // Updates sent since the tab was last seen (0 hides the badge).
                 .badge(tab == .notifications ? appState.unreadUpdatesCount : 0)
@@ -207,10 +207,10 @@ struct ContentView: View {
             Group {
                 switch sheet {
                 case .search:
-                    // Focus the field unless a link or notification opened the sheet on an item or
-                    // an onboarding example is being asked. With the on-device model (outside
-                    // screenshot mode) this sheet only shows items of hidden tabs; search is the plan page's text box.
-                    EventSearchSheet(focusesSearchField: appState.searchPath.isEmpty && appState.autoAskQuery == nil)
+                    // Focus the field unless a link or notification opened the sheet on an item. With
+                    // the on-device model (outside screenshot mode) this sheet only shows items of
+                    // hidden tabs; search is the plan page's text box.
+                    EventSearchSheet(focusesSearchField: appState.searchPath.isEmpty)
                 case .options:
                     OptionsSheet()
                 case .tour:
@@ -359,8 +359,8 @@ private struct LatestUpdateBannerModifier: ViewModifier {
 
 extension View {
     /// The floating button of a tab: "My plan" and its page with the on-device model, else search.
-    func floatingActionButton(tab: EventTab) -> some View {
-        modifier(FloatingActionButtonModifier(tab: tab))
+    func floatingActionButton() -> some View {
+        modifier(FloatingActionButtonModifier())
     }
 
     /// The floating Liquid Glass search button in the bottom-trailing corner of a tab, above
@@ -385,15 +385,13 @@ enum FloatingSearchButtonMetrics {
 }
 
 private struct FloatingActionButtonModifier: ViewModifier {
-    let tab: EventTab
-
     @Environment(AppState.self) private var appState
 
     @ViewBuilder
     func body(content: Content) -> some View {
         // My plan only with the on-device model (planner_view_spec §1); else search.
         if appState.hasAssistant {
-            content.planButton(tab: tab)
+            content.planButton()
         } else {
             content.floatingSearchButton()
         }

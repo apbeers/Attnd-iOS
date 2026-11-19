@@ -270,9 +270,7 @@ final class EventSearchTests: XCTestCase {
     }
 
     func testSearchTargetReferences() {
-        XCTAssertEqual(SearchTarget(reference: "s12"), .scheduleItem(12))
-        XCTAssertEqual(SearchTarget(reference: "[L3]"), .location(3))
-        XCTAssertNil(SearchTarget(reference: "x1"))
+        XCTAssertEqual(SearchTarget.scheduleItem(12).reference, "s12")
         XCTAssertEqual(SearchTarget.notification(5).reference, "n5")
     }
 }

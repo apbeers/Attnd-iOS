@@ -481,12 +481,15 @@ struct JoinRequest: Encodable, Sendable {
     var platform = "ios"
     var pushToken: String?
     var appVersion: String?
+    /// API-019: `true` from the App Clip (its pushes use the clip's APNs topic), `false` from the app.
+    var appClip = false
 
     enum CodingKeys: String, CodingKey {
         case platform
         case deviceId = "device_id"
         case pushToken = "push_token"
         case appVersion = "app_version"
+        case appClip = "app_clip"
     }
 }
 
@@ -515,6 +518,8 @@ struct DeviceRequest: Encodable, Sendable {
     var appVersion: String?
     var subscribed: Bool?
     var liveActivityToken: LiveActivityTokenChange = .unchanged
+    /// API-019: `true` from the App Clip, `false` from the app (always sent).
+    var appClip = false
 
     enum CodingKeys: String, CodingKey {
         case platform, subscribed
@@ -522,6 +527,7 @@ struct DeviceRequest: Encodable, Sendable {
         case pushToken = "push_token"
         case appVersion = "app_version"
         case liveActivityToken = "live_activity_token"
+        case appClip = "app_clip"
     }
 
     /// Missing values are left out (never `"push_token": ""`, API-007), except a cleared
@@ -530,6 +536,7 @@ struct DeviceRequest: Encodable, Sendable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(deviceId, forKey: .deviceId)
         try c.encode(platform, forKey: .platform)
+        try c.encode(appClip, forKey: .appClip)
         try c.encodeIfPresent(pushToken, forKey: .pushToken)
         try c.encodeIfPresent(appVersion, forKey: .appVersion)
         try c.encodeIfPresent(subscribed, forKey: .subscribed)

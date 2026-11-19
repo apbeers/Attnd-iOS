@@ -357,6 +357,22 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertEqual(json["push_token"] as? String, "ff00")
         XCTAssertEqual(json["app_version"] as? String, "2.0")
         XCTAssertEqual(json["subscribed"] as? Bool, true)
+        XCTAssertEqual(json["app_clip"] as? Bool, false)
+    }
+
+    /// API-019: the App Clip says so in join/ and devices/, the app sends `false`.
+    func testRequests_AppClipFlag() throws {
+        for appClip in [true, false] {
+            let join = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(
+                JoinRequest(deviceId: "abc", pushToken: nil, appVersion: nil, appClip: appClip))) as? [String: Any])
+            XCTAssertEqual(join["app_clip"] as? Bool, appClip)
+            let device = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(
+                DeviceRequest(deviceId: "abc", pushToken: nil, appVersion: nil, subscribed: nil, appClip: appClip))) as? [String: Any])
+            XCTAssertEqual(device["app_clip"] as? Bool, appClip)
+        }
+        XCTAssertTrue(APIClient.isAppClip(bundleIdentifier: "com.arcu.Attnd.clip"))
+        XCTAssertFalse(APIClient.isAppClip(bundleIdentifier: "com.arcu.Attnd"))
+        XCTAssertFalse(APIClient.isAppClip(bundleIdentifier: nil))
     }
 
     // MARK: - App status (API-003)

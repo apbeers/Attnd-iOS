@@ -173,6 +173,7 @@ Shared spec with Android and attnd-web; the record format and **every event name
 ## API v2 Notes
 
 - Base URL `https://attnd.app/api/v2/`. Attestation endpoints remain at `/api/v1/attest/`.
+- `JoinRequest` / `DeviceRequest` send `app_clip` (API-019, see Push Notifications).
 - Models must ignore unknown keys and default missing ones (see attnd-web `API_V2.md` → Display defaults). Decoding helpers in `Models.swift` (`lenient`, `lossyArray`) enforce this; add new fields the same way.
 - Coordinates may be `null`; `0,0` is treated as unknown. Never drop a pin without a valid coordinate.
 - Schedule items may have no location — shown under "General".
@@ -280,6 +281,7 @@ A port of Android's planner rule for rule (`Planner.swift`, `PlanRequest.swift`;
 - `type = "notification"` → alert (subscribed devices only); tapping opens the Updates tab for that event. With `priority = "urgent"` (API-011) the server sends it to every device with a token, time-sensitive, plus an ActivityKit `liveactivity` push to each registered `live_activity_token` (see Follow on Lock Screen).
 - `type = "content_updated"` → silent (`content-available`), sent to every device in the event with a token (debounced, ≤ 1 per 15 s per event). `handlePush` refetches only when its `content_version` is newer than the shown bundle's (`ContentUpdatePolicy`), after a random 0–10 s delay, in the foreground or background; `didReceiveRemoteNotification` returns after the fetch and the save to disk. A push that wakes a terminated app restores the saved event first. Requires the `remote-notification` background mode (in `Info.plist`).
 - `aps-environment` is `development` in `Attnd.entitlements` and `AttndAppClip.entitlements`; CI sets both to production for the App Store profiles.
+- **App Clip topic (API-019)**: the clip's bundle id is `com.arcu.Attnd.clip`, so its tokens need that APNs topic (and `com.arcu.Attnd.clip.push-type.liveactivity`). `join/` and `devices/` bodies always carry `app_clip` (`APIClient.isAppClip`: `Bundle.main.bundleIdentifier` ends in `.clip`, decided at runtime, no compile-time switch; `true` from the clip, `false` from the app), and the server sends each device's pushes on its own topic.
 
 ## iPhone Duo / Foldables
 

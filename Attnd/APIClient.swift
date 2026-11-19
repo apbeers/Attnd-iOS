@@ -118,6 +118,15 @@ final class APIClient: Sendable {
     /// Sent with join / device registration.
     let appVersion: String?
 
+    /// API-019: sent as `app_clip` with join / device registration, so the server pushes to the App
+    /// Clip's tokens on the clip's APNs topic. Decided at runtime from the bundle id (the clip's ends
+    /// in `.clip`); the app and the clip share this code with no compile-time switch.
+    let isAppClip: Bool
+
+    static func isAppClip(bundleIdentifier: String?) -> Bool {
+        bundleIdentifier?.hasSuffix(".clip") ?? false
+    }
+
     private convenience init() {
         self.init(
             serverHost: Self.serverHost,
@@ -142,6 +151,7 @@ final class APIClient: Sendable {
         self.session = URLSession(configuration: config)
         self.staticApiKey = apiKey.hasPrefix("$(") ? "" : apiKey
         self.appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        self.isAppClip = Self.isAppClip(bundleIdentifier: Bundle.main.bundleIdentifier)
     }
 
     // MARK: - Events
@@ -176,7 +186,8 @@ final class APIClient: Sendable {
     /// POST events/<id>/join/
     @discardableResult
     func joinEvent(eventId: Int, deviceId: String, pushToken: String?) async throws -> StatusResponse {
-        let body = JoinRequest(deviceId: deviceId, pushToken: Self.nonEmpty(pushToken), appVersion: appVersion)
+        let body = JoinRequest(deviceId: deviceId, pushToken: Self.nonEmpty(pushToken), appVersion: appVersion,
+                               appClip: isAppClip)
         return try await post("events/\(eventId)/join/", body: body)
     }
 
@@ -203,7 +214,8 @@ final class APIClient: Sendable {
             pushToken: Self.nonEmpty(pushToken),
             appVersion: appVersion,
             subscribed: subscribed,
-            liveActivityToken: token
+            liveActivityToken: token,
+            appClip: isAppClip
         )
         return try await post("devices/", body: body)
     }

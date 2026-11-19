@@ -1,8 +1,8 @@
 // LiveFollowController.swift
-// Attnd (app only: not the App Clip, not the widget extension)
+// Attnd (app + App Clip; not the widget extensions)
 //
-// "Follow on Lock Screen" (Live Activity, shared spec §8), reminders before hearted items and
-// the venue arrival notification. The rules are in LiveFollowLogic.swift; this runs them.
+// "Follow on Lock Screen" (Live Activity, shared spec §8) and reminders before hearted items.
+// The rules are in LiveFollowLogic.swift; this runs them.
 //
 // Live Activity (ActivityKit):
 //   - Follows the user's plan (spec §6), else hearted items, else the event's own now / next, one activity per
@@ -17,7 +17,7 @@
 //     Screen"; tapping it opens the app, which starts the activity. iOS doesn't let apps
 //     start one from the background otherwise (only from a LiveActivityIntent or a push).
 //   - Updated (never started) from the background too: a refreshed bundle (silent
-//     `content_updated` push, background app refresh), hearts, location changes and the
+//     `content_updated` push), hearts, location changes and the
 //     activity's own buttons (LiveActivityIntents.swift).
 //   - pushType `.token`: every token from `pushTokenUpdates` goes to `POST devices/` as
 //     `live_activity_token` (API-011), and `null` when the activity ends, so the server can
@@ -25,24 +25,20 @@
 // Reminders: "Prairie Lights in 15 min · 8 min walk" before each hearted or planned item, only
 //   with the notification opt-in, category `attnd.reminder`, rescheduled when hearts, the plan
 //   or content change.
-// Arrival: with "Tell me when I arrive" (Always location), a CLMonitor circle around the venue
-//   sends the "tap to follow" notification once per event day.
-// Background app refresh (`com.arcu.Attnd.refresh`, AttndApp `.backgroundTask`): refreshes the
-//   bundle and the activity while one is running or reminders are pending.
+// No background app refresh and no venue arrival (both removed Nov 19, 2026: App Clips can't run
+//   background tasks, and the app and the clip are the same): between foreground visits the
+//   activity's timers tick on their own and silent pushes refresh it.
 //
 // Nothing here runs in screenshot mode.
 
 import ActivityKit
-import BackgroundTasks
 import CoreLocation
 import Foundation
 import UIKit
 import UserNotifications
 
-/// Identifiers of the background task and the app's own local notifications.
+/// Identifiers of the app's own local notifications.
 enum LiveFollowKeys {
-    /// Background app refresh task (Info.plist BGTaskSchedulerPermittedIdentifiers).
-    static let refreshTaskIdentifier = "com.arcu.Attnd.refresh"
     static let reminderCategory = "attnd.reminder"
     static let followCategory = "attnd.follow"
     /// userInfo keys of the app's own local notifications (never `type` / `event_id`, so
@@ -62,8 +58,6 @@ final class LiveFollowController {
 
     static let shared = LiveFollowController()
 
-    private static let monitorName = "attnd-venue"
-    private static let monitoredKeyDefaults = "pref.venueMonitorKey"
     private static let scheduledStartsDefaults = "pref.liveActivity.scheduledStarts"
 
     private weak var appState: AppState?
@@ -82,16 +76,12 @@ final class LiveFollowController {
     private var lastFollowPrompt: (eventId: Int, at: Date)?
     /// False until the pending "tap to follow" notification was set once this launch.
     private var followPromptSynced = false
-    private var monitor: CLMonitor?
-    private var monitorTask: Task<Void, Never>?
-    private var serviceSession: CLServiceSession?
-    private let locationManager = CLLocationManager()
 
     private init() {}
 
     // MARK: - Setup
 
-    /// AppDelegate, at launch (also a background launch for a region event or a button tap).
+    /// AppDelegate, at launch (also a background launch for a button tap).
     func install(appState: AppState) {
         self.appState = appState
         guard !ScreenshotMode.isActive else { return }
@@ -105,7 +95,8 @@ final class LiveFollowController {
         for activity in Activity<EventActivityAttributes>.activities {
             observe(activity)
         }
-        resumeVenueMonitor()
+        // Builds before Nov 19, 2026 could monitor the venue ("Tell me when I arrive").
+        UserDefaults.standard.removeObject(forKey: "pref.venueMonitorKey")
     }
 
     /// Something changed (bundle, hearts, settings, scene, location): update soon, coalesced.
@@ -155,8 +146,7 @@ final class LiveFollowController {
 
     // MARK: - Update
 
-    /// Brings the activity, reminders, the "tap to follow" notification and the venue monitor
-    /// in line with the joined event. Safe in the background (it never starts an activity there).
+    /// Brings the activity, reminders and the "tap to follow" notification in line with the joined event. Safe in the background (it never starts an activity there).
     func update() async {
         guard let appState, !ScreenshotMode.isActive else { return }
         let activities = Activity<EventActivityAttributes>.activities
@@ -171,7 +161,6 @@ final class LiveFollowController {
             }
             await rescheduleReminders(nil)
             await setFollowPrompt(nil)
-            updateVenueMonitor(nil)
             return
         }
 
@@ -319,8 +308,6 @@ final class LiveFollowController {
         if forcedDay != nil, forcedDay?.eventId != event.id || day == nil { forcedDay = nil }
 
         await rescheduleReminders(bundle)
-        updateVenueMonitor(bundle)
-        scheduleBackgroundRefresh()
     }
 
     private static func isRunning(_ activity: Activity<EventActivityAttributes>) -> Bool {
@@ -620,22 +607,17 @@ final class LiveFollowController {
         var itemId: Int?
         var title: String
         var body: String
-        /// nil: now (arrival).
-        var at: Date?
+        var at: Date
     }
 
     /// Schedules (or with nil removes) the "tap to follow on your Lock Screen" notification.
     private func setFollowPrompt(_ prompt: FollowPrompt?) async {
         if followPromptSynced {
-            if let prompt, let at = prompt.at, lastFollowPrompt?.eventId == prompt.eventId, lastFollowPrompt?.at == at { return }
+            if let prompt, lastFollowPrompt?.eventId == prompt.eventId, lastFollowPrompt?.at == prompt.at { return }
             if prompt == nil, lastFollowPrompt == nil { return }
         }
         followPromptSynced = true
-        if let prompt, let at = prompt.at {
-            lastFollowPrompt = (prompt.eventId, at)
-        } else {
-            lastFollowPrompt = nil
-        }
+        lastFollowPrompt = prompt.map { ($0.eventId, $0.at) }
         await Self.postFollowPrompt(prompt)
     }
 
@@ -655,16 +637,10 @@ final class LiveFollowController {
         var info: [String: Any] = [LiveFollowKeys.localKindKey: LiveFollowKeys.followCategory, LiveFollowKeys.localEventKey: prompt.eventId]
         if let itemId = prompt.itemId { info[LiveFollowKeys.localItemKey] = itemId }
         content.userInfo = info
-        let trigger = prompt.at.map { at in
-            UNTimeIntervalNotificationTrigger(timeInterval: max(1, at.timeIntervalSinceNow), repeats: false)
-        }
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(1, prompt.at.timeIntervalSinceNow), repeats: false)
         do {
             try await center.add(UNNotificationRequest(identifier: "attnd.follow.\(prompt.eventId)", content: content, trigger: trigger))
-            if let at = prompt.at {
-                AppLog.debug(.live, "live.wake.scheduled", "Tap-to-follow notification set", ["at": .string(ISODate.string(from: at)), "reason": "follow_prompt"])
-            } else {
-                AppLog.notice(.live, "live.arrival", "Arrival: tap-to-follow notification sent", ["action": "prompted"])
-            }
+            AppLog.debug(.live, "live.wake.scheduled", "Tap-to-follow notification set", ["at": .string(ISODate.string(from: prompt.at)), "reason": "follow_prompt"])
         } catch {
             AppLog.caught(error, .live, "follow_prompt_add")
         }
@@ -674,159 +650,6 @@ final class LiveFollowController {
         switch await UNUserNotificationCenter.current().notificationSettings().authorizationStatus {
         case .authorized, .provisional, .ephemeral: return true
         default: return false
-        }
-    }
-
-    // MARK: - Venue arrival (CLMonitor)
-
-    /// "Tell me when I arrive" needs Always location; this asks for the upgrade.
-    func requestAlwaysLocation() {
-        AppLog.notice(.location, "location.permission", "Asking for Always location", locationPermissionFields(
-            locationManager.authorizationStatus, precise: locationManager.accuracyAuthorization == .fullAccuracy, asked: true
-        ))
-        locationManager.requestAlwaysAuthorization()
-    }
-
-    var hasAlwaysLocation: Bool { locationManager.authorizationStatus == .authorizedAlways }
-
-    /// At launch (possibly in the background for a region event): reopen the monitor so its
-    /// events are delivered, and hold the Always session it needs.
-    private func resumeVenueMonitor() {
-        guard UserDefaults.standard.string(forKey: Self.monitoredKeyDefaults) != nil, hasAlwaysLocation else { return }
-        serviceSession = CLServiceSession(authorization: .always)
-        Task { await self.openMonitor() }
-    }
-
-    private func openMonitor() async {
-        guard monitor == nil else { return }
-        let monitor = await CLMonitor(Self.monitorName)
-        self.monitor = monitor
-        monitorTask = Task { [weak self] in
-            do {
-                for try await event in await monitor.events {
-                    let identifier = event.identifier
-                    let satisfied = event.state == .satisfied
-                    await self?.venueEvent(identifier: identifier, satisfied: satisfied)
-                }
-            } catch {
-                // The monitor stopped; it is reopened at the next launch.
-                AppLog.caught(error, .location, "venue_monitor")
-            }
-        }
-    }
-
-    private func updateVenueMonitor(_ bundle: EventBundle?) {
-        var wanted: (key: String, region: VenueRegion)?
-        if let bundle, let appState, appState.personal.notifyOnArrival, appState.followsOnLockScreen,
-           hasAlwaysLocation, !bundle.event.isArchived,
-           (bundle.event.endTime ?? .distantFuture) > .now,
-           let region = VenueRegion.make(event: bundle.event.coordinate, locations: bundle.locations) {
-            let center = String(format: "%.5f,%.5f", region.center.latitude, region.center.longitude)
-            let key = "venue-\(bundle.event.id)-\(center)-\(Int(region.radius.rounded()))"
-            wanted = (key, region)
-        }
-        let current = UserDefaults.standard.string(forKey: Self.monitoredKeyDefaults)
-        guard wanted?.key != current || (wanted != nil && monitor == nil) else { return }
-        UserDefaults.standard.set(wanted?.key, forKey: Self.monitoredKeyDefaults)
-        serviceSession = wanted == nil ? nil : (serviceSession ?? CLServiceSession(authorization: .always))
-        Task { await self.configureMonitor(wanted) }
-    }
-
-    private func configureMonitor(_ wanted: (key: String, region: VenueRegion)?) async {
-        if wanted == nil, monitor == nil { return }
-        await openMonitor()
-        guard let monitor else { return }
-        let existing = await monitor.identifiers
-        if let wanted, existing == [wanted.key] { return }
-        for identifier in existing {
-            await monitor.remove(identifier)
-        }
-        guard let wanted else { return }
-        let condition = CLMonitor.CircularGeographicCondition(
-            center: CLLocationCoordinate2D(latitude: wanted.region.center.latitude, longitude: wanted.region.center.longitude),
-            radius: wanted.region.radius
-        )
-        await monitor.add(condition, identifier: wanted.key, assuming: .unsatisfied)
-    }
-
-    /// Arrived at the venue: "… tap to follow on your Lock Screen", once per event day, unless
-    /// the activity is already running (in the foreground it simply starts).
-    private func venueEvent(identifier: String, satisfied: Bool) async {
-        guard satisfied, let appState else { return }
-        AppLog.notice(.live, "live.arrival", "Arrived at the venue", ["action": "entered"])
-        if UIApplication.shared.applicationState != .active {
-            AppLog.info(.background, "background.wake", "Venue region event", ["reason": "region"])
-        }
-        await appState.restoreSavedEventIfNeeded()
-        guard let bundle = appState.currentBundle,
-              identifier.hasPrefix("venue-\(bundle.event.id)-"),
-              appState.followsOnLockScreen else { return }
-        let event = bundle.event
-        let now = Date.now
-        let today = EventTimeFormat.calendar(in: event.timeZone).startOfDay(for: now)
-        guard ScheduleTiming.isEventDay(now: now, start: event.startTime, end: event.endTime, timeZone: event.timeZone),
-              appState.personal.arrivalPromptDay != today, !isFollowing else { return }
-        appState.markArrivalPrompted(today)
-        forcedDay = (event.id, today)
-        if UIApplication.shared.applicationState == .active {
-            AppLog.notice(.live, "live.arrival", "Arrived: following now", ["action": "started"])
-            await update()
-            return
-        }
-        guard let day = LiveActivityPlanner.followDay(
-            schedule: bundle.schedule,
-            hearted: appState.personal.heartedScheduleItems,
-            planned: appState.plannedItemIds,
-            eventStart: event.startTime,
-            now: now,
-            timeZone: event.timeZone
-        ), EventTimeFormat.calendar(in: event.timeZone).isDate(day.dayStart, inSameDayAs: now) else { return }
-        lastFollowPrompt = nil
-        await Self.postFollowPrompt(FollowPrompt(
-            eventId: event.id,
-            itemId: day.items.first { !ScheduleTiming.hasEnded($0, at: now) }?.id,
-            title: "Welcome to \(event.name)",
-            body: FollowPromptText.body(day: day, at: now, timeZone: event.timeZone),
-            at: nil
-        ))
-    }
-
-    // MARK: - Background app refresh
-
-    /// AttndApp's `.backgroundTask(.appRefresh(…))`: fresh content for the activity and reminders.
-    static func performBackgroundRefresh() async {
-        guard let appState = shared.appState, !ScreenshotMode.isActive else { return }
-        let started = ContinuousClock.now
-        AppLog.info(.background, "background.wake", "Background app refresh", ["reason": "app_refresh"])
-        AppLog.info(.background, "background.refresh.started", "Background app refresh", ["task": "bundle", "reason": "app_refresh"])
-        await appState.restoreSavedEventIfNeeded()
-        await appState.refreshBundle(silent: true, source: .poll)
-        shared.pendingUpdate?.cancel()
-        await shared.update()
-        let ms = (ContinuousClock.now - started).wholeMilliseconds
-        AppLog.info(.background, "background.refresh.finished", "Background app refresh done in \(ms) ms", [
-            "task": "bundle", "ms": .int(ms), "following": .bool(shared.isFollowing),
-        ])
-        AppLog.flush()
-    }
-
-    /// Asks for a background refresh in ~15 min while something on the Lock Screen depends on it.
-    private func scheduleBackgroundRefresh() {
-        let needed = isFollowing || !(lastReminders ?? []).isEmpty
-        guard needed else {
-            BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: LiveFollowKeys.refreshTaskIdentifier)
-            return
-        }
-        let request = BGAppRefreshTaskRequest(identifier: LiveFollowKeys.refreshTaskIdentifier)
-        request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
-        // Fails in the simulator and when background refresh is off; nothing else to do then.
-        do {
-            try BGTaskScheduler.shared.submit(request)
-            AppLog.debug(.background, "background.task.scheduled", "Background refresh requested in 15 min", [
-                "task": "app_refresh", "at": .string(ISODate.string(from: request.earliestBeginDate ?? .now)), "window_s": 0,
-            ])
-        } catch {
-            AppLog.caught(error, .background, "bg_refresh_submit", level: .debug)
         }
     }
 }

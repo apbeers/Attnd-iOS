@@ -32,10 +32,5 @@ struct AttndApp: App {
                     Task { await appDelegate.appState.openLiveActivityLink(url) }
                 }
         }
-        // Background app refresh while following on the Lock Screen or reminders are pending
-        // (LiveFollowController schedules it; identifier in Info.plist).
-        .backgroundTask(.appRefresh(LiveFollowKeys.refreshTaskIdentifier)) {
-            await LiveFollowController.performBackgroundRefresh()
-        }
     }
 }

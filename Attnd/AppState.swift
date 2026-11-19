@@ -1361,27 +1361,11 @@ final class AppState {
         liveFollowNeedsUpdate()
     }
 
-    /// "Tell me when I arrive" (needs Always location; LiveFollowController asks).
-    var notifiesOnArrival: Bool { personal.notifyOnArrival }
-
-    func setNotifyOnArrival(_ on: Bool) {
-        guard currentEvent != nil, personal.notifyOnArrival != on else { return }
-        personal.notifyOnArrival = on
-        savePersonalState()
-        liveFollowNeedsUpdate()
-    }
-
     /// "Skip" in the Live Activity: it moves on to the item after this one.
     func skipActivityItem(_ itemId: Int) {
         guard currentEvent != nil, personal.skippedItems.insert(itemId).inserted else { return }
         savePersonalState()
         liveFollowNeedsUpdate()
-    }
-
-    /// The venue arrival notification was sent for this event day.
-    func markArrivalPrompted(_ day: Date) {
-        personal.arrivalPromptDay = day
-        savePersonalState()
     }
 
     /// The user's position changed (walk minutes in the Live Activity).
@@ -1442,7 +1426,7 @@ final class AppState {
     }
     #endif
 
-    /// Live Activity, reminders and the venue monitor follow the content (full app only).
+    /// The Live Activity and reminders follow the content.
     private func liveFollowNeedsUpdate() {
         #if !APP_CLIP
         LiveFollowController.shared.setNeedsUpdate()

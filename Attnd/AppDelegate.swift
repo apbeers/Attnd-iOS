@@ -40,7 +40,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         MetricKitReporter.shared.start()
         UNUserNotificationCenter.current().delegate = self
         Self.removeOldSpotlightItems()
-        // Live Activity, reminders, venue arrival; also handles Live Activity buttons, which
+        // Live Activity and reminders; also handles Live Activity buttons, which
         // may launch the app in the background.
         LiveFollowController.shared.install(appState: appState)
         appState.registerForRemoteNotifications()
@@ -60,7 +60,6 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         appState.pushRegistrationDidFail(error)
     }
 
-    /// Why iOS launched the app in the background (`background.wake` reason).
     /// Builds before Nov 19, 2026 indexed the event's items in Spotlight (App Intents entities,
     /// since removed): their entries are deleted once.
     private static func removeOldSpotlightItems() {
@@ -76,12 +75,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         }
     }
 
+    /// Why iOS launched the app in the background (`background.wake` reason).
     private static func launchReason(_ options: [UIApplication.LaunchOptionsKey: Any]?) -> String {
-        guard let options else { return "app_refresh" }
-        // The .remoteNotification / .location keys are deprecated in iOS 26 (scene-based launch handling);
-        // their raw values still arrive here, and this only labels the log line.
-        if options[UIApplication.LaunchOptionsKey(rawValue: "UIApplicationLaunchOptionsRemoteNotificationKey")] != nil { return "silent_push" }
-        if options[UIApplication.LaunchOptionsKey(rawValue: "UIApplicationLaunchOptionsLocationKey")] != nil { return "region" }
+        // The .remoteNotification key is deprecated in iOS 26 (scene-based launch handling); its
+        // raw value still arrives here, and this only labels the log line.
+        if options?[UIApplication.LaunchOptionsKey(rawValue: "UIApplicationLaunchOptionsRemoteNotificationKey")] != nil { return "silent_push" }
+        // A Live Activity button (LiveActivityIntent).
         return "intent"
     }
 

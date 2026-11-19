@@ -6,10 +6,6 @@
 	<string>$(ATTND_API_KEY)</string>
 	<key>ATTND_SERVER</key>
 	<string>$(ATTND_SERVER)</string>
-	<key>BGTaskSchedulerPermittedIdentifiers</key>
-	<array>
-		<string>com.arcu.Attnd.refresh</string>
-	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleExecutable</key>
@@ -45,8 +41,6 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Scan an event QR code to join instantly</string>
-	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>With “Tell me when I arrive” on, Attnd notices when you reach your event's venue and offers to follow your day on the Lock Screen. Your location stays on your iPhone.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Attnd uses your location while you use the app to find events near you and to show how far away places at your event are, which way they are and how long the walk takes.</string>
 	<key>UIApplicationSceneManifest</key>
@@ -56,7 +50,6 @@
 	</dict>
 	<key>UIBackgroundModes</key>
 	<array>
-		<string>fetch</string>
 		<string>remote-notification</string>
 	</array>
 	<key>UIApplicationSupportsIndirectInputEvents</key>

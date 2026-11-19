@@ -566,18 +566,14 @@ struct EventPersonalState: Codable, Hashable, Sendable {
     var dismissedUrgentIds: Set<Int> = []
     /// "Follow on Lock Screen" (Live Activity): nil = the default (on once something is hearted).
     var followOnLockScreen: Bool? = nil
-    /// "Tell me when I arrive" (venue region): off unless turned on.
-    var notifyOnArrival: Bool = false
     /// Schedule items skipped in the Live Activity ("Skip").
     var skippedItems: Set<Int> = []
-    /// Start of the event day (event time zone) the arrival notification was last sent for.
-    var arrivalPromptDay: Date? = nil
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
         case heartedLocations, heartedScheduleItems, updatesSeenAt, dismissedUpdateBannerId
-        case dismissedUrgentIds, followOnLockScreen, notifyOnArrival, skippedItems, arrivalPromptDay
+        case dismissedUrgentIds, followOnLockScreen, skippedItems
     }
 
     init(from decoder: Decoder) throws {
@@ -588,9 +584,7 @@ struct EventPersonalState: Codable, Hashable, Sendable {
         dismissedUpdateBannerId = c.lenient(Int.self, .dismissedUpdateBannerId)
         dismissedUrgentIds = c.lenient(Set<Int>.self, .dismissedUrgentIds) ?? []
         followOnLockScreen = c.lenient(Bool.self, .followOnLockScreen)
-        notifyOnArrival = c.lenient(Bool.self, .notifyOnArrival) ?? false
         skippedItems = c.lenient(Set<Int>.self, .skippedItems) ?? []
-        arrivalPromptDay = c.lenient(Date.self, .arrivalPromptDay)
     }
 
     /// Whether the Live Activity follows this event: the user's choice, else on once

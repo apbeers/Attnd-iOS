@@ -1,9 +1,9 @@
 // LiveFollowLogic.swift
-// Attnd (app only; unit tested in LiveFollowTests)
+// Attnd (app + App Clip; unit tested in LiveFollowTests)
 //
-// Pure rules behind "Follow on Lock Screen" (Live Activity, shared spec §8), heart reminders
-// and the venue region. LiveFollowController runs them; nothing here touches ActivityKit's
-// runtime, UserNotifications or Core Location.
+// Pure rules behind "Follow on Lock Screen" (Live Activity, shared spec §8) and heart reminders.
+// LiveFollowController runs them; nothing here touches ActivityKit's runtime or
+// UserNotifications.
 //
 //   - FollowDay / LiveActivityPlanner.followDay: which day to follow (today while something
 //     is left, else the next event day), what it follows (the plan's items, else hearted items,
@@ -14,7 +14,6 @@
 //   - LiveActivityPlanner.decision: start now, schedule for later, or nothing.
 //   - ReminderPlanner: "Prairie Lights in 15 min · 8 min walk" before hearted and planned items.
 //   - FollowPromptText: the "tap to follow on your Lock Screen" notification.
-//   - VenueRegion: the circle around the venue for arrival.
 
 import Foundation
 
@@ -310,37 +309,5 @@ enum FollowPromptText {
     /// The "tap to follow" notification: "Prairie Lights in 2 h · tap to follow on your Lock Screen".
     static func body(day: FollowDay, at date: Date, timeZone: TimeZone, locale: Locale = .current) -> String {
         "\(headline(day: day, at: date, timeZone: timeZone, locale: locale)) · \(followHint)"
-    }
-}
-
-// MARK: - Venue region (arrival)
-
-struct VenueRegion: Hashable, Sendable {
-    var center: Coordinate
-    var radius: Double
-
-    static let minRadius = 150.0
-    static let maxRadius = 3_000.0
-    /// Added to the farthest location so arriving at the edge counts.
-    static let margin = 150.0
-
-    /// Around the event's coordinate (else the centre of its locations), wide enough to hold
-    /// every location plus a margin, 150 m – 3 km. nil without any coordinate.
-    static func make(event: Coordinate?, locations: [Location]) -> VenueRegion? {
-        let points = locations.compactMap(\.coordinate)
-        let center: Coordinate
-        if let event {
-            center = event
-        } else if !points.isEmpty {
-            let lat = points.map(\.latitude).reduce(0, +) / Double(points.count)
-            let lng = points.map(\.longitude).reduce(0, +) / Double(points.count)
-            guard let c = Coordinate.valid(latitude: lat, longitude: lng) else { return nil }
-            center = c
-        } else {
-            return nil
-        }
-        let farthest = points.map { Compass.distance(center, $0) }.max() ?? 0
-        let radius = min(max(farthest + margin, minRadius), maxRadius)
-        return VenueRegion(center: center, radius: radius)
     }
 }

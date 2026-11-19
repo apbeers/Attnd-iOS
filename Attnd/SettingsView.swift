@@ -225,11 +225,11 @@ struct SettingsView: View {
 // MARK: - Follow on Lock Screen
 
 /// "Follow on Lock Screen" (the event's Live Activity) for this event, "Start Now" before it
-/// starts by itself, and "Tell me when I arrive" (Always location, venue region).
+/// starts by itself.
 private struct LiveFollowSection: View {
     @Environment(AppState.self) private var appState
     @Environment(\.scenePhase) private var scenePhase
-    /// Re-read on appear / activation (ActivityKit and Core Location aren't observable).
+    /// Re-read on appear / activation (ActivityKit isn't observable).
     @State private var refreshToken = 0
 
     var body: some View {
@@ -261,18 +261,6 @@ private struct LiveFollowSection: View {
                     } label: {
                         Label("Start Now", systemImage: "play.circle")
                     }
-                }
-                Toggle("Tell Me When I Arrive", isOn: Binding(
-                    get: { appState.notifiesOnArrival },
-                    set: { on in
-                        appState.setNotifyOnArrival(on)
-                        if on, !controller.hasAlwaysLocation { controller.requestAlwaysLocation() }
-                    }
-                ))
-                if appState.notifiesOnArrival, !controller.hasAlwaysLocation {
-                    Text("Needs location access “Always” (Settings → Attnd → Location).")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
                 }
             }
         } header: {

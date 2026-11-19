@@ -1,7 +1,7 @@
 // LiveFollowTests.swift
 // AttndTests
 //
-// "Follow on Lock Screen" (Live Activity), heart reminders, the venue region, the urgent block
+// "Follow on Lock Screen" (Live Activity), heart reminders, the urgent block
 // (API-011), `live_activity_token` and the activity's links (LiveFollowLogic.swift,
 // LiveActivityModel.swift; onboarding's examples are in PlanRequestTests). Fixed `now`:
 // Saturday Nov 14, 2026, 2:00 PM in America/Chicago; locale en_US.
@@ -336,25 +336,6 @@ final class LiveFollowTests: XCTestCase {
                        "Prairie Lights started 30 min ago")
     }
 
-    // MARK: - Venue region
-
-    func testVenueRegion() throws {
-        let event = try XCTUnwrap(Coordinate.valid(latitude: 41.8805, longitude: -87.6305))
-        let region = try XCTUnwrap(VenueRegion.make(event: event, locations: locations))
-        XCTAssertEqual(region.center, event)
-        let farthest = Compass.distance(event, foodCourt.coordinate!)
-        XCTAssertEqual(region.radius, farthest + VenueRegion.margin, accuracy: 0.001)
-
-        let centroid = try XCTUnwrap(VenueRegion.make(event: nil, locations: locations))
-        XCTAssertEqual(centroid.center.latitude, 41.8805, accuracy: 0.000001)
-        XCTAssertGreaterThanOrEqual(centroid.radius, VenueRegion.minRadius)
-
-        let far = Location(id: 30, name: "Parking", latitude: 41.98, longitude: -87.63)
-        XCTAssertEqual(VenueRegion.make(event: event, locations: [far])?.radius, VenueRegion.maxRadius)
-        XCTAssertEqual(VenueRegion.make(event: event, locations: [])?.radius, VenueRegion.minRadius)
-        XCTAssertNil(VenueRegion.make(event: nil, locations: [Location(id: 1, name: "Nowhere")]))
-    }
-
     // MARK: - The plan (spec §6): plan > hearts > the event's own day
 
     func testFollowDay_PlanWinsOverHearts() throws {
@@ -387,7 +368,6 @@ final class LiveFollowTests: XCTestCase {
     func testPersonalState_FollowDefaultsAndOldFiles() throws {
         let old = try JSONDecoder().decode(EventPersonalState.self, from: Data(#"{"heartedScheduleItems": [2]}"#.utf8))
         XCTAssertTrue(old.followsOnLockScreen)
-        XCTAssertFalse(old.notifyOnArrival)
         XCTAssertTrue(old.skippedItems.isEmpty)
         XCTAssertTrue(old.dismissedUrgentIds.isEmpty)
         XCTAssertFalse(try JSONDecoder().decode(EventPersonalState.self, from: Data("{}".utf8)).followsOnLockScreen)

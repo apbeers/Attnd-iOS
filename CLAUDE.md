@@ -198,9 +198,7 @@ Once the event was loaded, everything works with no server: the saved bundle ope
 
 ## Tickets (parked)
 
-Ticketing (API-017: Get Tickets, My Tickets, offline door mode) is **parked**, owner's call Nov 19, 2026: "If people want to sell tickets they can use Eventbrite for now." The code is kept, compiled into nothing:
-- **Files**: `Parked/Tickets/` (`Tickets.swift`, `TicketCrypto.swift`, `TicketsAPI.swift`, `TicketsStore.swift`, `TicketsView.swift`, `DoorModeView.swift`, `TicketsTests.swift`), listed in `project.xcproj` under the `Parked` group with no target membership. The app no longer decodes `bundle.tickets` / `event.tickets_url` (lenient decoding ignores them) and has no `tickets` log category.
-- **To restore**: move the files back (`Attnd/`, the test to `AttndTests/`) and give them their targets again (`Tickets.swift` + `TicketCrypto.swift`: `Attnd` and `AttndAppClip`; the other four: `Attnd`; `TicketsTests.swift`: `AttndTests`); revert the parking commit's other changes or redo them: `TicketSales` + `Event.ticketsUrl` decoding in `Models.swift`, `AppState.ticketSales` / `ticketAction` / `tickets` / `door`, `APIError.ticketSignInExpired` (401 `buyer_token_invalid` / `door_token_invalid` in `APIClient`), `LogCategory.tickets`, and the UI entry points (`GetTicketsRow` in Options' event section and `EventInfoView`, `TicketsSection` in Options and the launch screen); add `Tickets TicketCrypto` / `TicketsTests` back to the Linux harness. The full spec is commit `d67044c`'s CLAUDE.md "Tickets (API-017)" section and attnd-web `API_V2.md` → Tickets.
+Ticketing (API-017) is parked (owner, Nov 19, 2026: organizers use Eventbrite for now). The code was removed from `develop`; it lives on the branch `parked/tickets` (tag `tickets-parked-2026-11-19`, the same commit; that commit's CLAUDE.md has the full spec and the steps to restore it). The bundle's `tickets` / `event.tickets_url` keys are ignored by lenient decoding.
 
 ## Search and the plan page
 

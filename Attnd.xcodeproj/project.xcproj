@@ -307,24 +307,6 @@
       ],
     }, {
       "kind": "group",
-      "path": "Parked",
-      "children": [
-        {
-          "kind": "group",
-          "path": "Tickets",
-          "children": [
-            { "path": "Tickets.swift" },
-            { "path": "TicketCrypto.swift" },
-            { "path": "TicketsAPI.swift" },
-            { "path": "TicketsStore.swift" },
-            { "path": "TicketsView.swift" },
-            { "path": "DoorModeView.swift" },
-            { "path": "TicketsTests.swift" },
-          ],
-        },
-      ],
-    }, {
-      "kind": "group",
       "path": "Config",
       "children": [
         { "path": "Debug.xcconfig" },

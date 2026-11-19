@@ -55,8 +55,6 @@ struct SettingsView: View {
             if let event = appState.currentEvent {
                 Section {
                     EventHeader(event: event, logoUrl: appState.logoUrl)
-                        // Siri on-screen awareness: "share this event", "where is it?".
-                        .onScreenEntity(.event(event.id))
                     if let website = event.websiteUrl {
                         EventWebsiteLink(url: website)
                     }

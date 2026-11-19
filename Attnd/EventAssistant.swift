@@ -10,7 +10,7 @@
 //
 // It also reads plan requests into the planner's preferences (`planPreferences`, spec §6).
 //
-// Used by the search sheet (EventSearchView) and Siri / Shortcuts (AskEventIntent). When the
+// Used by the search sheet (EventSearchView) and the plan page (AssistantController). When the
 // model is unavailable (device not eligible, Apple Intelligence off, model not downloaded)
 // `isAvailable` is false and callers show plain search results instead.
 //

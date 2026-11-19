@@ -207,7 +207,7 @@ struct ContentView: View {
             Group {
                 switch sheet {
                 case .search:
-                    // Focus the field unless Siri / Spotlight opened the sheet on an item or
+                    // Focus the field unless a link or notification opened the sheet on an item or
                     // an onboarding example is being asked. With the on-device model (outside
                     // screenshot mode) this sheet only shows items of hidden tabs; search is the plan page's text box.
                     EventSearchSheet(focusesSearchField: appState.searchPath.isEmpty && appState.autoAskQuery == nil)

@@ -25,7 +25,7 @@ import Foundation
 
 // MARK: - Targets and results
 
-/// Something in the event the app can show: a jump target for search results, Siri and Spotlight.
+/// Something in the event the app can show: a jump target for search results, links and notifications.
 enum SearchTarget: Hashable, Sendable {
     case scheduleItem(Int)
     case location(Int)
@@ -329,7 +329,7 @@ enum EventSearch {
     }
 
     /// The words of a spoken or typed question that are worth searching for
-    /// ("When is the mariachi?" → "mariachi"); time words are kept. For Siri and the
+    /// ("When is the mariachi?" → "mariachi"); time words are kept. For the
     /// assistant's fallback; the search field itself uses the query as typed.
     static func keywords(fromQuestion question: String) -> String {
         let stopWords: Set<String> = [
@@ -719,7 +719,7 @@ struct EventSearchIndex: Sendable {
         }.map(\.result)
     }
 
-    /// A result row for one item without a query (assistant citations, Siri snippets).
+    /// A result row for one item without a query (assistant citations).
     func result(for target: SearchTarget, now: Date) -> EventSearchResult? {
         guard let entry = entries.first(where: { $0.target == target }) else { return nil }
         return EventSearchResult(

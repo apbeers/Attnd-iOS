@@ -8,7 +8,7 @@
 // live rules are unchanged and shared):
 //
 //   - The page: `pageOpen` (a full-screen cover over the tabs) and `pagePath` (its own stack:
-//     items tapped on the page push their detail there). Links, Siri and notifications close it
+//     items tapped on the page push their detail there). Links and notifications close it
 //     (`closePage`) so the item's tab is in view; a new proposal opens it so its preview shows.
 //   - Phones show only the last answer (`answer`) in a small pane above the text box; wide
 //     windows (iPhone Duo unfolded) add a chat column with this session's turns (`transcript`,
@@ -818,45 +818,6 @@ final class AssistantController {
         run(.planEdit(ops, bundle), label: label, source: .manual)
     }
 
-    // MARK: - Siri (spec §6: "What's next on my plan", "Swap my next thing", "I already ate")
-
-    /// The next planned item (not started, not checked off).
-    func nextPlanned(now: Date = .now) -> ScheduleItem? {
-        guard let appState, let bundle = appState.currentBundle, let plan = appState.planner.plan, !plan.isEmpty else { return nil }
-        return LiveAssist.nextPlanned(plan, bundle, now: now)
-    }
-
-    /// "Swap my next thing": the next planned item replaced by its best alternative that is
-    /// still ahead (the planner's own swap list). Returns the sentence Siri says.
-    func swapNext(now: Date = .now) -> String {
-        guard let appState, let bundle = appState.currentBundle, let plan = appState.planner.plan, !plan.isEmpty else {
-            return AssistantRouter.noPlanText
-        }
-        guard let next = LiveAssist.nextPlanned(plan, bundle, now: now),
-              let planned = plan.items.first(where: { $0.itemId == next.id }) else { return "Nothing else is in your plan." }
-        let planIds = Set(plan.itemIds)
-        guard let alternative = planned.alternatives.compactMap({ bundle.scheduleItem($0) })
-            .first(where: { !planIds.contains($0.id) && ($0.startTime ?? .distantPast) > now }) else {
-            return "There's nothing to swap \(next.name) for."
-        }
-        return siriEdit([.replace(item: next.id, with: alternative.id)], label: "Swap my next thing")
-            ?? "Swapped \(next.name) for \(alternative.name)."
-    }
-
-    /// "I already ate": no food for 3 hours, the next meal break done.
-    func alreadyAte(now: Date = .now) -> String {
-        guard appState?.planner.hasPlan == true else { return AssistantRouter.noPlanText }
-        return siriEdit([.noFoodUntil(PlanCalendar.truncatedToMinute(now).addingTimeInterval(3 * 3600))], label: "I already ate")
-            ?? "Your plan stays the same."
-    }
-
-    private func siriEdit(_ ops: [PlanOp], label: String) -> String? {
-        guard let bundle = appState?.currentBundle else { return nil }
-        planSource = "siri"
-        defer { planSource = "assistant" }
-        return run(.planEdit(ops, bundle), label: label, source: .manual)
-    }
-
     // MARK: - Plans
 
     /// Makes a plan in place (progress in the timeline; the model reads the request when available).
@@ -951,7 +912,7 @@ final class AssistantController {
         }
     }
 
-    /// Text typed elsewhere (Siri's search, onboarding's question): into the input bar, or run.
+    /// Text typed elsewhere (onboarding's question): into the input bar, or run.
     func request(_ text: String, send: Bool) {
         if send {
             submit(text, forced: modelAvailable ? .ask : nil)

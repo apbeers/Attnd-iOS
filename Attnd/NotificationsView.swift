@@ -2,7 +2,7 @@
 // Attnd
 //
 // Organizer notifications for the joined event, newest first, from the bundle.
-// Times are shown in the event's time zone. A jump (search, Siri, Spotlight) scrolls to
+// Times are shown in the event's time zone. A jump (search, a link, a notification) scrolls to
 // one notification and highlights it briefly. While it is on screen everything listed counts
 // as seen (`AppState.markUpdatesSeen`: the tab's unread badge and the update banner clear).
 
@@ -36,8 +36,6 @@ struct NotificationsView: View {
                                 }
                             }
                         }
-                        // Siri on-screen awareness for each update.
-                        .onScreenEntity(.notification(notification.id))
                 }
             }
             .onAppear {

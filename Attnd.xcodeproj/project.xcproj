@@ -145,8 +145,6 @@
             "AttndAppClip/compile-sources",
           ],
         },
-        { "path": "EventEntities.swift", "target-membership": [ "Attnd/compile-sources" ] },
-        { "path": "EventIntents.swift", "target-membership": [ "Attnd/compile-sources" ] },
         { "path": "EventAssistant.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
         { "path": "Planner.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
         { "path": "PlanRequest.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },

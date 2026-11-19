@@ -133,7 +133,7 @@ final class AppState {
 
     // MARK: - Search and jumps
 
-    /// The search sheet's query (Siri's "search in Attnd" can fill it). Never sent anywhere.
+    /// The search sheet's query. Never sent anywhere.
     var searchText = ""
 
     /// A question to put to the on-device model as soon as the search sheet shows it
@@ -748,9 +748,6 @@ final class AppState {
         pendingTour = false
         pendingSharedPlan = nil
         loadPersonalState(for: nil)
-        #if !APP_CLIP
-        EventEntityIndex.shared.update(with: nil)
-        #endif
         // Ends the Live Activity and removes reminders (the server clears the token on leave).
         liveFollowNeedsUpdate()
     }
@@ -862,10 +859,6 @@ final class AppState {
         // New images download first; files the new content no longer uses are deleted after.
         scheduleImageSync()
         searchIndex = EventSearchIndex(bundle)
-        #if !APP_CLIP
-        // Spotlight / Siri (App Intents): the app's entities follow the shown content.
-        EventEntityIndex.shared.update(with: currentBundle)
-        #endif
         // The onboarding cards after the first join on this device (never in screenshot mode).
         if isFirstApply, !ScreenshotMode.isActive, !UserDefaults.standard.bool(forKey: Keys.onboardingSeen) {
             pendingTour = true
@@ -874,7 +867,7 @@ final class AppState {
         liveFollowNeedsUpdate()
     }
 
-    /// The content shown, as one bundle (nil outside an event). For search, Siri and Spotlight.
+    /// The content shown, as one bundle (nil outside an event). For search and the assistant.
     var currentBundle: EventBundle? {
         guard let event = currentEvent, hasAppliedDefaultTab else { return nil }
         return EventBundle(
@@ -888,7 +881,7 @@ final class AppState {
         )
     }
 
-    // MARK: - Jumps (search results, Siri, Spotlight)
+    // MARK: - Jumps (search results, links, notifications)
 
     /// Shows one item: in its own tab when that tab is visible (Locations / Schedule select
     /// it, Updates scrolls to and highlights it; the event opens Options), closing any sheet;
@@ -937,7 +930,7 @@ final class AppState {
         navigate(to: target)
     }
 
-    /// Opens the search sheet with `query` (Siri / Shortcuts). `ask`: also put it to the
+    /// Opens the search sheet with `query` (onboarding's question). `ask`: also put it to the
     /// on-device model right away (onboarding's question example; its plan examples plan).
     func showSearch(_ query: String, ask: Bool = false) {
         guard currentEvent != nil else { return }

@@ -592,7 +592,6 @@ private struct ResultLine: View {
                     .contentShape(.rect)
             }
             .buttonStyle(.plain)
-            .onScreenEntity(result.target)
             if let action {
                 actionView(action)
             }

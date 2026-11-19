@@ -11,7 +11,7 @@
 //
 // The sheet has its own navigation stack (`AppState.searchPath`): tapping a result pushes
 // its detail, so Back returns to the results and items in tabs the organizer hid
-// (`display.tabs`) open too. Siri, Spotlight and other jumps use `AppState.navigate(to:)`,
+// (`display.tabs`) open too. Links, notifications and other jumps use `AppState.navigate(to:)`,
 // which prefers the item's own tab and otherwise opens this sheet with the item pushed.
 //
 // The search field is focused (keyboard up) when the sheet opens: the field sits in the
@@ -27,10 +27,6 @@
 // keywords when the question as typed finds nothing.
 
 import SwiftUI
-#if !APP_CLIP
-// For `appEntityIdentifier` (SwiftUI + App Intents); the App Clip has no App Intents.
-import AppIntents
-#endif
 
 // MARK: - Sheet
 
@@ -38,7 +34,7 @@ struct EventSearchSheet: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
 
-    /// Focus the field once the results screen first appears. False when Siri / Spotlight
+    /// Focus the field once the results screen first appears. False when a link or notification
     /// opened the sheet on an item (Back from it then shows the results without the keyboard).
     @State private var pendingFocus: Bool
 
@@ -198,7 +194,6 @@ struct EventSearchView: View {
             NavigationLink(value: result.target) {
                 HeartableResultRow(result: result)
             }
-            .onScreenEntity(result.target)
         }
     }
 
@@ -350,7 +345,7 @@ struct EventSearchView: View {
 // MARK: - Result row
 
 /// A search result with a heart (schedule items and places) and, for places, the distance.
-/// The plain `SearchResultRow` is also used by Siri snippets, which have no app state.
+/// The plain `SearchResultRow` needs no app state (assistant citations use it too).
 struct HeartableResultRow: View {
     let result: EventSearchResult
 
@@ -465,7 +460,7 @@ struct SearchDestinationView: View {
     }
 }
 
-/// The event's own details (a search result for the event, or Siri's "open the event" when
+/// The event's own details (a search result for the event, or a link to the event when
 /// pushed). Options shows the same header.
 struct EventInfoView: View {
     @Environment(AppState.self) private var appState
@@ -492,36 +487,5 @@ struct EventInfoView: View {
         }
         .navigationTitle(appState.currentEvent?.name ?? "Event")
         .navigationBarTitleDisplayMode(.inline)
-        .onScreenEntity(.event(appState.currentEvent?.id ?? 0))
-    }
-}
-
-// MARK: - Siri on-screen awareness
-
-extension View {
-    /// Tells Siri and Apple Intelligence which event item this view shows (App Intents
-    /// entities, EventEntities.swift). No-op in the App Clip, which has no App Intents.
-    @ViewBuilder
-    func onScreenEntity(_ target: SearchTarget) -> some View {
-        #if APP_CLIP
-        self
-        #else
-        appEntityIdentifier(target.entityIdentifier)
-        #endif
-    }
-
-    /// The same for a list whose selection type is `Item`: each row is an entity.
-    @ViewBuilder
-    func onScreenEntities<Item: Hashable & SendableMetatype>(
-        forSelectionType type: Item.Type,
-        _ target: @escaping @Sendable (Item) -> SearchTarget
-    ) -> some View {
-        #if APP_CLIP
-        self
-        #else
-        appEntityIdentifier(forSelectionType: type) { item in
-            target(item).entityIdentifier
-        }
-        #endif
     }
 }

@@ -18,6 +18,7 @@
 // Lock Screen"; LiveFollowController) carry `attnd_local` instead of `type`: a tap opens the
 // item (and starts following), and they never trigger a bundle refresh.
 
+import CoreSpotlight
 import SwiftUI
 import UIKit
 import UserNotifications
@@ -38,8 +39,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // MetricKit: crash / hang reports (API-013) and launch-time buckets (API-014).
         MetricKitReporter.shared.start()
         UNUserNotificationCenter.current().delegate = self
-        // Siri, Shortcuts and Spotlight intents (EventIntents.swift) read the joined event from here.
-        IntentBridge.appState = appState
+        Self.removeOldSpotlightItems()
         // Live Activity, reminders, venue arrival; also handles Live Activity buttons, which
         // may launch the app in the background.
         LiveFollowController.shared.install(appState: appState)
@@ -61,6 +61,21 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     }
 
     /// Why iOS launched the app in the background (`background.wake` reason).
+    /// Builds before Nov 19, 2026 indexed the event's items in Spotlight (App Intents entities,
+    /// since removed): their entries are deleted once.
+    private static func removeOldSpotlightItems() {
+        let key = "pref.spotlightRemoved"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+        Task {
+            do {
+                try await CSSearchableIndex.default().deleteAllSearchableItems()
+            } catch {
+                AppLog.caught(error, .lifecycle, "spotlight_cleanup", level: .notice)
+            }
+        }
+    }
+
     private static func launchReason(_ options: [UIApplication.LaunchOptionsKey: Any]?) -> String {
         guard let options else { return "app_refresh" }
         // The .remoteNotification / .location keys are deprecated in iOS 26 (scene-based launch handling);

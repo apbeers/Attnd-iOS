@@ -38,7 +38,7 @@ struct LocationsTab: View {
             selectScreenshotLocationIfNeeded()
         }
         .onAppear(perform: selectScreenshotLocationIfNeeded)
-        // A jump from search, Siri or Spotlight (AppState.navigate).
+        // A jump from search, a link or a notification (AppState.navigate).
         .onChange(of: appState.focusRequest, initial: true) {
             guard case .location(let id)? = appState.focusRequest, let location = appState.location(id: id) else { return }
             appState.focusRequest = nil
@@ -111,8 +111,6 @@ struct LocationsView: View {
             }
         }
         .modifier(LocationsListStyle(isCards: display.locationsStyle == .cards))
-        // Siri on-screen awareness: the rows are LocationEntity values.
-        .onScreenEntities(forSelectionType: Location.self) { .location($0.id) }
         .overlay {
             if locations.isEmpty {
                 if !searchText.isEmpty {
@@ -608,8 +606,6 @@ struct LocationDetailView: View {
                 }
             }
         }
-        // Siri on-screen awareness ("when does this open?", "share this").
-        .onScreenEntity(.location(location.id))
         // Counted for every route here: the list, a map pin, a schedule item (API-005).
         .task(id: location.id) { appState.track(.locationView, id: location.id) }
         .usesUserLocation(heading: true)

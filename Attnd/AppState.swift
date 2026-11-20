@@ -163,6 +163,8 @@ final class AppState {
     /// A shared plan link (`/p/<code>/<payload>`, API-015) opened for the joined event, waiting
     /// for the assistant to show it read-only ("Use this plan" / "Merge with mine"). Cleared
     /// when the event is left or switched; the assistant clears it once shown.
+    /// The last Universal Link handled and when (`handleDeepLink` drops a repeat within 5 s).
+    @ObservationIgnored private var lastDeepLink: (url: URL, at: Date)?
     var pendingSharedPlan: PendingSharedPlan?
 
     /// "My plan" (spec §6): the current event's plan and the planner's progress (PlanStore.swift;
@@ -1001,6 +1003,10 @@ final class AppState {
     /// keeps the plan in `pendingSharedPlan` for the assistant. On failure the user stays where
     /// they are.
     func handleDeepLink(_ url: URL) async {
+        // The same link can arrive twice (onOpenURL and onContinueUserActivity): handle it once.
+        let now = Date()
+        if let last = lastDeepLink, last.url == url, now.timeIntervalSince(last.at) < 5 { return }
+        lastDeepLink = (url, now)
         // A link that launched the app: the saved event first, so a link to the event already
         // joined works offline (`join(code:)` needs no lookup then).
         await restoreSavedEventIfNeeded()

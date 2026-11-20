@@ -26,14 +26,20 @@ struct AttndApp: App {
         WindowGroup {
             AppRootView()
                 .environment(appDelegate.appState)
-                // Universal Links: https://attnd.app/join/<code>/ when the app is installed
+                // Universal Links (https://attnd.app/join/<code>/, /p/…, dev.attnd.app too). With an
+                // `onOpenURL` in the scene, SwiftUI hands Universal Links to it rather than to this
+                // handler, so both route https links to `handleDeepLink` (which ignores a repeat).
                 .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { userActivity in
                     guard let url = userActivity.webpageURL else { return }
                     Task { await appDelegate.appState.handleDeepLink(url) }
                 }
-                // Live Activity regions and buttons that open the app (attnd-live://…).
+                // Live Activity regions and buttons (attnd-live://…), and Universal Links.
                 .onOpenURL { url in
-                    Task { await appDelegate.appState.openLiveActivityLink(url) }
+                    if url.scheme == "https" || url.scheme == "http" {
+                        Task { await appDelegate.appState.handleDeepLink(url) }
+                    } else {
+                        Task { await appDelegate.appState.openLiveActivityLink(url) }
+                    }
                 }
         }
     }

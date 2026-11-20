@@ -322,6 +322,8 @@ What still differs (and why):
 
 ## Deep Linking (Universal Links)
 
+**Domains** (Nov 20, 2026): `applinks:attnd.app` + `applinks:dev.attnd.app` (app), `appclips:attnd.app` + `appclips:dev.attnd.app` (clip); the dev server makes `https://dev.attnd.app/...` join and share links and serves the same AASA. Link parsing only checks the path (`/join/<code>/`, `/p/<code>/<payload>`; `PlanShare.parseLink` reads both hosts), and the app looks the code up on its own server either way. Links the app builds (`PlanShare.planLink` / `itemLink`, `SharedPlanLink.url`) use `ServerSwitch.linkHost` (dev.attnd.app while on the dev server).
+
 `https://attnd.app/join/<event_code>/` → `AppState.handleDeepLink(_:)` → `join(code:)`: looks the event up, leaves any current event, then joins. The App Clip uses the same URL (its AASA entry is `appclips`).
 
 Shared plan links (API-015, the AASA claims `/p/*` for the app and the App Clip): `https://attnd.app/p/<EVENT_CODE>/<payload>` (trailing `/` optional; payload = base64url without padding of `{"v":1,"ids":[…],"d":"YYYY-MM-DD"}`, ≤ 1,500 characters) → `SharedPlanLink.parse` → join the event, then (payload of the right alphabet and length) `AppState.pendingSharedPlan` for the plan page's proposal ("Use This Plan" / "Merge with Mine"; only with the on-device model). A payload the app can't read just joins. A scanned QR code of such a link joins too (`DeepLink.eventCode(fromScanned:)`).

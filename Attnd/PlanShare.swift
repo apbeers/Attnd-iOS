@@ -24,7 +24,10 @@ struct SharedPayload: Hashable, Sendable {
 
 enum PlanShare {
     static let maxPayload = 1500
-    static let base = "https://attnd.app/p/"
+    /// Production links; the dev server's are `https://dev.attnd.app/p/…` (callers pass `host`).
+    static let productionHost = "attnd.app"
+    /// Hosts whose `/p/` links the app reads (dev events link to the dev server, Nov 20, 2026).
+    static let linkHosts: Set<String> = ["attnd.app", "dev.attnd.app"]
 
     /// The exact JSON text (no spaces; v, ids, d).
     static func json(_ ids: [Int], day: PlanDate?) -> String {
@@ -41,17 +44,19 @@ enum PlanShare {
         }
     }
 
-    static func link(_ eventCode: String, _ ids: [Int], day: PlanDate? = nil) -> String {
-        base + eventCode.trimmingCharacters(in: .whitespacesAndNewlines) + "/" + payload(ids, day: day)
+    static func link(_ eventCode: String, _ ids: [Int], day: PlanDate? = nil, host: String = productionHost) -> String {
+        "https://\(host)/p/" + eventCode.trimmingCharacters(in: .whitespacesAndNewlines) + "/" + payload(ids, day: day)
     }
 
     /// `share_plan`: the plan's items in plan order; `d` = its day when exactly one day has items.
-    static func planLink(_ plan: Plan, _ bundle: EventBundle) -> String {
+    static func planLink(_ plan: Plan, _ bundle: EventBundle, host: String = productionHost) -> String {
         let days = plan.days.filter { !$0.items.isEmpty }
-        return link(bundle.event.eventCode, plan.itemIds, day: days.count == 1 ? days[0].date : nil)
+        return link(bundle.event.eventCode, plan.itemIds, day: days.count == 1 ? days[0].date : nil, host: host)
     }
 
-    static func itemLink(_ itemId: Int, _ bundle: EventBundle) -> String { link(bundle.event.eventCode, [itemId]) }
+    static func itemLink(_ itemId: Int, _ bundle: EventBundle, host: String = productionHost) -> String {
+        link(bundle.event.eventCode, [itemId], host: host)
+    }
 
     static func decode(_ payload: String?) -> SharedPayload? {
         guard var text = payload?.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
@@ -81,7 +86,7 @@ enum PlanShare {
               let components = URLComponents(string: value.contains("://") ? value : "https://\(value)"),
               var host = components.host?.lowercased() else { return nil }
         if host.hasPrefix("www.") { host.removeFirst(4) }
-        guard host == "attnd.app" else { return nil }
+        guard linkHosts.contains(host) else { return nil }
         let segments = components.percentEncodedPath.split(separator: "/").map(String.init)
         guard segments.count == 3, segments[0] == "p" else { return nil }
         let code = (segments[1].removingPercentEncoding ?? segments[1]).trimmingCharacters(in: .whitespacesAndNewlines)

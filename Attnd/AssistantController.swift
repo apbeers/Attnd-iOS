@@ -874,12 +874,12 @@ final class AssistantController {
     func shareLink(_ target: String) -> (url: URL, title: String, items: Int)? {
         guard let appState, let bundle = appState.currentBundle else { return nil }
         if target == "plan" {
-            guard let plan = appState.planner.plan, !plan.isEmpty, let url = URL(string: PlanShare.planLink(plan, bundle)) else { return nil }
+            guard let plan = appState.planner.plan, !plan.isEmpty, let url = URL(string: PlanShare.planLink(plan, bundle, host: ServerSwitch.linkHost)) else { return nil }
             let day = plan.days.first { !$0.items.isEmpty }.map { "My plan for \($0.date.weekdayName)" } ?? "My plan"
             return (url, day, plan.itemIds.count)
         }
         guard let ref = EntityRef.parse(String(target.dropFirst(5))), ref.kind == .schedule,
-              let url = URL(string: PlanShare.itemLink(ref.id, bundle)) else { return nil }
+              let url = URL(string: PlanShare.itemLink(ref.id, bundle, host: ServerSwitch.linkHost)) else { return nil }
         return (url, ref.name(bundle) ?? bundle.event.name, 1)
     }
 

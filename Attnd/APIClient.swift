@@ -116,6 +116,10 @@ enum ServerSwitch {
         return choice.host
     }
 
+    /// The domain of the join / shared-plan links this launch builds: dev.attnd.app on the dev server
+    /// (the app and the clip open both as Universal Links), attnd.app otherwise.
+    static var linkHost: String { APIClient.serverHost == devHost ? devHost : productionHost }
+
     /// The choice the current host corresponds to (what Options shows).
     static func current(host: String) -> Choice { host == productionHost ? .production : .dev }
 }

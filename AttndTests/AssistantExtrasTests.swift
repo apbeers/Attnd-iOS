@@ -63,6 +63,8 @@ final class AssistantExtrasTests: XCTestCase {
         XCTAssertNil(parse("https://attnd.app/p/DEMO/\(payload)/qr.svg"))
         XCTAssertNil(parse("https://attnd.app/p/DEMO/"))
         XCTAssertNil(parse("https://example.com/p/DEMO/\(payload)"))
+        XCTAssertEqual(parse("https://dev.attnd.app/p/DEMO/\(payload)"), ["DEMO", payload])
+        XCTAssertEqual(PlanShare.link("DEMO", [101], host: "dev.attnd.app"), "https://dev.attnd.app/p/DEMO/eyJ2IjoxLCJpZHMiOlsxMDFdfQ")
         XCTAssertNil(parse("https://attnd.app/join/DEMO/"))
         XCTAssertNil(parse(nil))
     }

@@ -1272,11 +1272,12 @@ final class AppState {
     func addToSchedule(_ target: SearchTarget, at: Date? = nil, minutes: Int? = nil) {
         guard currentEvent != nil else { return }
         let bundle = currentBundle
-        scheduleDidChange(personal.updateSchedule { schedule in
+        let change: MyScheduleChange? = personal.updateSchedule { (schedule: inout MySchedule) -> MyScheduleChange? in
             let change = schedule.add(target, at: at, minutes: minutes)
             if let bundle { _ = schedule.fillFingerprints(bundle) }
             return change
-        }.map { [$0] } ?? [])
+        }
+        scheduleDidChange(change.map { [$0] } ?? [])
     }
 
     /// Items in My schedule the organizer moved, changed or cancelled (Schedule tab hints).

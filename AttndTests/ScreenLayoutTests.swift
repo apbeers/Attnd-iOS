@@ -231,7 +231,7 @@ final class ScreenLayoutTests: XCTestCase {
     func testOlderHomeNamesMapToMySchedule() throws {
         let l = try layouts(#"{"screens": {"home": {"sections": [{"type": "plan_today"}, {"type": "liked", "title": "Faves"}, {"type": "map"}]}}}"#)
         let sections = ScreenLayout.sections(for: .home, layouts: l)
-        XCTAssertEqual(types(sections), ["my_schedule", "map"])
+        XCTAssertEqual(types(sections), ["my_schedule", "map", "website"], "the website is always added at the end of Home")
         XCTAssertEqual(SectionCatalogue.version, 2)
     }
 

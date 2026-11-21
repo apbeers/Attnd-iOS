@@ -60,6 +60,25 @@ struct SettingsView: View {
                 }
             }
 
+            // MARK: - Status (what the swiped-away pills said)
+            if appState.currentEvent != nil {
+                Section("Status") {
+                    if let refresh = EventStatusBadgeKind.refresh(appState) {
+                        Label(refresh.title, systemImage: refresh.systemImage)
+                    } else {
+                        Label(appState.lastRefreshed.map { "Up to date · Updated \(LastUpdatedText.time($0))" } ?? "Up to date",
+                              systemImage: "checkmark.icloud")
+                    }
+                    if appState.instantUpdates {
+                        Label("Instant updates on: the organizer's changes appear as they make them", systemImage: "bolt.fill")
+                            .foregroundStyle(.green)
+                    }
+                    if let ended = EventStatusBadgeKind.current(appState) {
+                        Label(ended.title, systemImage: ended.systemImage)
+                    }
+                }
+            }
+
             // MARK: - Location
             Section("Location") {
                 Toggle("Show My Location on Map", isOn: $state.showUserLocation)

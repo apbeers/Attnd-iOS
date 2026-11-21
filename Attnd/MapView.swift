@@ -43,6 +43,13 @@ struct MapView: View {
     @State private var now = Date.now
     /// Visible span, for clustering. Updated when the camera stops moving.
     @State private var visibleSpan = MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+    /// The map's size in points, for "do these pins overlap" (clustering).
+    @State private var mapSize = CGSize(width: 400, height: 700)
+    /// The location button's mode, like Apple Maps: off → follow → follow with heading.
+    @State private var tracking = MapTracking.off
+    /// 0…1 along the walking line: the pulse flowing from the user to the place.
+    @State private var pulse: Double = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var visibleLocations: [Location] {
         LocationGrouping.filter(appState.locations, category: selectedCategory)
@@ -75,10 +82,13 @@ struct MapView: View {
 
     private var clusters: [MapCluster] {
         if appState.display.mapClustering {
-            return MapClustering.clusters(
+            // Only pins that would overlap (< 24 pt apart) merge (batch 7).
+            return MapClustering.overlapping(
                 for: visibleLocations,
                 latitudeDelta: visibleSpan.latitudeDelta,
-                longitudeDelta: visibleSpan.longitudeDelta
+                longitudeDelta: visibleSpan.longitudeDelta,
+                mapWidth: mapSize.width,
+                mapHeight: mapSize.height
             )
         }
         return MapClustering.unclustered(visibleLocations)
@@ -126,13 +136,37 @@ struct MapView: View {
                     }
                 }
             }
+            // A pulse that flows along the walking line, user → place (~2 s; not with Reduce Motion).
+            if let walk, !reduceMotion, let point = RoutePulse.point(along: walk.linePoints, fraction: pulse) {
+                Annotation("", coordinate: point.clCoordinate) {
+                    Circle()
+                        .fill(.tint)
+                        .frame(width: 12, height: 12)
+                        .overlay(Circle().stroke(.white, lineWidth: 2))
+                        .shadow(color: .accentColor.opacity(0.6), radius: 6)
+                        .opacity(RoutePulse.opacity(pulse))
+                        .allowsHitTesting(false)
+                }
+                .annotationTitles(.hidden)
+            }
             if appState.showUserLocation {
                 UserAnnotation()
             }
         }
         .mapStyle(.standard)
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { mapSize = $0 }
+        .task(id: walk.map { "\($0.linePoints.count)-\($0.isEstimate)" } ?? "none") {
+            guard walk != nil, !reduceMotion else { return }
+            let start = Date.now
+            while !Task.isCancelled {
+                pulse = RoutePulse.fraction(elapsed: Date.now.timeIntervalSince(start))
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+        }
         .onMapCameraChange(frequency: .onEnd) { context in
             visibleSpan = context.region.span
+            // A pan or pinch ends following, like Apple Maps.
+            if tracking != .off, !cameraPosition.followsUserLocation { tracking = .off }
             MapRenderTiming.cameraSettled(pins: allClusters.count, clustered: appState.display.mapClustering)
         }
         .navigationTitle(appState.currentEvent?.name ?? "Map")
@@ -230,7 +264,8 @@ struct MapView: View {
                 Spacer()
                 MapButtonStack(
                     onCenter: recenter,
-                    onLocation: { Task { await zoomToUserLocation() } }
+                    onLocation: { Task { await cycleTracking() } },
+                    tracking: tracking
                 )
                 .padding(.horizontal)
                 .padding(.vertical, showsFloatingButton ? 8 : 16)
@@ -317,6 +352,28 @@ struct MapView: View {
         withAnimation { cameraPosition = .region(region.mkRegion) }
     }
 
+    /// The location button: off → follow → follow with heading → off.
+    private func cycleTracking() async {
+        let next = tracking.next
+        if next == .off {
+            tracking = .off
+            // Stay where the map is.
+            if let region = cameraPosition.region { cameraPosition = .region(region) } else { cameraPosition = .automatic }
+            return
+        }
+        if tracking == .off {
+            guard await locationManager.requestLocation() != nil else {
+                showLocationDeniedAlert = true
+                return
+            }
+            appState.showUserLocation = true
+        }
+        tracking = next
+        withAnimation {
+            cameraPosition = .userLocation(followsHeading: next == .heading, fallback: .automatic)
+        }
+    }
+
     private func zoomToUserLocation() async {
         guard let coordinate = await locationManager.requestLocation() else {
             showLocationDeniedAlert = true
@@ -373,18 +430,49 @@ private struct ClusterBadge: View {
 
 // MARK: - Map buttons
 
+/// The location button's modes (Apple Maps): off, follow, follow with heading.
+enum MapTracking: Equatable {
+    case off, follow, heading
+
+    var next: MapTracking {
+        switch self {
+        case .off: return .follow
+        case .follow: return .heading
+        case .heading: return .off
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .off: return "location"
+        case .follow: return "location.fill"
+        case .heading: return "location.north.line.fill"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .off: return "Follow my location"
+        case .follow: return "Follow my location and heading"
+        case .heading: return "Stop following"
+        }
+    }
+}
+
 /// Floating buttons: re-centre on the event and show my location. Interactive Liquid
 /// Glass (it reacts to touch) in one container, so the two circles blend like the system's
 /// map controls.
 private struct MapButtonStack: View {
     let onCenter: () -> Void
     let onLocation: () -> Void
+    var tracking: MapTracking = .off
 
     var body: some View {
         GlassEffectContainer(spacing: 8) {
             VStack(spacing: 8) {
                 button("Show the whole event", systemImage: "scope", action: onCenter)
-                button("Show my location", systemImage: "location.fill", action: onLocation)
+                button(tracking.title, systemImage: tracking.systemImage, action: onLocation)
+                    .contentTransition(.symbolEffect(.replace))
             }
         }
     }

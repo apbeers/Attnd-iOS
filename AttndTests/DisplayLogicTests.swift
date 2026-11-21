@@ -410,4 +410,29 @@ final class DisplayLogicTests: XCTestCase {
         // A small strip at the edge (not a fold across the screen): flat.
         XCTAssertEqual(FoldPosture.of(container: size, folds: [CGRect(x: 0, y: 0, width: 951, height: 30)]), .flat)
     }
+
+    func testOverlappingClusters_OnlyPinsThatTouch() {
+        let near = [
+            Location(id: 1, name: "A", latitude: 41.8800, longitude: -87.6300),
+            Location(id: 2, name: "B", latitude: 41.8801, longitude: -87.6301),
+            Location(id: 3, name: "C", latitude: 41.8850, longitude: -87.6300),
+            Location(id: 4, name: "No pin"),
+        ]
+        // 0.02° tall over 700 pt: 24 pt ≈ 0.0007°, so A and B overlap, C doesn't.
+        let clusters = MapClustering.overlapping(for: near, latitudeDelta: 0.02, longitudeDelta: 0.02)
+        XCTAssertEqual(clusters.map { $0.locations.map(\.id) }, [[1, 2], [3]])
+        // Zoomed in, nothing merges.
+        XCTAssertEqual(MapClustering.overlapping(for: near, latitudeDelta: 0.001, longitudeDelta: 0.001).count, 3)
+    }
+
+    func testRoutePulse() {
+        let line = [Coordinate(latitude: 0, longitude: 0), Coordinate(latitude: 0, longitude: 1), Coordinate(latitude: 1, longitude: 1)]
+        XCTAssertEqual(RoutePulse.point(along: line, fraction: 0), line[0])
+        XCTAssertEqual(RoutePulse.point(along: line, fraction: 0.5)?.longitude ?? 0, 1, accuracy: 0.01)
+        XCTAssertEqual(RoutePulse.point(along: line, fraction: 1), line[2])
+        XCTAssertNil(RoutePulse.point(along: [], fraction: 0.5))
+        XCTAssertEqual(RoutePulse.fraction(elapsed: 3), 0.5, accuracy: 0.0001)
+        XCTAssertEqual(RoutePulse.opacity(0), 0)
+        XCTAssertEqual(RoutePulse.opacity(0.5), 1)
+    }
 }

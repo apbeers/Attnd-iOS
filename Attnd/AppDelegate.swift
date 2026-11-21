@@ -130,8 +130,20 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
             return
         }
         let payload = PushPayload(userInfo: userInfo)
+        let title = notification.request.content.title
+        let body = notification.request.content.body
         Task { @MainActor in
             await self.appState.handlePush(payload, opened: false)
+        }
+        // An organizer update while the app is open: the app's own banner at the top (swipe up to
+        // dismiss, tap to open), the system's only in Notification Center.
+        if payload.kind == .notification, let id = payload.notificationId, !title.isEmpty || !body.isEmpty {
+            let urgent = (userInfo["priority"] as? String) == "urgent"
+            Task { @MainActor in
+                self.appState.showInAppBanner(InAppBanner(notificationId: id, title: title, body: body, urgent: urgent))
+            }
+            completionHandler([.list, .sound])
+            return
         }
         completionHandler([.banner, .list, .sound])
     }

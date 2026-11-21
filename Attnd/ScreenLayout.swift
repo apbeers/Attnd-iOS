@@ -205,6 +205,16 @@ enum ScreenLayout {
 
     /// Rules 2–3: the sections for a screen and subject, before the facts decide visibility.
     static func sections(for screen: LayoutScreen, layouts: ScreenLayouts?, subject: Subject = .empty) -> [LayoutSection] {
+        let sections = layoutSections(for: screen, layouts: layouts, subject: subject)
+        // Batch 7 (owner): the event's website is always near the bottom of Home (shown only
+        // when the event has one).
+        if screen == .home, !sections.contains(where: { $0.type == "website" }) {
+            return sections + [LayoutSection("website")]
+        }
+        return sections
+    }
+
+    private static func layoutSections(for screen: LayoutScreen, layouts: ScreenLayouts?, subject: Subject) -> [LayoutSection] {
         let fallback = defaults[screen] ?? []
         guard let spec = layouts?.screens[screen] else { return fallback }
         for override in spec.overrides.prefix(maxOverrides) where matches(override.match, subject) {

@@ -303,6 +303,40 @@ enum MapClustering {
         }
     }
 
+    /// Clusters only pins that would really overlap on screen (batch 7, owner: "cluster much
+    /// less"): two pins merge when they are closer than `minSeparation` points in both
+    /// directions for a map of `mapSize` points showing the span. In the organizer's order;
+    /// each pin joins the first cluster it overlaps (by that cluster's first pin).
+    static func overlapping(
+        for locations: [Location],
+        latitudeDelta: Double,
+        longitudeDelta: Double,
+        mapWidth: Double = 400,
+        mapHeight: Double = 700,
+        minSeparation: Double = 24
+    ) -> [MapCluster] {
+        let thresholdLat = max(latitudeDelta, 0.000_001) * minSeparation / max(mapHeight, 1)
+        let thresholdLng = max(longitudeDelta, 0.000_001) * minSeparation / max(mapWidth, 1)
+        var groups: [[(Location, Coordinate)]] = []
+        for location in locations {
+            guard let point = location.coordinate else { continue }
+            if let i = groups.firstIndex(where: { group in
+                abs(group[0].1.latitude - point.latitude) < thresholdLat && abs(group[0].1.longitude - point.longitude) < thresholdLng
+            }) {
+                groups[i].append((location, point))
+            } else {
+                groups.append([(location, point)])
+            }
+        }
+        return groups.map { group in
+            let lat = group.map { $0.1.latitude }.reduce(0, +) / Double(group.count)
+            let lng = group.map { $0.1.longitude }.reduce(0, +) / Double(group.count)
+            let ids = group.map { $0.0.id }
+            let id = ids.count == 1 ? "loc-\(ids[0])" : "cluster-" + ids.sorted().map(String.init).joined(separator: "-")
+            return MapCluster(id: id, coordinate: Coordinate(latitude: lat, longitude: lng), locations: group.map { $0.0 })
+        }
+    }
+
     /// Every valid location as its own (single) cluster — used when clustering is off.
     static func unclustered(_ locations: [Location]) -> [MapCluster] {
         locations.compactMap { loc in
@@ -464,5 +498,47 @@ enum FoldPosture: Hashable, Sendable {
             }
         }
         return .flat
+    }
+}
+
+// MARK: - Route pulse (batch 7)
+
+/// The dot that flows along a walking line from the user to the place: one pass every
+/// `period` seconds, fading in at the start and out at the end.
+enum RoutePulse {
+    static let period: Double = 2
+
+    static func fraction(elapsed: Double) -> Double {
+        let t = elapsed.truncatingRemainder(dividingBy: period) / period
+        return t < 0 ? t + 1 : t
+    }
+
+    static func opacity(_ fraction: Double) -> Double {
+        min(1, min(fraction, 1 - fraction) * 6)
+    }
+
+    /// The point `fraction` of the way along the line (by length, flat-earth segments).
+    static func point(along line: [Coordinate], fraction: Double) -> Coordinate? {
+        guard let first = line.first else { return nil }
+        guard line.count > 1 else { return first }
+        func length(_ a: Coordinate, _ b: Coordinate) -> Double {
+            let dLat = b.latitude - a.latitude
+            let dLng = (b.longitude - a.longitude) * cos(a.latitude * .pi / 180)
+            return (dLat * dLat + dLng * dLng).squareRoot()
+        }
+        let segments = zip(line, line.dropFirst()).map { length($0, $1) }
+        let total = segments.reduce(0, +)
+        guard total > 0 else { return first }
+        var remaining = min(max(fraction, 0), 1) * total
+        for (i, segment) in segments.enumerated() {
+            if remaining <= segment || i == segments.count - 1 {
+                let t = segment > 0 ? min(remaining / segment, 1) : 0
+                let a = line[i], b = line[i + 1]
+                return Coordinate(latitude: a.latitude + (b.latitude - a.latitude) * t,
+                                  longitude: a.longitude + (b.longitude - a.longitude) * t)
+            }
+            remaining -= segment
+        }
+        return line.last
     }
 }

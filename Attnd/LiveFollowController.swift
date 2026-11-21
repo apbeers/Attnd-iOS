@@ -212,8 +212,9 @@ final class LiveFollowController {
                 locations: bundle.locations,
                 hearted: personal.heartedScheduleItems,
                 skipped: personal.skippedItems,
-                user: appState.userLocation.isAuthorized ? appState.userLocation.location : nil,
-                userAt: appState.userLocation.locationAt,
+                // No direction, distance or walk from the user's position (batch 7, owner): the
+                // activity can't refresh them between app visits, so they were stale on the Lock Screen.
+                user: nil,
                 urgent: LiveActivityPlanner.urgent(
                     notifications: bundle.notifications,
                     dismissed: personal.dismissedUrgentIds,

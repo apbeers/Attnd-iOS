@@ -298,7 +298,9 @@ enum LastUpdatedText {
     ) -> String {
         let state = problem == .offline ? "Offline" : "Can't update"
         guard let lastRefreshed else { return state }
-        return "\(state) · Updated \(time(lastRefreshed, now: now, timeZone: timeZone, locale: locale))"
+        // Reassuring (batch 7): the saved copy keeps everything working.
+        let still = problem == .offline ? " · everything still works" : ""
+        return "\(state) · Updated \(time(lastRefreshed, now: now, timeZone: timeZone, locale: locale))\(still)"
     }
 
     static func accessibilityText(
@@ -309,8 +311,8 @@ enum LastUpdatedText {
         locale: Locale = .current
     ) -> String {
         let state = problem == .offline ? "You're offline." : "Attnd can't reach the server right now."
-        guard let lastRefreshed else { return state }
-        return "\(state) Showing content last updated \(time(lastRefreshed, now: now, timeZone: timeZone, locale: locale))."
+        guard let lastRefreshed else { return state + " Everything still works." }
+        return "\(state) Showing content last updated \(time(lastRefreshed, now: now, timeZone: timeZone, locale: locale)). Everything still works."
     }
 }
 

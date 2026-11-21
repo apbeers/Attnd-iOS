@@ -101,7 +101,36 @@ final class AppState {
     private(set) var isLoading = false
     private(set) var loadError: String?
     /// Why the last refresh failed (nil after a success); drives the floating offline badge.
-    private(set) var refreshProblem: RefreshProblem?
+    private(set) var refreshProblem: RefreshProblem? {
+        didSet {
+            // A new problem (or the end of one) shows its pill again after a swipe away.
+            if refreshProblem != oldValue { dismissedStatusBadges.remove("refresh") }
+        }
+    }
+    /// An organizer update that arrived while the app was open (top banner, ~6 s).
+    private(set) var inAppBanner: InAppBanner?
+    @ObservationIgnored private var inAppBannerTask: Task<Void, Never>?
+
+    func showInAppBanner(_ banner: InAppBanner) {
+        guard !ScreenshotMode.isActive else { return }
+        inAppBanner = banner
+        inAppBannerTask?.cancel()
+        inAppBannerTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(banner.urgent ? 10 : 6))
+            guard !Task.isCancelled else { return }
+            self?.dismissInAppBanner()
+        }
+    }
+
+    func dismissInAppBanner() {
+        inAppBannerTask?.cancel()
+        inAppBanner = nil
+    }
+
+    /// Status pills swiped away this session ("ended", "refresh", "instant"); Options keeps the info.
+    var dismissedStatusBadges: Set<String> = []
+    /// API-026: this phone is the event's preview phone and the long-poll runs ("Instant updates on").
+    private(set) var instantUpdates = false
     /// The last successful refresh (restored from disk at launch).
     private(set) var lastRefreshed: Date?
 
@@ -1570,6 +1599,8 @@ final class AppState {
     /// Holds `changes/` while this is the event's preview phone and the app is on screen.
     private func updatePreviewPolling() {
         let wanted = inForeground && previewEventId != nil && previewEventId == currentEvent?.id && !ScreenshotMode.isActive
+        let preview = previewEventId != nil && previewEventId == currentEvent?.id && !ScreenshotMode.isActive
+        if instantUpdates != preview { instantUpdates = preview }
         if !wanted {
             previewTask?.cancel()
             previewTask = nil
@@ -2157,4 +2188,12 @@ extension AppHandover {
 
     /// The clip, before running its Live Activity and reminders.
     static var clipSuperseded: Bool { isAppClip && appTookOver(sharedDefaults) }
+}
+
+/// An organizer update shown inside the app while it was open.
+struct InAppBanner: Equatable, Sendable {
+    var notificationId: Int
+    var title: String
+    var body: String
+    var urgent = false
 }

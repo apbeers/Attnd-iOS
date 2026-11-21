@@ -112,23 +112,74 @@ struct UpdateRequiredView: View {
     }
 
     var body: some View {
-        ContentUnavailableView {
-            Label("Update Attnd", systemImage: "arrow.down.app")
-        } description: {
-            Text(appState.appStatus.message
-                 ?? "This version of Attnd is no longer supported. Update to the latest version to keep following your events.")
-            if !currentVersion.isEmpty {
-                Text("You have version \(currentVersion).")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+        // Batch 7 redesign: a hero in the brand colours, what the update brings, one App Store button.
+        ScrollView {
+            VStack(spacing: 24) {
+                ZStack {
+                    Circle()
+                        .fill(LinearGradient(colors: [Color(red: 0.263, green: 0.122, blue: 0.525),
+                                                      Color(red: 0.482, green: 0.310, blue: 0.839)],
+                                             startPoint: .topLeading, endPoint: .bottomTrailing))
+                        .frame(width: 120, height: 120)
+                    Image(systemName: "arrow.down.app.fill")
+                        .font(.system(size: 52, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .symbolEffect(.bounce, options: .nonRepeating)
+                }
+                .accessibilityHidden(true)
+                .padding(.top, 48)
+
+                VStack(spacing: 8) {
+                    Text("Time to update Attnd")
+                        .font(.largeTitle.bold())
+                        .multilineTextAlignment(.center)
+                    Text(appState.appStatus.message
+                         ?? "This version of Attnd is no longer supported. Update to keep following your events.")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("What you get")
+                        .font(.headline)
+                    UpdateFeatureRow(systemImage: "sparkles", text: "The latest features for your events")
+                    UpdateFeatureRow(systemImage: "bolt.fill", text: "Live updates from organizers")
+                    UpdateFeatureRow(systemImage: "heart.fill", text: "Your schedule and everything you saved, kept")
+                }
+                .padding(20)
+                .frame(maxWidth: 420, alignment: .leading)
+                .background(.thinMaterial, in: .rect(cornerRadius: 22))
+
+                Link(destination: appState.appStatus.updateURL ?? appStoreURL) {
+                    Label("Update on the App Store", systemImage: "arrow.up.forward.app")
+                        .frame(maxWidth: 320)
+                }
+                .buttonStyle(.glassProminent)
+                .controlSize(.large)
+
+                if !currentVersion.isEmpty {
+                    Text("You have version \(currentVersion).")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
-        } actions: {
-            Link(destination: appState.appStatus.updateURL ?? appStoreURL) {
-                Label("Update", systemImage: "arrow.up.forward.app")
-                    .frame(minWidth: 160)
-            }
-            .buttonStyle(.glassProminent)
-            .controlSize(.large)
+            .padding(.horizontal, 24)
+            .padding(.bottom, 32)
+            .frame(maxWidth: .infinity)
+        }
+    }
+}
+
+private struct UpdateFeatureRow: View {
+    let systemImage: String
+    let text: String
+
+    var body: some View {
+        Label {
+            Text(text)
+        } icon: {
+            Image(systemName: systemImage).foregroundStyle(.tint)
         }
     }
 }
@@ -211,6 +262,8 @@ struct ContentView: View {
         // Rebuilt when the tab set changes (the Home tab arriving with a bundle), so each tab
         // keeps its own icon (TestFlight 161 showed the Map tab with the Places list icon).
         .id(appState.tabs.map(\.rawValue).joined(separator: ","))
+        // Organizer updates that arrive while the app is open (AppDelegate.willPresent).
+        .overlay(alignment: .top) { InAppBannerOverlay() }
         // The tab bar stays visible (no minimize on scroll).
         .eventTheme(appState)
         .overlay { UndoToastOverlay() }
@@ -568,11 +621,65 @@ extension View {
     }
 }
 
+/// The top banner for an organizer update received while the app is open: tap opens it in
+/// Updates, a swipe up dismisses it (it stays in Updates); gone by itself after a few seconds.
+private struct InAppBannerOverlay: View {
+    @Environment(AppState.self) private var appState
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ReservedRegionAvoiding {
+            VStack {
+                if let banner = appState.inAppBanner {
+                    Button {
+                        appState.dismissInAppBanner()
+                        appState.navigate(to: .notification(banner.notificationId))
+                    } label: {
+                        HStack(alignment: .top, spacing: 12) {
+                            Image(systemName: banner.urgent ? "exclamationmark.triangle.fill" : "bell.badge.fill")
+                                .font(.title3)
+                                .foregroundStyle(banner.urgent ? Color.red : Color.accentColor)
+                                .accessibilityHidden(true)
+                            VStack(alignment: .leading, spacing: 2) {
+                                if !banner.title.isEmpty {
+                                    Text(banner.title).font(.subheadline.weight(.semibold)).lineLimit(1)
+                                }
+                                if !banner.body.isEmpty {
+                                    Text(banner.body).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
+                                }
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(14)
+                        .frame(maxWidth: 520)
+                        .contentShape(.rect(cornerRadius: 22))
+                    }
+                    .buttonStyle(.plain)
+                    .glassEffect(banner.urgent ? Glass.regular.tint(.red.opacity(0.25)).interactive() : Glass.regular.interactive(),
+                                 in: .rect(cornerRadius: 22))
+                    .padding(.horizontal, 16)
+                    .padding(.top, 4)
+                    .simultaneousGesture(DragGesture(minimumDistance: 12).onEnded { value in
+                        if value.translation.height < -16 { appState.dismissInAppBanner() }
+                    })
+                    .accessibilityAction(named: "Dismiss") { appState.dismissInAppBanner() }
+                    .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+                }
+                Spacer(minLength: 0)
+            }
+            .animation(reduceMotion ? nil : .spring(duration: 0.35), value: appState.inAppBanner)
+        }
+    }
+}
+
 /// What a floating status badge says.
 struct EventStatusBadgeKind: Equatable {
+    /// "ended", "refresh", "instant": what a swipe up dismisses (`AppState.dismissedStatusBadges`).
+    var id: String = ""
     let title: String
     let systemImage: String
     let accessibilityText: String
+    var tint: Color? = nil
 
     /// Height of one capsule plus its top padding; overlays that also sit at the
     /// top of the content (map category chips) move down by this much per badge.
@@ -581,7 +688,21 @@ struct EventStatusBadgeKind: Equatable {
     /// Every badge to show, top to bottom (empty in screenshot mode).
     @MainActor
     static func all(_ appState: AppState) -> [EventStatusBadgeKind] {
-        [current(appState), refresh(appState)].compactMap { $0 }
+        [current(appState), refresh(appState), instant(appState)].compactMap { $0 }
+            .filter { !appState.dismissedStatusBadges.contains($0.id) }
+    }
+
+    /// API-026 preview phone: changes arrive as the organizer makes them (green).
+    @MainActor
+    static func instant(_ appState: AppState) -> EventStatusBadgeKind? {
+        guard !ScreenshotMode.isActive, appState.currentEvent != nil, appState.instantUpdates else { return nil }
+        return EventStatusBadgeKind(
+            id: "instant",
+            title: "Instant updates on",
+            systemImage: "bolt.fill",
+            accessibilityText: "Instant updates are on: this phone shows the organizer's changes as they make them.",
+            tint: .green
+        )
     }
 
     /// Space the badges take at the top of the content.
@@ -596,6 +717,7 @@ struct EventStatusBadgeKind: Equatable {
     static func current(_ appState: AppState) -> EventStatusBadgeKind? {
         guard !ScreenshotMode.isActive, let event = appState.currentEvent, event.isArchived else { return nil }
         return EventStatusBadgeKind(
+            id: "ended",
             title: "Event ended",
             systemImage: "flag.checkered",
             accessibilityText: "This event has ended. You can still browse everything."
@@ -607,6 +729,7 @@ struct EventStatusBadgeKind: Equatable {
     static func refresh(_ appState: AppState) -> EventStatusBadgeKind? {
         guard !ScreenshotMode.isActive, appState.currentEvent != nil, let problem = appState.refreshProblem else { return nil }
         return EventStatusBadgeKind(
+            id: "refresh",
             title: LastUpdatedText.badgeTitle(problem, lastRefreshed: appState.lastRefreshed),
             systemImage: problem == .offline ? "wifi.slash" : "exclamationmark.icloud",
             accessibilityText: LastUpdatedText.accessibilityText(problem, lastRefreshed: appState.lastRefreshed)
@@ -634,7 +757,6 @@ private struct EventStatusBadgeModifier: ViewModifier {
                         // plus a small gap above the content.
                         .frame(height: EventStatusBadgeKind.reservedTopHeight(appState))
                         .padding(.bottom, 4)
-                        .allowsHitTesting(false)
                         .transition(.opacity)
                     }
                 }
@@ -648,7 +770,6 @@ private struct EventStatusBadgeModifier: ViewModifier {
                             Spacer(minLength: 0)
                         }
                     }
-                    .allowsHitTesting(false)
                     .transition(.opacity)
                 }
             }
@@ -662,6 +783,13 @@ private struct EventStatusBadgeModifier: ViewModifier {
             VStack(spacing: 0) {
                 ForEach(kinds, id: \.title) { kind in
                     EventStatusBadge(kind: kind)
+                        // Swipe up dismisses (batch 7); Options → Status keeps the same info.
+                        .gesture(DragGesture(minimumDistance: 12).onEnded { value in
+                            if value.translation.height < -16 {
+                                withAnimation(.easeOut(duration: 0.2)) { _ = appState.dismissedStatusBadges.insert(kind.id) }
+                            }
+                        })
+                        .accessibilityAction(named: "Dismiss") { appState.dismissedStatusBadges.insert(kind.id) }
                         .padding(.top, 6)
                 }
             }
@@ -680,8 +808,10 @@ private struct EventStatusBadge: View {
             .lineLimit(1)
             .padding(.horizontal, 12)
             .frame(height: 28)
-            // Liquid Glass capsule (not interactive: touches pass through the badges).
-            .glassEffect(.regular, in: .capsule)
+            // Liquid Glass capsule; only the capsule takes touches (a swipe up dismisses it).
+            .foregroundStyle(kind.tint ?? Color.primary)
+            .glassEffect(kind.tint.map { Glass.regular.tint($0.opacity(0.22)) } ?? Glass.regular, in: .capsule)
+            .contentShape(.capsule)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(kind.accessibilityText)
             .accessibilityAddTraits(.isStaticText)

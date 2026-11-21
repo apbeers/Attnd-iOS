@@ -217,8 +217,10 @@ private struct HomeSection: View {
                     }
                 }
                 if entries.count > (section.limit ?? 3) {
-                    Button("All Questions") { open(.event) }
-                        .font(.subheadline)
+                    if let eventId = appState.currentEvent?.id {
+                        Button("All Questions") { open(.event(eventId)) }
+                            .font(.subheadline)
+                    }
                 }
             }
             .blockCardBackground()

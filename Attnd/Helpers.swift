@@ -167,6 +167,23 @@ enum DeepLink {
         }
         return trimmed
     }
+
+    /// The website's "Open in Attnd" button on iPhone (attnd-web `live_on_phone`): Safari doesn't open a Universal
+    /// Link to the domain it is showing, so the button uses the app's own scheme. `attnd://join/<code>` and
+    /// `attnd://p/<code>/<payload>` become the equivalent `https://attnd.app/…` link, which `AppState.handleDeepLink`
+    /// reads by its path. nil for anything else (the App Clip doesn't register the scheme).
+    static func httpsURL(fromAppScheme url: URL) -> URL? {
+        guard url.scheme?.lowercased() == "attnd", let host = url.host?.lowercased(),
+              host == "join" || host == "p" else { return nil }
+        let rest = url.pathComponents.filter { $0 != "/" && !$0.isEmpty }
+        guard let code = rest.first,
+              code.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }) else { return nil }
+        if host == "p", rest.count >= 2,
+           rest[1].allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }) {
+            return URL(string: "https://attnd.app/p/\(code)/\(rest[1])")
+        }
+        return URL(string: "https://attnd.app/join/\(code)/")
+    }
 }
 
 // MARK: - Live updates (API-007)

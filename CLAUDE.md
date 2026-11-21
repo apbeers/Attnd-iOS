@@ -47,7 +47,7 @@ The app icon is a classic `AppIcon.appiconset` in each target's asset catalog (`
 
 | File | Purpose |
 |------|---------|
-| `AttndApp.swift` | The entry point of the app **and** the App Clip; installs `AppDelegate`, wires Universal Links (`onContinueUserActivity`) and Live Activity links (`onOpenURL`) |
+| `AttndApp.swift` | The entry point of the app **and** the App Clip; installs `AppDelegate`, wires Universal Links (`onContinueUserActivity`), Live Activity links and the `attnd://` scheme (`onOpenURL`) |
 | `AppDelegate.swift` | Owns `AppState`; APNs token registration, silent pushes, notification taps, MetricKit start, `LiveFollowController.install` |
 | `AppState.swift` | `@MainActor @Observable` state: event, bundle content, display config, selected tab, device ID, push token, preferences; bundle refresh with ETag; restore/save of the offline copy, `content_updated` handling, `liveRefreshInterval` (API-007); `track(_:detail:)` and `UsageReporter` (API-005); actors `EventStore` (saved bundle on disk) and `ImageStore` (image/flyer cache) + `ImageMemoryCache` |
 | `APIClient.swift` | Stateless, `Sendable` v2 client; async/await; 401 → re-attest → retry once |
@@ -326,6 +326,8 @@ What still differs (and why):
 **Domains** (Nov 20, 2026): `applinks:attnd.app` + `applinks:dev.attnd.app` (app), `appclips:attnd.app` + `appclips:dev.attnd.app` (clip); the dev server makes `https://dev.attnd.app/...` join and share links and serves the same AASA. Link parsing only checks the path (`/join/<code>/`, `/p/<code>/<payload>`; `PlanShare.parseLink` reads both hosts), and the app looks the code up on its own server either way. Links the app builds (`PlanShare.planLink` / `itemLink`, `SharedPlanLink.url`) use `ServerSwitch.linkHost` (dev.attnd.app while on the dev server).
 
 `https://attnd.app/join/<event_code>/` → `AppState.handleDeepLink(_:)` → `join(code:)`: looks the event up, leaves any current event, then joins. The App Clip uses the same URL (its AASA entry is `appclips`).
+
+**`attnd://` scheme** (Nov 21, 2026, app only): the organizer console's **Open in Attnd** button on the QR card (attnd-web `live_on_phone`, shown on phones) uses `attnd://join/<code>` (and `attnd://p/<code>/<payload>` for shared plans), because iOS doesn't open a Universal Link when you tap a link to the same domain Safari is showing. `CFBundleURLTypes` in `Attnd/Info.plist` registers `attnd` next to `attnd-live`; `AttndApp.onOpenURL` converts it with `DeepLink.httpsURL(fromAppScheme:)` (pure, tested in `BusinessLogicTests`: code and payload must be plain letters, digits, `-`, `_`) to the equivalent `https://attnd.app/…` link and calls `handleDeepLink`, which reads only the path. App Clips can't register custom schemes, so the clip has no `attnd` entry; the website falls back to the join page (App Store / App Clip) when the app doesn't open within ~1.5 s.
 
 Shared plan links (API-015, the AASA claims `/p/*` for the app and the App Clip): `https://attnd.app/p/<EVENT_CODE>/<payload>` (trailing `/` optional; payload = base64url without padding of `{"v":1,"ids":[…],"d":"YYYY-MM-DD"}`, ≤ 1,500 characters) → `SharedPlanLink.parse` → join the event, then (payload of the right alphabet and length) `AppState.pendingSharedPlan` for the plan page's proposal ("Use This Plan" / "Merge with Mine"; only with the on-device model). A payload the app can't read just joins. A scanned QR code of such a link joins too (`DeepLink.eventCode(fromScanned:)`).
 

@@ -43,6 +43,27 @@ final class BusinessLogicTests: XCTestCase {
 
     // MARK: - Deep links
 
+    func testDeepLink_AppSchemeBecomesTheHttpsLink() {
+        XCTAssertEqual(DeepLink.httpsURL(fromAppScheme: URL(string: "attnd://join/IFICCK70")!)?.absoluteString,
+                       "https://attnd.app/join/IFICCK70/")
+        XCTAssertEqual(DeepLink.httpsURL(fromAppScheme: URL(string: "attnd://join/IFICCK70/")!)?.absoluteString,
+                       "https://attnd.app/join/IFICCK70/")
+        XCTAssertEqual(DeepLink.httpsURL(fromAppScheme: URL(string: "ATTND://JOIN/abc")!)?.absoluteString,
+                       "https://attnd.app/join/abc/")
+        XCTAssertEqual(DeepLink.httpsURL(fromAppScheme: URL(string: "attnd://p/DEMO/eyJ2IjoxfQ")!)?.absoluteString,
+                       "https://attnd.app/p/DEMO/eyJ2IjoxfQ")
+        XCTAssertEqual(DeepLink.httpsURL(fromAppScheme: URL(string: "attnd://p/DEMO")!)?.absoluteString,
+                       "https://attnd.app/join/DEMO/")
+        // The handler reads the path: the converted link gives the same code as a Universal Link would.
+        let link = DeepLink.httpsURL(fromAppScheme: URL(string: "attnd://join/FWFM2026")!)!
+        XCTAssertEqual(DeepLink.eventCode(from: link), "FWFM2026")
+        XCTAssertNil(DeepLink.httpsURL(fromAppScheme: URL(string: "attnd://join")!))
+        XCTAssertNil(DeepLink.httpsURL(fromAppScheme: URL(string: "attnd://settings/x")!))
+        XCTAssertNil(DeepLink.httpsURL(fromAppScheme: URL(string: "attnd-live://event/1/plan")!))
+        XCTAssertNil(DeepLink.httpsURL(fromAppScheme: URL(string: "https://attnd.app/join/X/")!))
+        XCTAssertNil(DeepLink.httpsURL(fromAppScheme: URL(string: "attnd://join/a%20b")!))
+    }
+
     func testDeepLink_JoinURLs() {
         XCTAssertEqual(DeepLink.eventCode(from: URL(string: "https://attnd.app/join/FWFM2026")!), "FWFM2026")
         XCTAssertEqual(DeepLink.eventCode(from: URL(string: "https://attnd.app/join/FWFM2026/")!), "FWFM2026")

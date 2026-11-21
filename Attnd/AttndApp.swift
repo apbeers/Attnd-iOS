@@ -33,10 +33,15 @@ struct AttndApp: App {
                     guard let url = userActivity.webpageURL else { return }
                     Task { await appDelegate.appState.handleDeepLink(url) }
                 }
-                // Live Activity regions and buttons (attnd-live://…), and Universal Links.
+                // Live Activity regions and buttons (attnd-live://…), Universal Links, and the website's
+                // "Open in Attnd" button (attnd://join/<code>, attnd://p/<code>/<payload>; the app only).
                 .onOpenURL { url in
                     if url.scheme == "https" || url.scheme == "http" {
                         Task { await appDelegate.appState.handleDeepLink(url) }
+                    } else if url.scheme?.lowercased() == "attnd" {
+                        if let link = DeepLink.httpsURL(fromAppScheme: url) {
+                            Task { await appDelegate.appState.handleDeepLink(link) }
+                        }
                     } else {
                         Task { await appDelegate.appState.openLiveActivityLink(url) }
                     }

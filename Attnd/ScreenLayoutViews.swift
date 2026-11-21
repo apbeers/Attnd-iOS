@@ -52,19 +52,12 @@ struct HomeTab: View {
                     path.append(target)
                 }
             }
-            // The title stays for Back buttons and VoiceOver, but no title text is drawn on Home's
-            // root: the Home header already shows the event's name (owner, Nov 21, 2026).
+            // No navigation bar on Home's root (owner, Nov 21, 2026): the content starts under the
+            // status bar; the header shows the event's name and, when Home is the Options tab, a
+            // gear. The title stays for the Back buttons of pushed details, which keep their bar.
             .navigationTitle(appState.currentEvent?.name ?? "Home")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Color.clear
-                        .frame(width: 1, height: 1)
-                        .accessibilityHidden(true)
-                }
-            }
+            .toolbar(.hidden, for: .navigationBar)
             .eventStatusBanners()
-            .optionsToolbarItem(for: .home)
             .navigationDestination(for: SearchTarget.self) { target in
                 SearchDestinationView(target: target)
             }
@@ -303,9 +296,25 @@ struct ScreenComponentView: View {
     private var header: some View {
         if let event = appState.currentEvent {
             VStack(alignment: .leading, spacing: 2) {
-                Text(event.name)
-                    .font(.title2.bold())
-                    .lineLimit(2)
+                HStack(alignment: .firstTextBaseline) {
+                    Text(event.name)
+                        .font(.title2.bold())
+                        .lineLimit(2)
+                        .accessibilityAddTraits(.isHeader)
+                    Spacer(minLength: 8)
+                    // Home without its bar: Options as a small gear when Home is the Options tab.
+                    if appState.optionsTab == .home, appState.selectedTab == .home {
+                        Button {
+                            appState.presentedSheet = .options
+                        } label: {
+                            Label("Options", systemImage: "gearshape")
+                                .labelStyle(.iconOnly)
+                                .font(.title3)
+                                .frame(minWidth: 44, minHeight: 44)
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
                 if let line = HomeHeaderText.line(event) {
                     Text(line)
                         .font(.subheadline)
@@ -314,8 +323,6 @@ struct ScreenComponentView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .combine)
-            .accessibilityAddTraits(.isHeader)
         }
     }
 
@@ -391,7 +398,7 @@ struct ScreenComponentView: View {
     @ViewBuilder
     private var about: some View {
         let event = appState.currentEvent
-        let text = [event?.description ?? "", event?.context?.about ?? ""].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        let text = AboutText.merged(description: event?.description ?? "", about: event?.context?.about)
         textCard(section.title ?? "About", text)
     }
 
@@ -450,12 +457,15 @@ struct MyScheduleUpNext: View {
                     .blockCardBackground()
             } else {
                 ScrollView(.horizontal) {
-                    LazyHStack(alignment: .top, spacing: 12) {
+                    // Not lazy (≤ 5 cards): the row is as tall as its tallest card, all cards that height.
+                    HStack(alignment: .top, spacing: 12) {
                         ForEach(rows) { row in
                             card(row)
                                 .containerRelativeFrame(.horizontal) { width, _ in width * 0.8 }
+                                .frame(maxHeight: .infinity, alignment: .top)
                         }
                     }
+                    .fixedSize(horizontal: false, vertical: true)
                     .scrollTargetLayout()
                 }
                 .scrollTargetBehavior(.viewAligned)

@@ -306,4 +306,15 @@ final class ScreenLayoutTests: XCTestCase {
         XCTAssertEqual(halves.bottom.first?.type, "my_schedule")
         XCTAssertNil(TabletopSplit.home([LayoutSection("header")]))
     }
+
+    func testAboutTextOnce() {
+        let line = "Twenty food trucks, a beer garden and a band on Main Street."
+        XCTAssertEqual(AboutText.merged(description: line, about: line), line)
+        XCTAssertEqual(AboutText.merged(description: line, about: "  twenty food trucks, a beer garden and a band on main street "), "twenty food trucks, a beer garden and a band on main street")
+        XCTAssertEqual(AboutText.merged(description: line, about: line + " Free entry."), line + " Free entry.")
+        XCTAssertEqual(AboutText.merged(description: line + " Dogs welcome.", about: line), line + " Dogs welcome.")
+        XCTAssertEqual(AboutText.merged(description: "", about: line), line)
+        XCTAssertEqual(AboutText.merged(description: line, about: nil), line)
+        XCTAssertEqual(AboutText.merged(description: "Rain or shine.", about: line), line + "\n\nRain or shine.")
+    }
 }

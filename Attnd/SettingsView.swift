@@ -94,40 +94,9 @@ struct SettingsView: View {
             }
 
             // MARK: - About & support (API-004)
+            // Copy Support Info always visible right under the header; the details folded (owner,
+            // Nov 21, 2026: saves space).
             Section {
-                LabeledContent("Support code") {
-                    Text(info.supportCode)
-                        .font(.body.monospaced())
-                        .textSelection(.enabled)
-                }
-                LabeledContent("App version", value: "\(info.appVersion) (\(info.buildNumber))")
-                if info.isAppClip {
-                    LabeledContent("Edition", value: "App Clip")
-                }
-                LabeledContent("Server", value: info.serverHost)
-                if ServerSwitch.isSwitchable {
-                    ServerSwitchRow()
-                }
-                LabeledContent("API version", value: String(info.apiVersion))
-                LabeledContent("iOS", value: info.osVersion)
-                LabeledContent("Device", value: info.deviceModel)
-                if let eventId = info.eventId {
-                    LabeledContent("Event", value: info.eventName ?? "")
-                    LabeledContent("Event code", value: info.eventCode ?? "")
-                    LabeledContent("Event ID", value: String(eventId))
-                    if let contentVersion = info.contentVersion {
-                        LabeledContent("Content version", value: String(contentVersion))
-                    }
-                }
-                LabeledContent("Last refresh") {
-                    if let refreshed = info.lastRefreshed {
-                        Text(refreshed, format: .dateTime.month(.abbreviated).day().hour().minute().second())
-                    } else {
-                        Text("Never")
-                    }
-                }
-                // Logs viewer and debug logging (API-013; not in screenshot mode).
-                DiagnosticsRows()
                 Button {
                     copySupportInfo(info)
                 } label: {
@@ -135,6 +104,41 @@ struct SettingsView: View {
                         didCopySupportInfo ? "Copied" : "Copy Support Info",
                         systemImage: didCopySupportInfo ? "checkmark" : "doc.on.doc"
                     )
+                }
+                DisclosureGroup("Details") {
+                    LabeledContent("Support code") {
+                        Text(info.supportCode)
+                            .font(.body.monospaced())
+                            .textSelection(.enabled)
+                    }
+                    LabeledContent("App version", value: "\(info.appVersion) (\(info.buildNumber))")
+                    if info.isAppClip {
+                        LabeledContent("Edition", value: "App Clip")
+                    }
+                    LabeledContent("Server", value: info.serverHost)
+                    if ServerSwitch.isSwitchable {
+                        ServerSwitchRow()
+                    }
+                    LabeledContent("API version", value: String(info.apiVersion))
+                    LabeledContent("iOS", value: info.osVersion)
+                    LabeledContent("Device", value: info.deviceModel)
+                    if let eventId = info.eventId {
+                        LabeledContent("Event", value: info.eventName ?? "")
+                        LabeledContent("Event code", value: info.eventCode ?? "")
+                        LabeledContent("Event ID", value: String(eventId))
+                        if let contentVersion = info.contentVersion {
+                            LabeledContent("Content version", value: String(contentVersion))
+                        }
+                    }
+                    LabeledContent("Last refresh") {
+                        if let refreshed = info.lastRefreshed {
+                            Text(refreshed, format: .dateTime.month(.abbreviated).day().hour().minute().second())
+                        } else {
+                            Text("Never")
+                        }
+                    }
+                    // Logs viewer and debug logging (API-013; not in screenshot mode).
+                    DiagnosticsRows()
                 }
             } header: {
                 Text("About & Support")

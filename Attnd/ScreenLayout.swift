@@ -482,3 +482,26 @@ enum TabletopSplit {
         return (top, bottom)
     }
 }
+
+/// An "About" section's text from the description and the API-018 `context.about`, once: the
+/// same or contained text isn't shown twice (owner, Nov 21, 2026). The context's about wins; the
+/// description joins it only when it says something more.
+enum AboutText {
+    static func merged(description: String, about: String?) -> String {
+        let d = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        let a = (about ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if a.isEmpty { return d }
+        if d.isEmpty { return a }
+        let nd = normalized(d), na = normalized(a)
+        if na.contains(nd) { return a }
+        if nd.contains(na) { return d }
+        return a + "\n\n" + d
+    }
+
+    private static func normalized(_ text: String) -> String {
+        text.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+}

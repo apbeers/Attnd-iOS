@@ -834,12 +834,10 @@ struct LocationDetailView: View {
             if let title = section.title {
                 Text(title).font(.title3.bold())
             }
-            if !location.description.isEmpty {
-                Text(location.description).font(.body)
-            }
-            // API-018: the organizer's notes for the assistant.
-            if let about = location.context?.about, !about.isEmpty {
-                Text(about)
+            // The description and API-018's about, once (`AboutText`).
+            let about = AboutText.merged(description: location.description, about: location.context?.about)
+            if !about.isEmpty {
+                Text(about).font(.body)
             }
         case "hours":
             if let hours = location.context?.hours, !hours.isEmpty { PlaceHoursLine(hours: hours) }

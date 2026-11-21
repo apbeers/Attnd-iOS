@@ -408,12 +408,17 @@ struct CardCarousel: View {
         VStack(alignment: .leading, spacing: 8) {
             BlockTitle(title: title)
             ScrollView(.horizontal) {
-                LazyHStack(alignment: .top, spacing: 12) {
+                // Not lazy (≤ 8 cards): a lazy stack measured only the first cards, so a taller one
+                // overflowed its row onto the next section (build 167). Now the row is as tall as its
+                // tallest card and every card takes that height.
+                HStack(alignment: .top, spacing: 12) {
                     ForEach(Array(targets.prefix(Self.maxCards)), id: \.self) { target in
                         card(target)
                             .containerRelativeFrame(.horizontal) { width, _ in width * 0.8 }
+                            .frame(maxHeight: .infinity, alignment: .top)
                     }
                 }
+                .fixedSize(horizontal: false, vertical: true)
                 .scrollTargetLayout()
             }
             .scrollTargetBehavior(.viewAligned)

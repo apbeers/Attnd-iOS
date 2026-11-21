@@ -423,12 +423,8 @@ struct ScheduleItemDetailView: View {
         switch section.type {
         case "header": header(section, now: now)
         case "about":
-            if !item.description.isEmpty {
-                Section(section.title ?? "About") {
-                    Text(item.description)
-                }
-            }
-            if let about = item.context?.about, !about.isEmpty {
+            let about = AboutText.merged(description: item.description, about: item.context?.about)
+            if !about.isEmpty {
                 Section(section.title ?? "About") {
                     Text(about)
                 }

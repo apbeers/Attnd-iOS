@@ -2,7 +2,8 @@
 // Attnd
 //
 // Options for the joined event, shown as a sheet (`OptionsSheet`) from the "Options" item
-// in the navigation bar of every tab's root screen (ContentView `optionsToolbarItem`).
+// in the navigation bar of the Updates tab's root screen, or the first tab's when the event hides
+// Updates (ContentView `optionsToolbarItem(for:)`, `TabLayout.optionsTab`).
 
 import SwiftUI
 import UIKit

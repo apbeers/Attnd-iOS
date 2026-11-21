@@ -51,4 +51,30 @@ final class TabLayoutTests: XCTestCase {
         XCTAssertEqual(Set(l.tabs.map(\.systemImage)).count, l.tabs.count)
         XCTAssertEqual(EventTab.locations.systemImage, "list.bullet")
     }
+
+    func testOptionsTab() {
+        XCTAssertEqual(layout(nil).optionsTab, .notifications, "Options lives on Updates")
+        XCTAssertEqual(layout([.schedule, .map, .notifications]).optionsTab, .notifications)
+        XCTAssertEqual(layout([.schedule, .map]).optionsTab, .schedule, "no Updates → the first tab")
+        XCTAssertEqual(layout([.flyer]).optionsTab, .flyer)
+    }
+
+    func testShowOnMapPopsBackToTheMap() {
+        var nav = MapNavigation()
+        nav.open(12)
+        XCTAssertEqual(nav.path, [12])
+        // Show on Map from the detail pushed over the map: back to the map, the pin focused.
+        nav.showOnMap(12)
+        XCTAssertEqual(nav.path, [])
+        XCTAssertEqual(nav.focusLocationId, 12)
+        XCTAssertEqual(nav.takeFocus(), 12)
+        XCTAssertNil(nav.focusLocationId)
+        XCTAssertNil(nav.takeFocus())
+        // From another tab (nothing pushed) it only focuses.
+        nav.showOnMap(5)
+        XCTAssertEqual(nav, MapNavigation(path: [], focusLocationId: 5))
+        nav.open(3); nav.open(4)
+        nav.reset()
+        XCTAssertEqual(nav, MapNavigation())
+    }
 }

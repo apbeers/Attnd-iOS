@@ -46,7 +46,7 @@ private struct PlanButtonModifier: ViewModifier {
                     Spacer(minLength: 0)
                     HStack(spacing: 0) {
                         Spacer(minLength: 0)
-                        FloatingPlanButton(peek: peek) {
+                        FloatingPlanButton(peek: appState.planButtonPeek) {
                             appState.openPlanPage()
                         }
                         .padding(.trailing, FloatingSearchButtonMetrics.trailingPadding)
@@ -58,10 +58,12 @@ private struct PlanButtonModifier: ViewModifier {
             }
         }
     }
+}
 
-    /// "Next: …" once there is a plan; nil without one (just the icon).
-    private var peek: String? {
-        guard let bundle = appState.currentBundle, let plan = appState.planner.plan, !plan.isEmpty else { return nil }
+extension AppState {
+    /// The My plan button's peek: "Next: …" once there is a plan; nil without one (just the icon).
+    var planButtonPeek: String? {
+        guard let bundle = currentBundle, let plan = planner.plan, !plan.isEmpty else { return nil }
         return PlanDock.summaryLine(plan: plan, bundle, now: .now)
     }
 }

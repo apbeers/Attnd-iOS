@@ -6,8 +6,9 @@
 // (`display.tabs`: Map, Places, Schedule, Flyer, Updates; at most five, so never a "More" tab).
 // With the on-device model (app and App Clip) a floating Liquid Glass "My plan" button on every
 // tab opens the plan page (AssistantView.swift: the plan, search, the assistant); without it and
-// in screenshot mode the floating search button and its sheet instead. Options is a toolbar item on each tab's
-// root screen.
+// in screenshot mode the floating search button and its sheet instead (on the Map tab the button is the
+// last of the map's own trailing column, MapView). Options is a toolbar item on the Updates tab's root
+// screen (the first tab's when the event hides Updates, `TabLayout.optionsTab`).
 // It also drives bundle refreshes (on becoming active, plus a slow poll while
 // active: every 60 s without a push token; a 5-minute safety
 // poll when silent `content_updated` pushes can arrive; 15 s after a failure) and
@@ -188,14 +189,15 @@ struct ContentView: View {
     var body: some View {
         @Bindable var state = appState
         // TabLayout: the event's own tabs, at most five, so never a "More" tab. The floating
-        // button (My plan with the on-device model, else search) is on every tab and
-        // Options a toolbar item on every tab's root screen.
+        // button (My plan with the on-device model, else search) is on every tab (the Map tab
+        // places it in its own trailing column, MapTab) and Options a toolbar item on the
+        // Updates tab's root screen (else the first tab's).
         TabView(selection: tabSelection) {
             ForEach(appState.tabs) { tab in
                 Tab(appState.title(of: tab), systemImage: tab.systemImage, value: tab) {
                     EventTabContent(tab: tab)
                         .latestUpdateBanner(enabled: tab != .notifications)
-                        .floatingActionButton()
+                        .floatingActionButton(enabled: tab != .map)
                 }
                 // Updates sent since the tab was last seen (0 hides the badge).
                 .badge(tab == .notifications ? appState.unreadUpdatesCount : 0)
@@ -308,12 +310,14 @@ private struct EventTabContent: View {
             NavigationStack {
                 FlyerView(flyerUrl: appState.currentEvent?.flyerUrl)
                     .eventStatusBanners()
-                    .optionsToolbarItem()
+                    .optionsToolbarItem(for: .flyer)
             }
         case .notifications:
             NavigationStack {
                 NotificationsView()
-                    .optionsToolbarItem()
+                    // The large title on the bar's own row, beside Options: no empty band above it.
+                    .toolbarTitleDisplayMode(.inlineLarge)
+                    .optionsToolbarItem(for: .notifications)
             }
         }
     }
@@ -359,8 +363,9 @@ private struct LatestUpdateBannerModifier: ViewModifier {
 
 extension View {
     /// The floating button of a tab: "My plan" and its page with the on-device model, else search.
-    func floatingActionButton() -> some View {
-        modifier(FloatingActionButtonModifier())
+    /// `enabled: false` where the screen places `FloatingTabButton` itself (the Map tab's column).
+    func floatingActionButton(enabled: Bool = true) -> some View {
+        modifier(FloatingActionButtonModifier(enabled: enabled))
     }
 
     /// The floating Liquid Glass search button in the bottom-trailing corner of a tab, above
@@ -384,13 +389,36 @@ enum FloatingSearchButtonMetrics {
     static var reservedHeight: CGFloat { size + bottomPadding }
 }
 
+/// The floating button itself (My plan with the on-device model, else search), for screens that
+/// lay it out in their own column: the Map tab puts it under the map's buttons, so the two never
+/// overlap (the map's overlay doesn't see the extra bottom safe area the modifier adds).
+struct FloatingTabButton: View {
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        if appState.hasAssistant {
+            FloatingPlanButton(peek: appState.planButtonPeek) {
+                appState.openPlanPage()
+            }
+        } else {
+            FloatingSearchButton {
+                appState.openSearch()
+            }
+        }
+    }
+}
+
 private struct FloatingActionButtonModifier: ViewModifier {
+    let enabled: Bool
+
     @Environment(AppState.self) private var appState
 
     @ViewBuilder
     func body(content: Content) -> some View {
         // My plan only with the on-device model (planner_view_spec §1); else search.
-        if appState.hasAssistant {
+        if !enabled {
+            content
+        } else if appState.hasAssistant {
             content.planButton()
         } else {
             content.floatingSearchButton()
@@ -462,21 +490,32 @@ struct FloatingSearchButton: View {
 // MARK: - Options toolbar item
 
 extension View {
-    /// "Options" (gear) in the navigation bar of a tab's root screen, pinned trailing (iPhone
-    /// Duo: never moved to the overflow menu); it opens Options as a sheet. `separated` adds a
+    /// "Options" (gear) in the navigation bar of `tab`'s root screen, pinned trailing (iPhone
+    /// Duo: never moved to the overflow menu), only when `tab` is the Options tab (Updates, else
+    /// the first tab: `TabLayout.optionsTab`); it opens Options as a sheet. `separated` adds a
     /// fixed spacer when the screen already has a trailing item (Schedule's filter menu), so
     /// the two unrelated controls get their own glass groups.
-    func optionsToolbarItem(separated: Bool = false) -> some View {
-        modifier(OptionsToolbarItem(separated: separated))
+    func optionsToolbarItem(for tab: EventTab, separated: Bool = false) -> some View {
+        modifier(OptionsToolbarItem(tab: tab, separated: separated))
     }
 }
 
 private struct OptionsToolbarItem: ViewModifier {
+    let tab: EventTab
     let separated: Bool
 
     @Environment(AppState.self) private var appState
 
+    @ViewBuilder
     func body(content: Content) -> some View {
+        if appState.optionsTab == tab {
+            withItem(content)
+        } else {
+            content
+        }
+    }
+
+    private func withItem(_ content: Content) -> some View {
         content.toolbar {
             if separated {
                 ToolbarSpacer(.fixed, placement: .pinnedTrailing)
@@ -496,14 +535,16 @@ private struct OptionsToolbarItem: ViewModifier {
 // MARK: - Event status badge
 
 extension View {
-    /// Floats small Liquid Glass capsules at the top of the content (below the navigation bar,
-    /// so clear of the status bar and Dynamic Island): "Demo event" / "Event ended",
-    /// and "Offline · Updated 3:41 PM" while refreshes fail (saved content stays on
-    /// screen). Content scrolls underneath; they never take layout space and pass
-    /// touches through. On iPhone Duo they stay clear of the fold and camera housings
-    /// via ReservedRegionAvoiding.
-    func eventStatusBanners() -> some View {
-        modifier(EventStatusBadgeModifier())
+    /// Small Liquid Glass capsules at the top of the content (below the navigation bar, so clear
+    /// of the status bar and Dynamic Island): "Demo event" / "Event ended", and "Offline ·
+    /// Updated 3:41 PM" while refreshes fail (saved content stays on screen). They pass touches
+    /// through and never cover content: on list screens (`reservesSpace`, the default) they sit
+    /// in a top safe-area inset, so the list (chips first) starts below them and scrolls under
+    /// them; over the map (`reservesSpace: false`) they float and the map's chips move down by
+    /// `EventStatusBadgeKind.reservedTopHeight`. On iPhone Duo they stay clear of the fold and
+    /// camera housings via ReservedRegionAvoiding.
+    func eventStatusBanners(reservesSpace: Bool = true) -> some View {
+        modifier(EventStatusBadgeModifier(reservesSpace: reservesSpace))
     }
 }
 
@@ -571,28 +612,57 @@ struct EventStatusBadgeKind: Equatable {
 }
 
 private struct EventStatusBadgeModifier: ViewModifier {
+    let reservesSpace: Bool
+
     @Environment(AppState.self) private var appState
 
+    @ViewBuilder
     func body(content: Content) -> some View {
-        content.overlay(alignment: .top) {
-            let kinds = EventStatusBadgeKind.all(appState)
-            if !kinds.isEmpty {
-                ReservedRegionAvoiding {
-                    // One container so stacked capsules share their glass and blend.
-                    GlassEffectContainer(spacing: 6) {
-                        VStack(spacing: 0) {
-                            ForEach(kinds, id: \.title) { kind in
-                                EventStatusBadge(kind: kind)
-                                    .padding(.top, 6)
-                            }
-                            Spacer(minLength: 0)
+        let kinds = EventStatusBadgeKind.all(appState)
+        if reservesSpace {
+            content
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    if !kinds.isEmpty {
+                        // Clear of the fold on an unfolded iPhone Duo (a full-width list).
+                        ReservedRegionAvoiding {
+                            badges(kinds)
                         }
-                        .frame(maxWidth: .infinity)
+                        // Exactly the reserved height per badge (capsule + its top padding),
+                        // plus a small gap above the content.
+                        .frame(height: EventStatusBadgeKind.reservedTopHeight(appState))
+                        .padding(.bottom, 4)
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
                     }
                 }
-                .allowsHitTesting(false)
-                .transition(.opacity)
+                .animation(.easeInOut, value: kinds.map(\.title))
+        } else {
+            content.overlay(alignment: .top) {
+                if !kinds.isEmpty {
+                    ReservedRegionAvoiding {
+                        VStack(spacing: 0) {
+                            badges(kinds)
+                            Spacer(minLength: 0)
+                        }
+                    }
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+                }
             }
+        }
+    }
+
+    /// The capsules, top to bottom, centred; `reservedHeight` (36) each.
+    private func badges(_ kinds: [EventStatusBadgeKind]) -> some View {
+        // One container so stacked capsules share their glass and blend.
+        GlassEffectContainer(spacing: 6) {
+            VStack(spacing: 0) {
+                ForEach(kinds, id: \.title) { kind in
+                    EventStatusBadge(kind: kind)
+                        .padding(.top, 6)
+                }
+            }
+            .frame(maxWidth: .infinity)
         }
     }
 }

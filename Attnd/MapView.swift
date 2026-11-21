@@ -7,12 +7,15 @@
 //
 // Floating overlays (category chips, map buttons, the selected-location card) are
 // laid out with ReservedRegionAvoiding so they stay clear of the fold and camera
-// housings on foldables. They sit above the tab's floating search button
-// (ContentView `floatingSearchButton()` adds its height to the bottom safe area), so the
-// map buttons and the search button form one trailing column and the card never covers it.
+// housings on foldables. The tab's floating button (My plan / search, `FloatingTabButton`) is the
+// last element of the same overlay column (`showsFloatingButton`, phones): the map buttons, then
+// the selected-location card, then the floating button, so they never overlap. (The generic
+// `floatingActionButton()` modifier relies on extra bottom safe area, which the map's overlay
+// doesn't receive.) With the side pane (wide layouts) the button sits over the whole arrangement.
 //
 // Glance (Glance.swift): a live dot / "Next 7:30" over pins with something on now or soon, a
-// "now playing" strip under the chips, a Hearted chip, and for the selected pin the distance,
+// "now playing" strip under the chips, a Liked chip (always shown; with nothing liked it shows
+// an empty state over the map), and for the selected pin the distance,
 // a heart and — within walking range — a walking route ("12 min walk · 0.6 mi"; a dashed
 // straight line + "about 8 min walk" when there is no believable route). Location and compass
 // run only while a pin is selected. Navigation is never started (Directions stays in the detail).
@@ -25,13 +28,14 @@ struct MapView: View {
     @Binding var cameraPosition: MapCameraPosition
     /// Whether the initial framing has been applied (owned by MapTab so it survives layout changes).
     @Binding var hasPositioned: Bool
+    /// The tab's floating button at the bottom of the map's trailing column (no side pane).
+    var showsFloatingButton = false
 
     @Environment(AppState.self) private var appState
     @StateObject private var locationManager = LocationPermissionManager()
     @State private var showLocationDeniedAlert = false
 
     @State private var selectedLocationId: Int?
-    @State private var navigateToLocation: Location?
     @State private var selectedCategory: String?
     /// The "Liked" chip: only liked (hearted) pins.
     @State private var heartedOnly = false
@@ -44,8 +48,6 @@ struct MapView: View {
         LocationGrouping.filter(appState.locations, category: selectedCategory)
             .filter { !heartedOnly || appState.isHearted(.location($0.id)) }
     }
-
-    private var showsHeartedChip: Bool { appState.hasHearts || heartedOnly }
 
     /// Screenshot mode keeps the App Store map clean.
     private var showsGlance: Bool { !ScreenshotMode.isActive }
@@ -134,8 +136,13 @@ struct MapView: View {
         }
         .navigationTitle(appState.currentEvent?.name ?? "Map")
         .navigationBarTitleDisplayMode(.inline)
-        .navigationDestination(item: $navigateToLocation) { location in
-            LocationDetailView(location: location)
+        // Place details pushed over the map (`AppState.mapNavigation.path`, location ids).
+        .navigationDestination(for: Int.self) { locationId in
+            if let location = appState.location(id: locationId) {
+                LocationDetailView(location: location)
+            } else {
+                ContentUnavailableView("Place Not Found", systemImage: "mappin.slash")
+            }
         }
         .onAppear {
             MapRenderTiming.appeared()
@@ -144,10 +151,10 @@ struct MapView: View {
         .onChange(of: appState.locations) { positionInitiallyIfNeeded() }
         .onChange(of: appState.mapCenterToken) { recenter() }
         // initial: a "Show on Map" from another tab may arrive before this view exists.
-        .onChange(of: appState.mapFocusLocationId, initial: true) { _, id in
-            guard let id else { return }
+        // "Show on Map" from a detail pushed over this map pops it first (MapNavigation).
+        .onChange(of: appState.mapFocusLocationId, initial: true) { _, requested in
+            guard requested != nil, let id = appState.mapNavigation.takeFocus() else { return }
             focus(on: id)
-            appState.mapFocusLocationId = nil
         }
         .onChange(of: selectedCategory) { dropHiddenSelection() }
         .onChange(of: heartedOnly) { dropHiddenSelection() }
@@ -186,43 +193,62 @@ struct MapView: View {
 
     private var overlayContent: some View {
         let nowPlaying = showsGlance ? NowPlayingItem.items(schedule: appState.schedule, locations: visibleLocations, now: now) : []
-        let hasChips = !appState.filterCategories.isEmpty || showsHeartedChip
+        // The Liked chip is always there, so the chip row always is.
         return VStack(spacing: 0) {
-            if hasChips {
-                CategoryChips(
-                    categories: appState.filterCategories,
-                    selection: $selectedCategory,
-                    floating: true,
-                    heartedOnly: showsHeartedChip ? $heartedOnly : nil
-                )
-            }
+            CategoryChips(
+                categories: appState.filterCategories,
+                selection: $selectedCategory,
+                floating: true,
+                heartedOnly: $heartedOnly
+            )
             if !nowPlaying.isEmpty {
                 NowPlayingStrip(items: nowPlaying) { locationId in
                     focus(on: locationId)
                 }
-                .padding(.top, hasChips ? 0 : 4)
             }
             Spacer(minLength: 0)
+            if heartedOnly, visibleLocations.isEmpty {
+                // The Liked chip with nothing liked (or no liked place with a pin).
+                NothingLikedView(hasLikes: appState.locations.contains { appState.isHearted(.location($0.id)) })
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.vertical, 8)
+                    .glassEffect(.regular, in: .rect(cornerRadius: 24))
+                    .frame(maxWidth: 420)
+                    .padding(.horizontal, 24)
+                    .allowsHitTesting(false)
+                Spacer(minLength: 0)
+            }
             HStack {
                 Spacer()
                 MapButtonStack(
                     onCenter: recenter,
                     onLocation: { Task { await zoomToUserLocation() } }
                 )
-                .padding()
+                .padding(.horizontal)
+                .padding(.vertical, showsFloatingButton ? 8 : 16)
             }
             if let location = selectedLocation {
                 LocationInfoCard(location: location, walkText: walkCardText) {
-                    navigateToLocation = location
+                    appState.mapNavigation.open(location.id)
                 }
                 .frame(maxWidth: 480)
                 .padding(.horizontal)
                 .padding(.bottom, 8)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
+            if showsFloatingButton {
+                // One trailing column: map buttons, (card), then My plan / search, centred
+                // under the 44 pt map buttons.
+                HStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    FloatingTabButton()
+                        .padding(.trailing, FloatingSearchButtonMetrics.trailingPadding)
+                }
+                .padding(.bottom, FloatingSearchButtonMetrics.bottomPadding)
+            }
         }
-        // Clear the floating demo / ended / offline badges (eventStatusBanners).
-        .padding(.top, hasChips || !nowPlaying.isEmpty ? 8 + EventStatusBadgeKind.reservedTopHeight(appState) : 0)
+        // Clear the floating demo / ended / offline badges (eventStatusBanners(reservesSpace: false)).
+        .padding(.top, 8 + EventStatusBadgeKind.reservedTopHeight(appState))
         .animation(.spring(duration: 0.3), value: selectedLocationId)
         .animation(.easeInOut, value: nowPlaying.map(\.id))
     }
@@ -434,7 +460,7 @@ private struct LocationInfoCard: View {
 
 #Preview {
     NavigationStack {
-        MapView(cameraPosition: .constant(.automatic), hasPositioned: .constant(false))
+        MapView(cameraPosition: .constant(.automatic), hasPositioned: .constant(false), showsFloatingButton: true)
     }
     .environment(AppState())
 }

@@ -23,8 +23,10 @@ struct ScheduleTab: View {
         NavigationSplitView {
             ScheduleView(selection: $selection)
                 .eventStatusBanners()
-                // After the filter menu, in its own glass group.
-                .optionsToolbarItem(separated: true)
+                // The large title on the bar's own row: no empty band above it.
+                .toolbarTitleDisplayMode(.inlineLarge)
+                // After the filter menu, in its own glass group (only when Updates is hidden).
+                .optionsToolbarItem(for: .schedule, separated: true)
         } detail: {
             NavigationStack {
                 Group {
@@ -131,22 +133,18 @@ struct ScheduleView: View {
         }
     }
 
-    /// The Liked chip appears once something is liked (or while it is on). The plan is the plan
-    /// page's (PlanView.swift); the Schedule list never shows it.
-    private var showsHeartedChip: Bool { appState.hasHearts || heartedOnly }
-
+    /// The Liked chip is always there (an empty state explains it before anything is liked). The
+    /// plan is the plan page's (PlanView.swift); the Schedule list never shows it.
     @ViewBuilder
     private func listContent(sections: [ScheduleSection], now: Date) -> some View {
-        if showsHeartedChip {
-            CategoryChips(
-                categories: [],
-                selection: .constant(nil),
-                heartedOnly: $heartedOnly
-            )
-            .listRowInsets(EdgeInsets())
-            .listRowSeparator(.hidden)
-            .listRowBackground(Color.clear)
-        }
+        CategoryChips(
+            categories: [],
+            selection: .constant(nil),
+            heartedOnly: $heartedOnly
+        )
+        .listRowInsets(EdgeInsets())
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
         scheduleSections(sections, now: now)
     }
 
@@ -220,12 +218,10 @@ struct ScheduleView: View {
                 ContentUnavailableView.search(text: searchText)
             } else if appState.isLoading {
                 ProgressView()
-            } else if heartedOnly {
-                ContentUnavailableView(
-                    "Nothing Liked",
-                    systemImage: "heart",
-                    description: Text("Tap the heart on a schedule item to like it and keep it here.")
-                )
+            } else if heartedOnly, !appState.schedule.contains(where: { appState.isHearted(.scheduleItem($0.id)) }) {
+                NothingLikedView()
+            } else if heartedOnly, selectedLocationId != nil {
+                NothingLikedView(hasLikes: true)
             } else if hidesEnded, !appState.schedule.isEmpty {
                 ContentUnavailableView(
                     "All Done!",

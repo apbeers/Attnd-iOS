@@ -29,23 +29,30 @@ struct MapTab: View {
         // The `map-pane` App Store screenshot (iPhone Duo) always shows the arrangement.
         let showsPane = horizontalSizeClass == .regular || ScreenshotMode.current?.screen == .mapPane
         if showsPane, pane != .none {
+            // The floating button over the whole arrangement (bottom-trailing, on the pane).
             MapArrangement {
-                mapStack
+                mapStack(showsFloatingButton: false)
             } secondary: {
                 NavigationStack {
                     SecondaryPaneView(pane: pane)
                 }
             }
+            .floatingActionButton()
         } else {
-            mapStack
+            // The floating button is the last of the map's own trailing column (MapView), so it
+            // never overlaps the map's buttons.
+            mapStack(showsFloatingButton: true)
         }
     }
 
-    private var mapStack: some View {
-        NavigationStack {
-            MapView(cameraPosition: $cameraPosition, hasPositioned: $hasPositioned)
-                .eventStatusBanners()
-                .optionsToolbarItem()
+    /// The map in its own stack: place details pushed over it (`AppState.mapNavigation`;
+    /// "Show on Map" pops back here and focuses the pin).
+    private func mapStack(showsFloatingButton: Bool) -> some View {
+        @Bindable var state = appState
+        return NavigationStack(path: $state.mapNavigation.path) {
+            MapView(cameraPosition: $cameraPosition, hasPositioned: $hasPositioned, showsFloatingButton: showsFloatingButton)
+                .eventStatusBanners(reservesSpace: false)
+                .optionsToolbarItem(for: .map)
         }
     }
 }

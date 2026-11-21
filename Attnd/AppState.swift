@@ -129,8 +129,15 @@ final class AppState {
     /// Incremented when the Map tab is re-tapped; MapView re-centres on change.
     var mapCenterToken = 0
 
-    /// Set by the map's secondary pane to focus a pin; MapView consumes it.
-    var mapFocusLocationId: Int?
+    /// The Map tab's stack (place details pushed over the map) and the pin to focus next
+    /// (`MapNavigation`, TabLayout.swift). MapView consumes the focus.
+    var mapNavigation = MapNavigation()
+
+    /// Set by the map's secondary pane and "Show on Map" to focus a pin; MapView consumes it.
+    var mapFocusLocationId: Int? {
+        get { mapNavigation.focusLocationId }
+        set { mapNavigation.focusLocationId = newValue }
+    }
 
     // MARK: - Search and jumps
 
@@ -389,6 +396,9 @@ final class AppState {
     }
 
     var tabs: [EventTab] { tabLayout.tabs }
+
+    /// The tab whose root screen has the Options button: Updates, else the first tab.
+    var optionsTab: EventTab? { tabLayout.optionsTab }
 
     /// The tab's title ("Places" for Locations; "Locations" in screenshot mode).
     func title(of tab: EventTab) -> String { TabLayout.title(tab, screenshotMode: ScreenshotMode.isActive) }
@@ -732,7 +742,7 @@ final class AppState {
         refreshProblem = nil
         lastRefreshed = nil
         hasAppliedDefaultTab = false
-        mapFocusLocationId = nil
+        mapNavigation.reset()
         searchText = ""
         searchPath = NavigationPath()
         focusRequest = nil
@@ -981,9 +991,10 @@ final class AppState {
     }
 
     /// "Show on Map" in a location's detail: the Map tab, focused on that pin (any sheet closes).
+    /// A detail pushed over the map itself pops, so the map shows the pin's card and route.
     func showOnMap(locationId: Int) {
         guard shows(.map) else { return }
-        mapFocusLocationId = locationId
+        mapNavigation.showOnMap(locationId)
         presentedSheet = nil
         assistant.closePage()
         select(.map)

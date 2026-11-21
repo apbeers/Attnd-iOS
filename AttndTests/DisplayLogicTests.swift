@@ -341,4 +341,57 @@ final class DisplayLogicTests: XCTestCase {
         XCTAssertNil(MediaCache.sniffMIMEType(Data("<html>".utf8)))
         XCTAssertNil(MediaCache.sniffMIMEType(Data()))
     }
+
+    // MARK: - A place's events (Places disclosure)
+
+    func testPlaceEvents_UpcomingInStartOrder() {
+        let now = date("2026-11-14T14:00:00-06:00")
+        let schedule = [
+            item(1, "2026-11-14T19:00:00-06:00", location: 5),
+            item(2, "2026-11-14T10:00:00-06:00", end: "2026-11-14T11:00:00-06:00", location: 5), // ended
+            item(3, "2026-11-14T13:30:00-06:00", end: "2026-11-14T15:00:00-06:00", location: 5), // now
+            item(4, nil, location: 5),                                                            // no time
+            item(5, "2026-11-14T15:00:00-06:00", location: 6),                                    // elsewhere
+        ]
+        let events = PlaceEvents.make(locationId: 5, schedule: schedule, now: now)
+        XCTAssertEqual(events?.items.map(\.id), [3, 1, 4])
+        XCTAssertEqual(events?.allEnded, false)
+        XCTAssertEqual(events?.toggleTitle, "3 events")
+        XCTAssertEqual(PlaceEvents.make(locationId: 6, schedule: schedule, now: now)?.toggleTitle, "1 event")
+    }
+
+    func testPlaceEvents_EndedOnlyWhenNothingIsAhead() {
+        let now = date("2026-11-15T23:00:00-06:00")
+        let schedule = [
+            item(2, "2026-11-14T12:00:00-06:00", location: 5),
+            item(1, "2026-11-14T10:00:00-06:00", location: 5),
+        ]
+        let events = PlaceEvents.make(locationId: 5, schedule: schedule, now: now)
+        XCTAssertEqual(events?.items.map(\.id), [1, 2])
+        XCTAssertEqual(events?.allEnded, true)
+        XCTAssertEqual(events?.toggleTitle, "2 ended")
+        XCTAssertNil(PlaceEvents.make(locationId: 9, schedule: schedule, now: now), "no items → no disclosure")
+    }
+
+    // MARK: - Walking map (place detail)
+
+    func testPlaceWalkMap_OnlyWithinWalkingRange() {
+        XCTAssertTrue(PlaceWalkMap.shows(distanceMeters: 600, screenshotMode: false))
+        XCTAssertTrue(PlaceWalkMap.shows(distanceMeters: 8_000, screenshotMode: false))
+        XCTAssertFalse(PlaceWalkMap.shows(distanceMeters: 8_001, screenshotMode: false), "farther: the button")
+        XCTAssertFalse(PlaceWalkMap.shows(distanceMeters: 10, screenshotMode: false), "here: no walk")
+        XCTAssertFalse(PlaceWalkMap.shows(distanceMeters: nil, screenshotMode: false), "no permission or fix")
+        XCTAssertFalse(PlaceWalkMap.shows(distanceMeters: 600, screenshotMode: true))
+    }
+
+    func testPlaceWalkMap_FramesUserPlaceAndLine() {
+        let user = Coordinate(latitude: 41.0, longitude: -87.0)
+        let place = Coordinate(latitude: 41.01, longitude: -87.0)
+        let bend = Coordinate(latitude: 41.005, longitude: -87.02)
+        let region = PlaceWalkMap.region(user: user, destination: place, line: [user, bend, place])
+        XCTAssertEqual(region?.center.latitude ?? 0, 41.005, accuracy: 1e-9)
+        XCTAssertEqual(region?.center.longitude ?? 0, -87.01, accuracy: 1e-9)
+        XCTAssertEqual(region?.latitudeDelta ?? 0, 0.016, accuracy: 1e-9)
+        XCTAssertEqual(region?.longitudeDelta ?? 0, 0.032, accuracy: 1e-9)
+    }
 }

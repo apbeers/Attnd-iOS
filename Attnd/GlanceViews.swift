@@ -550,6 +550,31 @@ struct UrgentUpdateBanner: View {
     }
 }
 
+// MARK: - Liked filter, empty
+
+/// The Liked chip's empty state (Places, Schedule, Map): "Nothing liked yet" until something is
+/// liked; with likes that the current filter hides, a shorter note.
+struct NothingLikedView: View {
+    /// Something of this kind is liked already (the filter just shows none of it here).
+    var hasLikes = false
+
+    var body: some View {
+        if hasLikes {
+            ContentUnavailableView(
+                "Nothing Liked Here",
+                systemImage: "heart",
+                description: Text("None of your likes match this view.")
+            )
+        } else {
+            ContentUnavailableView {
+                Label("Nothing Liked Yet", systemImage: "heart")
+            } description: {
+                Text("Tap \(Image(systemName: "heart")) on places and events to see them here.")
+            }
+        }
+    }
+}
+
 // MARK: - Now playing (map)
 
 /// Chips for what is on right now ("Main Stage · Prairie Lights"); tap selects the pin.
@@ -571,6 +596,8 @@ struct NowPlayingStrip: View {
                                 Circle().fill(.red).frame(width: 8, height: 8)
                             }
                             .font(.subheadline)
+                            // Readable over the map in light and dark mode (not the tint).
+                            .foregroundStyle(Color.primary)
                         }
                         .buttonStyle(.glass)
                         .buttonBorderShape(.capsule)

@@ -6,6 +6,10 @@
 //
 // Display config: `locations_style` (cards / list / grouped by category),
 // `show_location_images`, `enable_search` and `group_by_category` (filter chips).
+// Each place with schedule items gets a disclosure ("3 events") that lists its upcoming items
+// inline (`PlaceEvents`); tapping one pushes its detail over the place's detail. A place's
+// detail shows a small walking map (route, user dot, pin) within walking range, else the
+// "Get Walking Directions" button.
 
 import ImageIO
 import SwiftUI
@@ -17,19 +21,42 @@ import MapKit
 struct LocationsTab: View {
     @Environment(AppState.self) private var appState
     @State private var selection: Location?
+    /// Pushed over the selected place's detail: a schedule item opened from the list's disclosure
+    /// (and the places it links to).
+    @State private var detailPath = NavigationPath()
+    /// Set while opening an item from the disclosure, so the selection change keeps the path.
+    @State private var keepsDetailPath = false
 
     var body: some View {
         NavigationSplitView {
-            LocationsView(selection: $selection)
+            LocationsView(selection: $selection, openItem: open)
                 .eventStatusBanners()
-                .optionsToolbarItem()
+                // The large title on the bar's own row: no empty band above it.
+                .toolbarTitleDisplayMode(.inlineLarge)
+                .optionsToolbarItem(for: .locations)
         } detail: {
-            NavigationStack {
-                if let selection, let location = appState.location(id: selection.id) {
-                    LocationDetailView(location: location)
-                } else {
-                    ContentUnavailableView("Select a Location", systemImage: "list.bullet")
+            NavigationStack(path: $detailPath) {
+                Group {
+                    if let selection, let location = appState.location(id: selection.id) {
+                        LocationDetailView(location: location)
+                    } else {
+                        ContentUnavailableView("Select a Location", systemImage: "list.bullet")
+                    }
                 }
+                .navigationDestination(for: ScheduleItem.self) { item in
+                    ScheduleItemDetailView(item: appState.schedule.first { $0.id == item.id } ?? item)
+                }
+                .navigationDestination(for: Location.self) { location in
+                    LocationDetailView(location: location)
+                }
+            }
+        }
+        // Another place selected: its detail starts fresh.
+        .onChange(of: selection?.id) {
+            if keepsDetailPath {
+                keepsDetailPath = false
+            } else {
+                detailPath = NavigationPath()
             }
         }
         .onChange(of: appState.locations) {
@@ -46,6 +73,14 @@ struct LocationsTab: View {
         }
     }
 
+    /// An item from a place's disclosure: the place selected, the item pushed over its detail
+    /// (Back returns to the place, then the list).
+    private func open(_ item: ScheduleItem, at location: Location) {
+        keepsDetailPath = selection?.id != location.id
+        selection = location
+        detailPath = NavigationPath([item])
+    }
+
     /// The `location` App Store screenshot opens one location's detail (ScreenshotMode).
     private func selectScreenshotLocationIfNeeded() {
         guard selection == nil, let screenshot = ScreenshotMode.current, screenshot.screen == .location else { return }
@@ -57,12 +92,16 @@ struct LocationsTab: View {
 
 struct LocationsView: View {
     @Binding var selection: Location?
+    /// A schedule item tapped in a place's disclosure.
+    var openItem: (ScheduleItem, Location) -> Void = { _, _ in }
 
     @Environment(AppState.self) private var appState
     @State private var searchText = ""
     @State private var selectedCategory: String?
     /// The "Liked" chip: only liked (hearted) locations.
     @State private var heartedOnly = false
+    /// Places whose upcoming events are expanded inline.
+    @State private var expanded: Set<Int> = []
 
     private var display: DisplayConfig { appState.display }
 
@@ -71,9 +110,6 @@ struct LocationsView: View {
             .filter { !heartedOnly || appState.isHearted(.location($0.id)) }
             .filter { SearchMatching.matches($0, query: searchText) }
     }
-
-    /// The Hearted chip appears once something is hearted (or while it is on).
-    private var showsHeartedChip: Bool { appState.hasHearts || heartedOnly }
 
     var body: some View {
         let locations = filtered
@@ -89,16 +125,15 @@ struct LocationsView: View {
 
     private func list(_ locations: [Location], now: Date) -> some View {
         List(selection: $selection) {
-            if !appState.filterCategories.isEmpty || showsHeartedChip {
-                CategoryChips(
-                    categories: appState.filterCategories,
-                    selection: $selectedCategory,
-                    heartedOnly: showsHeartedChip ? $heartedOnly : nil
-                )
-                .listRowInsets(EdgeInsets())
-                .listRowSeparator(.hidden)
-                .listRowBackground(Color.clear)
-            }
+            // The Liked chip is always there (an empty state explains it before anything is liked).
+            CategoryChips(
+                categories: appState.filterCategories,
+                selection: $selectedCategory,
+                heartedOnly: $heartedOnly
+            )
+            .listRowInsets(EdgeInsets())
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
             switch display.locationsStyle {
             case .grouped:
                 ForEach(LocationGrouping.byCategory(locations, categoryOrder: appState.categories)) { section in
@@ -116,11 +151,7 @@ struct LocationsView: View {
                 if !searchText.isEmpty {
                     ContentUnavailableView.search(text: searchText)
                 } else if heartedOnly {
-                    ContentUnavailableView(
-                        "No Liked Places",
-                        systemImage: "heart",
-                        description: Text("Tap the heart on a place to like it and keep it here.")
-                    )
+                    NothingLikedView(hasLikes: appState.locations.contains { appState.isHearted(.location($0.id)) })
                 } else if appState.isLoading {
                     ProgressView()
                 } else {
@@ -136,17 +167,116 @@ struct LocationsView: View {
 
     @ViewBuilder
     private func rows(_ locations: [Location], now: Date) -> some View {
+        let isCards = display.locationsStyle == .cards
         ForEach(locations) { location in
+            let events = PlaceEvents.make(locationId: location.id, schedule: appState.schedule, now: now)
+            let isExpanded = events != nil && expanded.contains(location.id)
             NavigationLink(value: location) {
-                if display.locationsStyle == .cards {
-                    LocationCard(location: location, showImage: display.showLocationImages, now: now)
-                } else {
-                    LocationRow(location: location, showImage: display.showLocationImages, now: now)
+                VStack(alignment: .leading, spacing: 6) {
+                    if isCards {
+                        LocationCard(location: location, showImage: display.showLocationImages, now: now)
+                    } else {
+                        LocationRow(location: location, showImage: display.showLocationImages, now: now)
+                    }
+                    if let events {
+                        PlaceEventsToggle(title: events.toggleTitle, isExpanded: isExpanded) {
+                            withAnimation(.snappy) {
+                                if isExpanded { expanded.remove(location.id) } else { expanded.insert(location.id) }
+                            }
+                        }
+                        // Under the row's text (past the thumbnail in the list style).
+                        .padding(.leading, !isCards && display.showLocationImages ? 76 : 0)
+                    }
                 }
             }
-            .listRowSeparator(display.locationsStyle == .cards ? .hidden : .automatic)
+            .listRowSeparator(isCards || isExpanded ? .hidden : .automatic)
             .locationPeek(location, now: now) { selection = location }
+            if isExpanded, let events {
+                ForEach(events.items) { item in
+                    PlaceEventRow(item: item, ended: events.allEnded, now: now, timeZone: appState.timeZone) {
+                        openItem(item, location)
+                    }
+                    .listRowSeparator(isCards || item.id != events.items.last?.id ? .hidden : .automatic)
+                }
+            }
         }
+    }
+}
+
+// MARK: - A place's events (disclosure)
+
+/// "3 events ⌄" under a place row: shows or hides its upcoming items inline. Borderless, so it
+/// works inside the row's link without opening the place.
+private struct PlaceEventsToggle: View {
+    let title: String
+    let isExpanded: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: "calendar")
+                Text(title)
+                Image(systemName: "chevron.down")
+                    .rotationEffect(.degrees(isExpanded ? 180 : 0))
+            }
+            .font(.caption.weight(.semibold))
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel(title)
+        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+        .accessibilityHint(isExpanded ? "Hides this place's events." : "Shows this place's events.")
+    }
+}
+
+/// One item in a place's disclosure: time (event's zone), name, Now / in 12 min (or "Ended",
+/// greyed), a heart. Tapping it opens the item's detail.
+private struct PlaceEventRow: View {
+    let item: ScheduleItem
+    let ended: Bool
+    let now: Date
+    let timeZone: TimeZone
+    let open: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 8) {
+            Button(action: open) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(EventTimeFormat.range(start: item.startTime, end: item.endTime, in: timeZone, now: now))
+                        .font(.caption.weight(.semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .frame(minWidth: 72, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.name)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(ended ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+                            .lineLimit(2)
+                        if let relative = RelativeTimeText.item(item, now: now, timeZone: timeZone) {
+                            Text(relative)
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(ended ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
+                        }
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.primary)
+            HeartButton(target: .scheduleItem(item.id), font: .subheadline)
+        }
+        .padding(.leading, 12)
+        .opacity(ended ? 0.7 : 1)
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -297,7 +427,8 @@ struct CategoryChips: View {
     @Binding var selection: String?
     /// True over the map; false inside the Locations list.
     var floating = false
-    /// The "Liked" toggle chip, first in the row (nil: not shown).
+    /// The "Liked" toggle chip, first in the row (nil: not shown). Places, Schedule and the Map
+    /// always show it, even before anything is liked (their empty state explains it).
     var heartedOnly: Binding<Bool>? = nil
 
     var body: some View {
@@ -343,15 +474,22 @@ struct CategoryChips: View {
     @ViewBuilder
     private func chip(_ title: String, systemImage: String? = nil, isSelected: Bool, action: @escaping () -> Void) -> some View {
         let button = Button(action: action) {
-            Group {
+            // Icon + full title, never truncated ("♥ Liked").
+            HStack(spacing: 5) {
                 if let systemImage {
-                    Label(title, systemImage: systemImage)
-                } else {
-                    Text(title)
+                    Image(systemName: systemImage)
+                        .accessibilityHidden(true)
                 }
+                Text(title)
             }
             .font(.subheadline.weight(isSelected ? .semibold : .regular))
+            .lineLimit(1)
+            .fixedSize()
+            // Over the map: primary text on the glass and white on the tinted selected chip,
+            // so they read in light and dark mode (the tint on translucent glass didn't).
+            .foregroundStyle(chipForeground(isSelected: isSelected))
         }
+        .accessibilityLabel(title)
         .buttonBorderShape(.capsule)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         switch (floating, isSelected) {
@@ -359,6 +497,16 @@ struct CategoryChips: View {
         case (true, false):  button.buttonStyle(.glass)
         case (false, true):  button.buttonStyle(.borderedProminent)
         case (false, false): button.buttonStyle(.bordered)
+        }
+    }
+
+    private func chipForeground(isSelected: Bool) -> AnyShapeStyle {
+        switch (floating, isSelected) {
+        case (true, true):  return AnyShapeStyle(Color.white)
+        case (true, false): return AnyShapeStyle(Color.primary)
+        // In the list the system styles apply (tint text on bordered, white on prominent).
+        case (false, true): return AnyShapeStyle(Color.white)
+        case (false, false): return AnyShapeStyle(.tint)
         }
     }
 }
@@ -644,15 +792,26 @@ struct LocationDetailView: View {
 
                     LocationGlanceLine(location: location, now: now)
 
-                    if location.coordinate != nil {
-                        Button {
-                            WalkingDirections.open(to: location)
-                        } label: {
-                            Label("Get Walking Directions", systemImage: "figure.walk")
-                                .frame(maxWidth: .infinity)
+                    if let destination = location.coordinate {
+                        // Within walking range: a small map with the walk (route or dashed
+                        // estimate), the user and the pin, plus Directions. Farther away, without
+                        // a position or in screenshot mode: the big button.
+                        if let user = appState.userLocation.location,
+                           PlaceWalkMap.shows(
+                               distanceMeters: appState.userLocation.direction(to: destination)?.meters,
+                               screenshotMode: ScreenshotMode.isActive
+                           ) {
+                            PlaceWalkMapCard(location: location, user: user, destination: destination)
+                        } else {
+                            Button {
+                                WalkingDirections.open(to: location)
+                            } label: {
+                                Label("Get Walking Directions", systemImage: "figure.walk")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.glassProminent)
+                            .controlSize(.large)
                         }
-                        .buttonStyle(.glassProminent)
-                        .controlSize(.large)
                     }
 
                     if appState.hasAssistant {
@@ -701,6 +860,91 @@ struct LocationDetailView: View {
                 .padding(.vertical, 16)
                 .padding(.bottom, 24)
             }
+        }
+    }
+}
+
+// MARK: - Walking map inside Location Detail
+
+/// The walk to a place, inline in its detail: the route (`WalkingRouteProvider`, cached until
+/// the user moves > 50 m) or a dashed straight line, the user's dot and the place's pin, framed
+/// to fit; "12 min walk · 0.6 mi" / "about 8 min walk" and a Directions button (Apple Maps,
+/// walking). Not interactive inside the scroll view: a tap opens the Map tab on the place (when
+/// the event shows it). The detail's `usesUserLocation` keeps the position fresh only while it
+/// is on screen.
+private struct PlaceWalkMapCard: View {
+    let location: Location
+    let user: Coordinate
+    let destination: Coordinate
+
+    @Environment(AppState.self) private var appState
+    @State private var position: MapCameraPosition = .automatic
+
+    private struct WalkRequest: Equatable {
+        var locationId: Int
+        var user: Coordinate
+        var destination: Coordinate
+    }
+
+    var body: some View {
+        let loaded = appState.walkingRoutes.route(for: location.id, from: user)
+        // Until the route arrives (or fails) the text is the straight-line estimate.
+        let walk = loaded ?? WalkRoute.make(
+            locationId: location.id, origin: user, destination: destination,
+            routePoints: nil, routeSeconds: nil, routeMeters: nil
+        )
+        let line = loaded?.linePoints ?? []
+        let region = PlaceWalkMap.region(user: user, destination: destination, line: line)
+        VStack(alignment: .leading, spacing: 10) {
+            Map(position: $position, interactionModes: []) {
+                if let loaded {
+                    if loaded.isEstimate {
+                        MapPolyline(coordinates: line.map(\.clCoordinate))
+                            .stroke(.tint, style: StrokeStyle(lineWidth: 4, lineCap: .round, dash: [2, 8]))
+                    } else {
+                        MapPolyline(coordinates: line.map(\.clCoordinate))
+                            .stroke(.tint, lineWidth: 5)
+                    }
+                }
+                Marker(location.name, coordinate: destination.clCoordinate)
+                UserAnnotation()
+            }
+            .mapStyle(.standard(pointsOfInterest: .excludingAll))
+            .frame(height: 190)
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .contentShape(RoundedRectangle(cornerRadius: 16))
+            .onTapGesture {
+                if appState.shows(.map) { appState.showOnMap(locationId: location.id) }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Map of the walk to \(location.name)")
+            .accessibilityHint(appState.shows(.map) ? "Opens the Map tab on this place." : "")
+            .accessibilityAddTraits(appState.shows(.map) ? .isButton : [])
+
+            HStack(spacing: 12) {
+                Label(walk.text(imperial: DistanceText.usesImperial()), systemImage: "figure.walk")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Button {
+                    WalkingDirections.open(to: location)
+                } label: {
+                    Label("Directions", systemImage: "arrow.triangle.turn.up.right.diamond.fill")
+                }
+                .buttonStyle(.glassProminent)
+                .controlSize(.small)
+                .accessibilityHint("Opens walking directions in Maps.")
+            }
+        }
+        .onAppear { if let region { position = .region(region.mkRegion) } }
+        .onChange(of: region) { _, new in
+            guard let new else { return }
+            withAnimation { position = .region(new.mkRegion) }
+        }
+        // The walking route (MKDirections), reused while the user stays within 50 m.
+        .task(id: WalkRequest(locationId: location.id, user: user, destination: destination)) {
+            await appState.walkingRoutes.load(locationId: location.id, from: user, to: destination)
         }
     }
 }

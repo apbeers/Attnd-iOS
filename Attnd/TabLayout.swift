@@ -10,6 +10,10 @@
 //   - The tab selected after joining: `default_tab` when listed, else Map, else the first.
 //   - The Locations tab is titled "Places" (the app's word for locations); screenshot mode keeps
 //     "Locations" so the store screenshots stay exactly as they were.
+//   - Options (the gear) is on one tab's root screen only: Updates, or the first tab when the
+//     event hides Updates (`optionsTab`), so it is always reachable.
+//   - `MapNavigation`: the Map tab's stack of pushed place details and its pending pin focus
+//     ("Show on Map" pops back to the map and selects the pin).
 
 import Foundation
 
@@ -29,4 +33,41 @@ struct TabLayout: Hashable, Sendable {
     }
 
     func contains(_ tab: EventTab) -> Bool { tabs.contains(tab) }
+
+    /// The tab whose root screen has the Options button: Updates, else the first tab.
+    var optionsTab: EventTab? {
+        tabs.contains(.notifications) ? .notifications : tabs.first
+    }
+}
+
+/// The Map tab's navigation: place details pushed over the map (by location id) and the pin to
+/// focus next. "Show on Map" (from any detail, including one pushed over the map itself) pops
+/// back to the map and focuses the pin, so the selected-location card and walking route show.
+struct MapNavigation: Hashable, Sendable {
+    /// Location ids of the place details pushed on the Map tab's stack.
+    var path: [Int] = []
+    /// The pin to select and frame once the map is on screen (consumed by the map).
+    var focusLocationId: Int?
+
+    /// A pin's card tapped: its detail over the map.
+    mutating func open(_ locationId: Int) {
+        path.append(locationId)
+    }
+
+    /// Back to the map (every pushed detail pops) with `locationId` focused.
+    mutating func showOnMap(_ locationId: Int) {
+        path = []
+        focusLocationId = locationId
+    }
+
+    /// The pending focus, cleared.
+    mutating func takeFocus() -> Int? {
+        defer { focusLocationId = nil }
+        return focusLocationId
+    }
+
+    mutating func reset() {
+        path = []
+        focusLocationId = nil
+    }
 }

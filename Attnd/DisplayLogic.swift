@@ -201,6 +201,40 @@ enum LocationGrouping {
     }
 }
 
+// MARK: - A place's events (Places list disclosure)
+
+/// What a place row's disclosure lists: the place's schedule items that haven't ended (in
+/// progress first by start, then upcoming; no start time last), or — when nothing is ahead —
+/// its ended items, shown greyed as "Ended". nil when the place has no items (no disclosure).
+struct PlaceEvents: Hashable, Sendable {
+    var items: [ScheduleItem]
+    /// Every item has ended (they are listed greyed).
+    var allEnded: Bool
+
+    static func make(locationId: Int, schedule: [ScheduleItem], now: Date) -> PlaceEvents? {
+        let here = schedule.filter { $0.locationId == locationId }
+        guard !here.isEmpty else { return nil }
+        let ahead = here.filter { !ScheduleTiming.hasEnded($0, at: now) }
+        let listed = ahead.isEmpty ? here : ahead
+        let sorted = listed.sorted { a, b in
+            switch (a.startTime, b.startTime) {
+            case let (x?, y?) where x != y: return x < y
+            case (nil, _?): return false
+            case (_?, nil): return true
+            default: return a.id < b.id
+            }
+        }
+        return PlaceEvents(items: sorted, allEnded: ahead.isEmpty)
+    }
+
+    /// The disclosure's label: "1 event", "3 events", "2 ended".
+    var toggleTitle: String {
+        let count = items.count
+        if allEnded { return "\(count) ended" }
+        return count == 1 ? "1 event" : "\(count) events"
+    }
+}
+
 // MARK: - Search
 
 enum SearchMatching {
@@ -328,6 +362,23 @@ enum MapRegionMath {
             latitudeDelta: max(lat, minimumDelta / 4),
             longitudeDelta: max(lng, minimumDelta / 4)
         )
+    }
+}
+
+// MARK: - Walking map (place detail)
+
+/// The small walking map on a place's detail (instead of the big "Get Walking Directions"
+/// button): only with a position (permission), the user more than "here" and within walking range
+/// (8 km), never in screenshot mode. It frames the user, the place and the route's line.
+enum PlaceWalkMap {
+    static func shows(distanceMeters: Double?, screenshotMode: Bool) -> Bool {
+        guard !screenshotMode, let meters = distanceMeters else { return false }
+        return meters >= DistanceText.hereMeters && WalkTime.isWithinWalkingRange(meters)
+    }
+
+    /// The region showing the user, the place and the drawn line (route or straight line).
+    static func region(user: Coordinate, destination: Coordinate, line: [Coordinate]) -> MapRegionSpec? {
+        MapRegionMath.fitting([user, destination] + line, padding: 1.6)
     }
 }
 

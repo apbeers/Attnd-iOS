@@ -52,8 +52,17 @@ struct HomeTab: View {
                     path.append(target)
                 }
             }
+            // The title stays for Back buttons and VoiceOver, but no title text is drawn on Home's
+            // root: the Home header already shows the event's name (owner, Nov 21, 2026).
             .navigationTitle(appState.currentEvent?.name ?? "Home")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Color.clear
+                        .frame(width: 1, height: 1)
+                        .accessibilityHidden(true)
+                }
+            }
             .eventStatusBanners()
             .optionsToolbarItem(for: .home)
             .navigationDestination(for: SearchTarget.self) { target in

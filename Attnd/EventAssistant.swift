@@ -155,7 +155,9 @@ final class AssistantSessionStore {
             attendee's schedule call add_to_schedule, remove_from_schedule, move_entry or \
             set_reminder; plan_day makes a plan. Every answer that names a schedule item or a place \
             MUST call show with their ids (card for one, carousel for several, now_next for what's \
-            on, timeline for a sequence of times); the text never lists them without show. \
+            on, timeline for a sequence of times). When you show something, write ONE short sentence \
+            (at most 15 words) and never list in text what a component shows. Never write ids such \
+            as s12 or l3 in the text, and no filler like "Anything else?". \
             "Music, food, then more music" or "X then Y" is a plan: call plan_day. \
             "My plan", "itinerary" and "agenda" mean My schedule. If a tool returns an error, fix \
             the call and try once more.

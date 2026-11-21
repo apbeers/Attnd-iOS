@@ -371,15 +371,54 @@ private struct WorkingLine: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            ProgressView()
-                .controlSize(.small)
-            Text(text)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .contentTransition(.opacity)
+            ThinkingRing()
+            // The stage cross-fades when it changes ("Searching…" → "Adding Taco Row…").
+            ZStack(alignment: .leading) {
+                Text(text)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .id(text)
+                    .transition(.opacity)
+            }
+            .animation(.easeInOut(duration: 0.25), value: text)
         }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.updatesFrequently)
+    }
+}
+
+/// The chat's working indicator (like the web chat's thinking line): a small ring with an angular
+/// gradient in the event's tint, turning smoothly about once a second; with Reduce Motion a still
+/// ring that gently pulses.
+struct ThinkingRing: View {
+    var size: CGFloat = 16
+    /// For VoiceOver ("Thinking"); nil = decorative (the stage text beside it says it).
+    var label: String? = nil
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: reduceMotion ? 1.0 / 15 : nil)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            // The event's tint, faded around the ring by an angular gradient mask.
+            let ring = Circle()
+                .fill(.tint)
+                .mask {
+                    Circle().strokeBorder(
+                        AngularGradient(colors: [.black.opacity(0.05), .black.opacity(0.55), .black], center: .center),
+                        lineWidth: max(2, size / 7)
+                    )
+                }
+                .frame(width: size, height: size)
+            if reduceMotion {
+                ring.opacity(0.55 + 0.35 * (0.5 + 0.5 * sin(t * 2 * .pi / 1.6)))
+            } else {
+                ring.rotationEffect(.degrees(t.truncatingRemainder(dividingBy: 1) * 360))
+            }
+        }
+        .accessibilityElement()
+        .accessibilityLabel(label ?? "")
+        .accessibilityHidden(label == nil)
     }
 }
 
@@ -463,9 +502,7 @@ struct AssistantInputBar: View {
         let busy = assistant.busy
         HStack(spacing: 8) {
             if busy != nil {
-                ProgressView()
-                    .controlSize(.small)
-                    .accessibilityLabel(busy == .ask ? "Thinking" : busy == .plan ? "Planning" : "Working")
+                ThinkingRing(size: 14, label: busy == .ask ? "Thinking" : busy == .plan ? "Planning" : "Working")
             }
             TextField("Ask, or change your schedule…", text: $assistant.draft)
                 .focused(focused)

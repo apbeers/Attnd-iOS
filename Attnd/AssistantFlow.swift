@@ -78,6 +78,23 @@ enum AssistantFlow {
         return AssistantTurn(blocks: [.text("Making your plan.")], actions: [.planMake(input.trimmingCharacters(in: .whitespacesAndNewlines))])
     }
 
+    /// The chat's done line for a finished turn, in plain words (owner, Nov 21, 2026): "Added Taco
+    /// Row", "Removed X", "Planned your day", "Found 4 results"; nil for turns that only showed or
+    /// read something (no "Showed carousel"), and for a search that found nothing.
+    static func doneLine(stage: String?, blocks: [AssistantBlock]) -> String? {
+        guard let stage else { return nil }
+        let text = stage.hasSuffix("…") ? String(stage.dropLast()) : stage
+        let verbs: [(String, String)] = [("Adding", "Added"), ("Removing", "Removed"), ("Moving", "Moved"),
+                                         ("Setting", "Set"), ("Planning", "Planned")]
+        for (from, to) in verbs where text.hasPrefix(from) { return to + text.dropFirst(from.count) }
+        if text.hasPrefix("Searching") {
+            var seen = Set<EntityRef>()
+            let count = blocks.flatMap(refs).filter { seen.insert($0).inserted }.count
+            return count == 0 ? nil : count == 1 ? "Found 1 result" : "Found \(count) results"
+        }
+        return nil
+    }
+
     /// What the model's conversation remembers of an assistant turn: its text blocks (bold markers
     /// dropped), else "Showed <first names>", else the block types.
     static func replyText(_ turn: AssistantTurn, _ bundle: EventBundle) -> String {

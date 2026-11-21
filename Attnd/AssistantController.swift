@@ -314,10 +314,11 @@ final class AssistantController {
             do {
                 output = try await EventAssistant.assistantTurn(text, ctx, conversation: conversation, retrieved: retrieved) { [weak self] partial, shown, stage in
                     guard let self, self.answer?.id == id else { return }
+                    // No token streaming (owner, Nov 21, 2026): only the working line's stage
+                    // changes; the answer (text + components) appears at once when the turn is done.
+                    _ = partial
+                    _ = shown
                     if let stage, stage != self.stage { self.stage = stage }
-                    let trimmed = partial.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let blocks = (trimmed.isEmpty ? [] : [AssistantBlock.text(trimmed)]) + shown.filter { !$0.isChips }
-                    if blocks != self.answer?.blocks { self.answer?.blocks = blocks }
                 }
             } catch is CancellationError {
                 if self?.answer?.id == id { self?.answer = nil }
@@ -431,7 +432,7 @@ final class AssistantController {
     /// Adds a turn to the chat column (replacing one with the same id).
     private func record(_ turn: Turn) {
         var turn = turn
-        if turn.status == nil, let stage, !turn.streaming { turn.status = Self.doneText(stage) }
+        if turn.status == nil, !turn.streaming { turn.status = AssistantFlow.doneLine(stage: stage, blocks: turn.blocks) }
         transcript.removeAll { $0.id == turn.id }
         transcript.append(turn)
         if transcript.count > Self.maxTranscript { transcript.removeFirst(transcript.count - Self.maxTranscript) }
@@ -459,16 +460,6 @@ final class AssistantController {
         case .schedule, .liked: return "Checking your schedule…"
         default: return nil
         }
-    }
-
-    /// "Searching…" → "Searched", "Adding Taco Row…" → "Added Taco Row".
-    static func doneText(_ stage: String) -> String {
-        let text = stage.hasSuffix("…") ? String(stage.dropLast()) : stage
-        let words: [(String, String)] = [("Searching", "Searched"), ("Adding", "Added"), ("Removing", "Removed"), ("Moving", "Moved"),
-                                         ("Setting", "Set"), ("Planning", "Planned"), ("Checking", "Checked"), ("Reading", "Read"),
-                                         ("Showing", "Showed"), ("Thinking", "Done")]
-        for (from, to) in words where text.hasPrefix(from) { return to + text.dropFirst(from.count) }
-        return text
     }
 
     private static func transcriptKey(_ eventId: Int) -> String { "pref.assistantTranscript.\(eventId)" }

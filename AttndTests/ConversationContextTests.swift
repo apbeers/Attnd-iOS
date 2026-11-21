@@ -234,4 +234,37 @@ final class ConversationContextTests: XCTestCase {
         let shown = AssistantModel.assemble(text: text, shown: [.placeCard(id: 6)], actions: [], ctx())
         XCTAssertEqual(shown.blocks.map(\.type), ["text", "place_card"])
     }
+
+    // MARK: - Build 165: components over text, no ids
+
+    func testAnswerTextIsShortAndHasNoIds() {
+        let long = "DJ Lone Star is now in your schedule at 1:35 PM. Here's the updated preview: DJ Lone Star (s998) at 1:35 PM, Ana Morales Trio (s995) at 11:30 AM–12:45 PM. Anything else?"
+        let turn = AssistantModel.assemble(text: long, shown: [.carousel(ids: [s(104), s(102)], title: nil)], actions: [], ctx())
+        guard case .text(let text)? = turn.blocks.first else { return XCTFail("text") }
+        XCTAssertEqual(text, "DJ Lone Star is now in your schedule at 1:35 PM.")
+        XCTAssertEqual(turn.blocks.map(\.type), ["text", "carousel"])
+        // Ids never reach the attendee, with or without components; filler goes.
+        XCTAssertEqual(AssistantModel.answerText("Try Taco Row (l6) or [S12] later. Anything else?", withComponents: false),
+                       "Try Taco Row or later.")
+        XCTAssertEqual(AssistantModel.answerText("It's at l6 near s12, see you there!", withComponents: false), "It's at near, see you there!")
+        XCTAssertEqual(AssistantModel.answerText("Here are the sets: Juniper Lane, Big Sky Radio.", withComponents: true), "Here are the sets.")
+        // Without components the text stays whole (minus ids and filler).
+        XCTAssertEqual(AssistantModel.answerText("Gates open at 10. Bring water.", withComponents: false), "Gates open at 10. Bring water.")
+        XCTAssertEqual(AssistantModel.answerText("Anything else?", withComponents: false), "Anything else?")
+    }
+
+    func testDoneLinesAreHuman() {
+        XCTAssertEqual(AssistantFlow.doneLine(stage: "Adding Taco Row…", blocks: []), "Added Taco Row")
+        XCTAssertEqual(AssistantFlow.doneLine(stage: "Removing DJ Lone Star…", blocks: []), "Removed DJ Lone Star")
+        XCTAssertEqual(AssistantFlow.doneLine(stage: "Planning your day…", blocks: []), "Planned your day")
+        XCTAssertEqual(AssistantFlow.doneLine(stage: "Searching…", blocks: [.carousel(ids: [s(104), s(102), l(6), s(103)], title: nil)]),
+                       "Found 4 results")
+        XCTAssertEqual(AssistantFlow.doneLine(stage: "Searching…", blocks: [.placeCard(id: 6)]), "Found 1 result")
+        XCTAssertNil(AssistantFlow.doneLine(stage: "Searching…", blocks: [.text("Nothing on.")]))
+        // Show-only and reading turns have no done line ("Showed carousel" is gone).
+        XCTAssertNil(AssistantFlow.doneLine(stage: "Showing carousel…", blocks: [.carousel(ids: [s(104)], title: nil)]))
+        XCTAssertNil(AssistantFlow.doneLine(stage: "Thinking…", blocks: []))
+        XCTAssertNil(AssistantFlow.doneLine(stage: "Checking your schedule…", blocks: []))
+        XCTAssertNil(AssistantFlow.doneLine(stage: nil, blocks: []))
+    }
 }

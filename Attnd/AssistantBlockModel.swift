@@ -85,6 +85,7 @@ enum AssistantBlock: Hashable, Sendable {
     }
 
     var isChips: Bool { if case .chips = self { return true } else { return false } }
+    var isText: Bool { if case .text = self { return true } else { return false } }
 }
 
 /// One assistant response: blocks to show and actions to run (writes go through the dispatcher).

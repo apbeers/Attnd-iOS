@@ -434,13 +434,16 @@ extension AssistantModel {
     /// A tool-calling turn's answer: the model's text, then what it `show`ed, then confirmations for
     /// chip-confirmed writes; direct writes run through the dispatcher. Validated like every turn.
     static func assemble(text: String, shown: [AssistantBlock], actions: [AssistantAction], _ ctx: RouterContext) -> AssistantTurn {
-        let answer = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let raw = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Components say it better than a list: names found in the text get their cards below.
+        let showsComponents = shown.contains { !$0.isChips && !$0.isText } || !namedEntities(in: raw, ctx).isEmpty
+        let answer = answerText(raw, withComponents: showsComponents)
         var blocks: [AssistantBlock] = answer.isEmpty ? [] : [.text(answer)]
         blocks += shown.filter { !$0.isChips }
         // Safety net (owner, Nov 21, 2026): an answer that names items or places but showed none of
         // them gets their cards (1 → card, 2–8 → carousel), so they can be tapped and "add it" works.
         if !shown.contains(where: { !ConversationContext.refs($0).isEmpty && !$0.isChips }) {
-            let named = namedEntities(in: answer, ctx)
+            let named = namedEntities(in: raw, ctx)
             if named.count == 1 {
                 blocks.append(BlockValidator.card(named[0]))
             } else if named.count > 1 {
@@ -452,6 +455,54 @@ extension AssistantModel {
         blocks += confirms
         blocks += shown.filter(\.isChips)
         return AssistantTurn(blocks: BlockValidator.validate(blocks, ctx.blockContext), actions: direct)
+    }
+
+    /// The model's answer text cleaned up (owner, Nov 21, 2026: components over text): entity ids
+    /// ("(s998)", "[l3]", "u9") never reach the attendee, filler ("Anything else?", "Let me know if…")
+    /// is dropped, and with components shown only the first sentence stays (they carry the rest).
+    static func answerText(_ text: String, withComponents: Bool) -> String {
+        var s = text
+        // "(s998)", "[l3]", "(S12, s14)".
+        s = Rx.replace(#"\s*[\(\[]\s*[sluSLU]\d{1,7}(\s*,\s*[sluSLU]\d{1,7})*\s*[\)\]]"#, s, with: "")
+        // Bare ids as their own word.
+        s = Rx.replace(#"\b[slu]\d{1,7}\b"#, s, with: "")
+        s = Rx.replace(#"[ \t]{2,}"#, s, with: " ")
+        s = Rx.replace(#"\s+([,.!?;:])"#, s, with: "$1")
+        // Filler at the end.
+        let fillers = [#"\s*(Is there )?anything else( I can help with| you('d| would) like)?\s*\?\s*$"#,
+                       #"\s*Let me know if [^.!?]*[.!?]?\s*$"#, #"\s*(Want|Would you like) (me to|anything) [^.!?]*\?\s*$"#]
+        for pattern in fillers {
+            let trimmed = Rx.replace("(?i)" + pattern, s, with: "")
+            if !trimmed.trimmingCharacters(in: .whitespaces).isEmpty { s = trimmed }
+        }
+        s = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        if withComponents, let end = firstSentenceEnd(s) { s = String(s[..<end]) }
+        // With components, a list after a colon is what the components show.
+        // ("Here are the sets: A, B" → "Here are the sets."; not a short lead-in like "Right now: …").
+        if withComponents, let colon = s.range(of: ": "),
+           s[..<colon.lowerBound].split(separator: " ").count >= 3, s[colon.upperBound...].contains(",") {
+            s = String(s[..<colon.lowerBound]) + "."
+        }
+        // A list intro left dangling ("Here's the updated preview:") goes too.
+        if s.hasSuffix(":") { s = String(s.dropLast()).trimmingCharacters(in: .whitespaces) + "." }
+        return s.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The end of the first sentence (after its ". " / "! " / "? "), nil for one sentence.
+    private static func firstSentenceEnd(_ s: String) -> String.Index? {
+        var index = s.startIndex
+        while index < s.endIndex {
+            let c = s[index]
+            let next = s.index(after: index)
+            if ".!?".contains(c), next < s.endIndex, s[next] == " " || s[next] == "\n" {
+                // Not after a one-letter initial ("J. Smith").
+                let before = s[s.startIndex..<index].split(separator: " ").last.map(String.init) ?? ""
+                if c != "." || before.count > 1 { return next }
+            }
+            if c == "\n" { return index }
+            index = next
+        }
+        return nil
     }
 
     /// Schedule items and places the text names, in the order they appear (whole-word matches of

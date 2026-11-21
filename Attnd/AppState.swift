@@ -1559,8 +1559,9 @@ final class AppState {
             return
         }
         guard previewTask == nil else { return }
-        let task = Task { [weak self] in
-            await self?.previewLoop()
+        let task = Task<Void, Never> { [weak self] in
+            guard let self else { return }
+            await self.previewLoop()
         }
         previewTask = task
         Task { [weak self] in

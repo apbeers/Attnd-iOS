@@ -133,6 +133,7 @@ final class LiveFollowController {
             schedule: bundle.schedule,
             hearted: appState.personal.heartedScheduleItems,
             planned: appState.plannedItemIds,
+            places: appState.followPlaces(bundle),
             eventStart: bundle.event.startTime,
             now: now,
             timeZone: bundle.event.timeZone
@@ -174,6 +175,7 @@ final class LiveFollowController {
                 schedule: bundle.schedule,
                 hearted: personal.heartedScheduleItems,
                 planned: planned,
+                places: appState.followPlaces(bundle),
                 eventStart: event.startTime,
                 now: now,
                 timeZone: timeZone
@@ -203,7 +205,8 @@ final class LiveFollowController {
                 locations: bundle.locations,
                 hearted: personal.heartedScheduleItems,
                 skipped: personal.skippedItems,
-                user: appState.userLocation.location,
+                user: appState.userLocation.isAuthorized ? appState.userLocation.location : nil,
+                userAt: appState.userLocation.locationAt,
                 urgent: LiveActivityPlanner.urgent(
                     notifications: bundle.notifications,
                     dismissed: personal.dismissedUrgentIds,
@@ -259,6 +262,9 @@ final class LiveFollowController {
                 } else {
                     await end(activity, final: nil)
                 }
+            } else if live == nil, foreground, Self.lookChanged(activity, theme: appState.liveActivityTheme, accent: appState.liveActivityAccentHex) {
+                // Attributes are fixed for an activity: a changed theme needs a new one (foreground only).
+                await end(activity, final: nil, reason: "system")
             } else if live == nil {
                 live = activity
             } else {
@@ -309,6 +315,12 @@ final class LiveFollowController {
         await rescheduleReminders(bundle)
     }
 
+    /// The event's look changed since the activity started (theme or accent).
+    private static func lookChanged(_ activity: Activity<EventActivityAttributes>,
+                                    theme: EventActivityAttributes.ActivityTheme?, accent: String?) -> Bool {
+        activity.attributes.theme != theme || activity.attributes.accentHex != accent
+    }
+
     private static func isRunning(_ activity: Activity<EventActivityAttributes>) -> Bool {
         switch activity.activityState {
         case .active, .stale, .pending: return true
@@ -328,7 +340,8 @@ final class LiveFollowController {
             eventName: event.name,
             accentHex: appState?.liveActivityAccentHex,
             timeZoneIdentifier: event.timeZone.identifier,
-            dayStart: day.dayStart
+            dayStart: day.dayStart,
+            theme: appState?.liveActivityTheme
         )
         let now = at ?? .now
         let content = ActivityContent(
@@ -514,15 +527,11 @@ final class LiveFollowController {
         await appState.restoreSavedEventIfNeeded()
         let name: String
         switch action {
-        case .heart:         name = "heart"
         case .skip:          name = "skip"
         case .dismissUrgent: name = "dismiss_urgent"
         }
         AppLog.info(.live, "live.action", "Live Activity button: \(name)", ["action": .string(name)])
         switch action {
-        case .heart(let eventId, let itemId):
-            guard appState.currentEvent?.id == eventId else { return }
-            appState.setHeart(true, for: .scheduleItem(itemId))
         case .skip(let eventId, let itemId):
             guard appState.currentEvent?.id == eventId else { return }
             appState.skipActivityItem(itemId)

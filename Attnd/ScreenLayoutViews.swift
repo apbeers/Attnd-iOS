@@ -14,6 +14,7 @@
 //     links, the flyer and the website. Taps push the detail on Home's own stack.
 
 import SwiftUI
+import UIKit
 
 extension AppState {
     /// What the layout conditions read beyond the bundle.
@@ -61,6 +62,9 @@ struct HomeTab: View {
             .navigationDestination(for: Location.self) { location in
                 LocationDetailView(location: appState.location(id: location.id) ?? location)
             }
+            .navigationDestination(for: HeartedListRoute.self) { route in
+                HeartedListView(savedPlacesOnly: route.savedPlacesOnly)
+            }
             .navigationDestination(for: ScheduleItem.self) { item in
                 ScheduleItemDetailView(item: appState.schedule.first { $0.id == item.id } ?? item)
             }
@@ -80,10 +84,39 @@ private struct HomeScreen: View {
     /// Parts that keep the whole width in two-column mode.
     static let fullWidth: Set<String> = ["header", "urgent", "countdown", "now_next"]
 
+
     var body: some View {
         let sections = appState.screenSections(.home, now: now) { bundle, state in
             ScreenFacts.event(bundle, state)
         }
+        GeometryReader { proxy in
+            let posture = FoldPosture.of(container: proxy.size, folds: ReservedRegionReader.folds(in: proxy))
+            if case .tabletop(let foldMinY, let foldMaxY) = posture, let halves = TabletopSplit.home(sections) {
+                // Tabletop (iPhone Duo partly folded): viewing on top, the list below the fold.
+                VStack(spacing: 0) {
+                    ScrollView { column(halves.top) }
+                        .frame(height: max(foldMinY, 0))
+                    Color.clear.frame(height: max(foldMaxY - foldMinY, 0))
+                    ScrollView { column(halves.bottom) }
+                        .contentMargins(.bottom, 88, for: .scrollContent)
+                }
+            } else {
+                scroll(sections)
+            }
+        }
+    }
+
+    private func column(_ sections: [LayoutSection]) -> some View {
+        LazyVStack(alignment: .leading, spacing: 16) {
+            ForEach(sections, id: \.type) { section in
+                ComponentView(component: ComponentCatalogue.component(section), now: now, open: open)
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 12)
+    }
+
+    private func scroll(_ sections: [LayoutSection]) -> some View {
         ScrollView {
             if width >= Self.twoColumnWidth {
                 // Wide (iPhone Duo unfolded): the full-width parts, then two columns of sections.
@@ -255,23 +288,34 @@ struct ScreenComponentView: View {
         }
     }
 
+    /// No card (owner, Nov 21, 2026): the event's name as a title and one small line, the day and
+    /// the place ("Sat Nov 21 · Panther Island, Fort Worth"). The code stays in Options.
     @ViewBuilder
     private var header: some View {
         if let event = appState.currentEvent {
-            EventHeader(event: event, logoUrl: appState.logoUrl)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .blockCardBackground()
+            VStack(alignment: .leading, spacing: 2) {
+                Text(event.name)
+                    .font(.title2.bold())
+                    .lineLimit(2)
+                if let line = HomeHeaderText.line(event) {
+                    Text(line)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
         }
     }
 
-    /// The newest urgent announcement of the last 12 hours (API-011).
+    /// The newest urgent announcement of the last 12 hours (API-011) that wasn't dismissed:
+    /// compact (title, one line of body, the time on the title's line); swipe it away (Undo).
     @ViewBuilder
     private var urgent: some View {
-        let recent = appState.notifications
-            .filter { $0.isUrgent && ($0.sendTime.map { now.timeIntervalSince($0) < 12 * 3600 } ?? false) }
-            .max { ($0.sendTime ?? .distantPast) < ($1.sendTime ?? .distantPast) }
-        if let recent {
-            UpdateCard(notification: recent, onOpen: { open(.notification(recent.id)) })
+        if let recent = UpdatesInbox.urgent(appState.notifications, dismissed: appState.personal.dismissedUrgentIds, now: now) {
+            SwipeAwayUrgentCard(notification: recent, open: { open(.notification(recent.id)) })
         }
     }
 
@@ -409,6 +453,22 @@ struct MyScheduleUpNext: View {
                 .scrollIndicators(.hidden)
                 .scrollClipDisabled()
             }
+            // Places saved without a time aren't in Up next: one small row for them.
+            let saved = appState.mySchedule.savedPlaceIds.count
+            if saved > 0 {
+                NavigationLink(value: HeartedListRoute(savedPlacesOnly: true)) {
+                    HStack {
+                        Label(saved == 1 ? "1 saved place" : "\(saved) saved places", systemImage: "heart")
+                            .font(.subheadline)
+                        Spacer()
+                        Image(systemName: "chevron.forward")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+            }
         }
     }
 
@@ -496,5 +556,125 @@ struct MyScheduleDay: View {
             .buttonStyle(.plain)
             HeartButton(target: row.target, font: .subheadline)
         }
+    }
+}
+
+/// Home's header line: "Sat Nov 21 · Panther Island, Fort Worth" (the event's day in its own time
+/// zone, then the address's first two parts).
+enum HomeHeaderText {
+    static func line(_ event: Event, locale: Locale = .current) -> String? {
+        var parts: [String] = []
+        if let start = event.startTime {
+            var style = Date.FormatStyle(locale: locale).weekday(.abbreviated).month(.abbreviated).day()
+            style.timeZone = event.timeZone
+            parts.append(start.formatted(style))
+        }
+        let place = event.address
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .prefix(2)
+            .joined(separator: ", ")
+        if !place.isEmpty { parts.append(place) }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+}
+
+/// Home's urgent card: compact, swiped away sideways (or with the Dismiss action for VoiceOver);
+/// dismissing uses the per-event dismissed urgent ids (the banner's), the update stays in Updates,
+/// and an Undo toast brings it back.
+private struct SwipeAwayUrgentCard: View {
+    let notification: AppNotification
+    let open: () -> Void
+
+    @Environment(AppState.self) private var appState
+    @State private var offset: CGFloat = 0
+
+    var body: some View {
+        Button(action: open) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                        .accessibilityHidden(true)
+                    Text(notification.title)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    if let sent = notification.sendTime {
+                        Text(EventTimeFormat.time(sent, in: appState.timeZone))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if !notification.body.isEmpty {
+                    Text(notification.body)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.red.opacity(0.12), in: .rect(cornerRadius: 14))
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .offset(x: offset)
+        .opacity(1 - min(abs(offset) / 300, 0.6))
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 20)
+                .onChanged { value in
+                    if abs(value.translation.width) > abs(value.translation.height) { offset = value.translation.width }
+                }
+                .onEnded { value in
+                    if abs(value.translation.width) > 100 {
+                        withAnimation(.easeOut(duration: 0.2)) { offset = value.translation.width > 0 ? 500 : -500 }
+                        dismiss()
+                    } else {
+                        withAnimation(.spring) { offset = 0 }
+                    }
+                }
+        )
+        .accessibilityLabel("Urgent: \(notification.title)")
+        .accessibilityHint("Opens the update. Swipe sideways to dismiss.")
+        .accessibilityAction(named: "Dismiss") { dismiss() }
+    }
+
+    private func dismiss() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        appState.dismissUrgentWithUndo(notification.id)
+    }
+}
+
+/// The Undo toast over the tabs (`AppState.undoToast`), clear of the fold and cameras.
+struct UndoToastOverlay: View {
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        ReservedRegionAvoiding {
+            VStack {
+                Spacer()
+                if let toast = appState.undoToast {
+                    HStack(spacing: 12) {
+                        Text(toast.message).font(.subheadline).lineLimit(1)
+                        Button("Undo") {
+                            toast.undo()
+                            appState.undoToast = nil
+                        }
+                        .font(.subheadline.bold())
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .glassEffect(.regular.interactive(), in: .capsule)
+                    .padding(.bottom, 96)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .debugFloatingFrame("undo_toast")
+                }
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .animation(.easeInOut(duration: 0.2), value: appState.undoToast?.id)
     }
 }

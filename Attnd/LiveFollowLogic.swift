@@ -34,6 +34,18 @@ struct FollowDay: Hashable, Sendable {
     var endAt: Date
     /// True: the user's plan (spec §6), which wins over hearts.
     var followsPlan = false
+    /// My schedule's places with a time on this day (they are part of "my" day).
+    var places: [FollowPlace] = []
+    /// Every timed item of the day: what's on at the event when My schedule has nothing on.
+    var eventItems: [ScheduleItem] = []
+}
+
+/// A place of My schedule at a time ("Dinner at Taco Row, 7:00 PM").
+struct FollowPlace: Hashable, Sendable {
+    var locationId: Int
+    var name: String
+    var start: Date
+    var end: Date
 }
 
 enum LiveActivityPlanner {
@@ -56,6 +68,7 @@ enum LiveActivityPlanner {
         schedule: [ScheduleItem],
         hearted: Set<Int>,
         planned: Set<Int> = [],
+        places: [FollowPlace] = [],
         eventStart: Date?,
         now: Date,
         timeZone: TimeZone
@@ -73,19 +86,31 @@ enum LiveActivityPlanner {
             if day < today, ScheduleTiming.isHappening(item, at: now) { day = today }
             days[day, default: []].append(item)
         }
-        for day in days.keys.sorted() where day >= today {
+        var placeDays: [Date: [FollowPlace]] = [:]
+        for place in places.sorted(by: { ($0.start, $0.locationId) < ($1.start, $1.locationId) }) {
+            var day = calendar.startOfDay(for: place.start)
+            if day < today, place.start <= now, place.end > now { day = today }
+            placeDays[day, default: []].append(place)
+        }
+        for day in Set(days.keys).union(placeDays.keys).sorted() where day >= today {
             let all = days[day] ?? []
             let open = all.filter { !ScheduleTiming.hasEnded($0, at: now) }
-            guard !open.isEmpty else { continue }
+            let dayPlaces = placeDays[day] ?? []
+            let openPlaces = dayPlaces.filter { $0.end > now }
+            guard !open.isEmpty || !openPlaces.isEmpty else { continue }
             let followsPlan = open.contains { planned.contains($0.id) }
-            let followsHearts = !followsPlan && open.contains { hearted.contains($0.id) }
+            let followsHearts = !followsPlan && (open.contains { hearted.contains($0.id) } || !openPlaces.isEmpty)
+            let mine = followsPlan || followsHearts
             let items = followsPlan
                 ? all.filter { planned.contains($0.id) }
                 : followsHearts ? all.filter { hearted.contains($0.id) } : all
+            let followedPlaces = mine ? dayPlaces : []
             let gates = eventStart.flatMap { calendar.isDate($0, inSameDayAs: day) ? $0 : nil }
-            let first = items.compactMap(\.startTime).min() ?? day
+            let starts = items.compactMap(\.startTime) + followedPlaces.map(\.start)
+            let first = starts.min() ?? day
             let startAt = min(first, gates ?? first).addingTimeInterval(-leadTime)
-            let endAt = items.compactMap(ScheduleTiming.effectiveEnd(of:)).max() ?? first
+            let ends = items.compactMap(ScheduleTiming.effectiveEnd(of:)) + followedPlaces.map(\.end)
+            let endAt = ends.max() ?? first
             return FollowDay(
                 dayStart: day,
                 followsHearts: followsHearts,
@@ -93,7 +118,9 @@ enum LiveActivityPlanner {
                 gatesOpen: gates,
                 startAt: startAt,
                 endAt: endAt,
-                followsPlan: followsPlan
+                followsPlan: followsPlan,
+                places: followedPlaces,
+                eventItems: all
             )
         }
         return nil
@@ -118,10 +145,27 @@ enum LiveActivityPlanner {
         return .schedule(day.startAt)
     }
 
-    /// The activity's content for `day` at `now`.
-    /// - current: the item in progress that started last (ties: lowest id);
-    /// - next / after: the first two items not started yet, skipping `skipped`;
-    /// - walk minutes to the next item's location from `user` (within walking range);
+    /// The user's last position is used for walk, direction and distance only this long.
+    static let maxPositionAge: TimeInterval = 30 * 60
+
+    /// One row of the activity: a schedule item or a timed place of My schedule.
+    private struct Entry {
+        var item: ScheduleItem?
+        var place: FollowPlace?
+        var start: Date
+        var end: Date
+        var locationId: Int?
+        var itemId: Int? { item?.id }
+    }
+
+    /// The activity's content for `day` at `now` (Now and Next always filled while anything is on):
+    /// - current: My schedule's entry in progress (the one that started last; ties lowest id),
+    ///   else what's on at the event ("At the event", `nowSource` "event"): the item in progress
+    ///   nearest to the user, else the earliest started;
+    /// - next / after: My schedule's next two entries not started yet (skipping `skipped`), else
+    ///   the event's own next items; `freeUntil` = Next's start while My schedule has a gap;
+    /// - walk minutes, compass point and distance to Next from `user` (≤ 30 min old by
+    ///   `userAt`, within walking range; no direction under 20 m);
     /// - `opensAt`: the gates while they haven't opened; `dayComplete` once nothing is left.
     static func content(
         day: FollowDay,
@@ -129,26 +173,73 @@ enum LiveActivityPlanner {
         hearted: Set<Int>,
         skipped: Set<Int>,
         user: Coordinate?,
+        userAt: Date? = nil,
         urgent: EventActivityAttributes.Urgent?,
-        now: Date
+        now: Date,
+        imperial: Bool = DistanceText.usesImperial(),
+        locale: Locale = .current
     ) -> EventActivityAttributes.ContentState {
-        let items = day.items
-        let current = items
-            .filter { ScheduleTiming.isHappening($0, at: now) }
-            .min { a, b in
-                let sa = a.startTime!, sb = b.startTime!
-                return sa != sb ? sa > sb : a.id < b.id
-            }
-        let upcoming = items.filter { item in
-            guard let start = item.startTime else { return false }
-            return start > now && !skipped.contains(item.id) && item.id != current?.id
-        }
-        let next = upcoming.first
-        let after = upcoming.dropFirst().first
         let byId = Dictionary(locations.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        // A position older than 30 min is not used (no background location).
+        let position = userAt.map { now.timeIntervalSince($0) <= maxPositionAge } ?? true ? user : nil
+        func itemEntry(_ item: ScheduleItem) -> Entry? {
+            guard let start = item.startTime, let end = ScheduleTiming.effectiveEnd(of: item) else { return nil }
+            return Entry(item: item, start: start, end: end, locationId: item.locationId)
+        }
+        let mine = day.followsPlan || day.followsHearts
+        let order: (Entry, Entry) -> Bool = { a, b in
+            if a.start != b.start { return a.start < b.start }
+            if (a.item == nil) != (b.item == nil) { return a.item != nil }
+            return (a.itemId ?? a.locationId ?? 0) < (b.itemId ?? b.locationId ?? 0)
+        }
+        let mineEntries = mine
+            ? (day.items.compactMap(itemEntry) + day.places.map {
+                Entry(place: $0, start: $0.start, end: $0.end, locationId: $0.locationId)
+            }).sorted(by: order)
+            : []
+        let eventEntries = (day.eventItems.isEmpty ? day.items : day.eventItems).compactMap(itemEntry).sorted(by: order)
+        func happening(_ e: Entry) -> Bool { e.start <= now && now < e.end }
+        func distance(_ e: Entry) -> Double {
+            guard let position, let c = e.locationId.flatMap({ byId[$0]?.coordinate }) else { return .infinity }
+            return Compass.distance(position, c)
+        }
 
-        func slot(_ item: ScheduleItem?) -> EventActivityAttributes.Slot? {
-            guard let item else { return nil }
+        var current = mineEntries.filter(happening).min { a, b in
+            a.start != b.start ? a.start > b.start : (a.itemId ?? 0) < (b.itemId ?? 0)
+        }
+        var nowSource: String? = current != nil ? "schedule" : nil
+        if current == nil {
+            current = eventEntries.filter(happening).min { a, b in
+                let da = distance(a), db = distance(b)
+                if da != db { return da < db }
+                return a.start != b.start ? a.start < b.start : (a.itemId ?? 0) < (b.itemId ?? 0)
+            }
+            if current != nil { nowSource = "event" }
+        }
+        func upcoming(_ list: [Entry]) -> [Entry] {
+            list.filter { e in
+                guard e.start > now else { return false }
+                if let id = e.itemId, skipped.contains(id) || id == current?.itemId { return false }
+                return true
+            }
+        }
+        let mineNext = upcoming(mineEntries)
+        let useMine = !mineNext.isEmpty
+        let nextList = useMine ? mineNext : upcoming(eventEntries)
+        let next = nextList.first
+        let after = nextList.dropFirst().first
+        let nextSource: String? = next == nil ? nil : (useMine ? "schedule" : "event")
+        let freeUntil = useMine && !mineEntries.contains(where: happening) ? next?.start : nil
+
+        func slot(_ entry: Entry?) -> EventActivityAttributes.Slot? {
+            guard let entry else { return nil }
+            if let place = entry.place {
+                return EventActivityAttributes.Slot(
+                    name: place.name, location: place.name, locationId: place.locationId,
+                    start: place.start, end: place.end, hearted: true, kind: "place"
+                )
+            }
+            guard let item = entry.item else { return nil }
             let location = item.locationId.flatMap { byId[$0] }
             return EventActivityAttributes.Slot(
                 id: item.id,
@@ -162,15 +253,24 @@ enum LiveActivityPlanner {
         }
 
         var walk: Int?
-        if let user, let target = next?.locationId.flatMap({ byId[$0]?.coordinate }) {
-            let meters = Compass.distance(user, target)
-            if WalkTime.isWithinWalkingRange(meters) {
-                walk = WalkTime.minutes(WalkTime.estimatedSeconds(straightMeters: meters))
+        var point: Int?
+        var distanceText: String?
+        var directionLabel: String?
+        if let position, let target = next?.locationId.flatMap({ byId[$0]?.coordinate }) {
+            let direction = TargetDirection(from: position, to: target)
+            if WalkTime.isWithinWalkingRange(direction.meters) {
+                walk = WalkTime.minutes(WalkTime.estimatedSeconds(straightMeters: direction.meters))
+                if !direction.isHere {
+                    point = direction.point.rawValue
+                    distanceText = direction.text(imperial: imperial, locale: locale)
+                    directionLabel = direction.accessibilityText(imperial: imperial, locale: locale)
+                }
             }
         }
 
         let complete = current == nil && next == nil
-        let completed = items.filter { ScheduleTiming.hasEnded($0, at: now) }.count
+        let completed = day.items.filter { ScheduleTiming.hasEnded($0, at: now) }.count
+            + day.places.filter { $0.end <= now }.count
         return EventActivityAttributes.ContentState(
             current: slot(current),
             next: slot(next),
@@ -181,7 +281,13 @@ enum LiveActivityPlanner {
             followsHearts: day.followsHearts,
             followsPlan: day.followsPlan ? true : nil,
             dayComplete: complete ? true : nil,
-            completedCount: complete ? completed : nil
+            completedCount: complete ? completed : nil,
+            nowSource: nowSource,
+            nextSource: nextSource,
+            freeUntil: freeUntil,
+            nextPoint: point,
+            nextDistance: distanceText,
+            nextDirectionLabel: directionLabel
         )
     }
 
@@ -216,6 +322,24 @@ enum LiveActivityPlanner {
               let sent = existing.sentAt.flatMap(ISODate.parse),
               now.timeIntervalSince(sent) < UpdatesInbox.urgentWindow else { return nil }
         return existing
+    }
+}
+
+// MARK: - Theme (API-023)
+/// `event.theme` → the Live Activity's attributes (pure; LiveFollowTests).
+enum LiveThemeMapping {
+    static func activityTheme(_ theme: EventTheme?) -> EventActivityAttributes.ActivityTheme? {
+        guard let theme, !theme.isEmpty else { return nil }
+        func roles(dark: Bool) -> EventActivityAttributes.ActivityTheme.Roles? {
+            let r = EventActivityAttributes.ActivityTheme.Roles(
+                primary: theme.hex(\.primary, dark: dark),
+                secondary: theme.hex(\.secondary, dark: dark),
+                tertiary: theme.hex(\.tertiary, dark: dark)
+            )
+            return r.isEmpty ? nil : r
+        }
+        let result = EventActivityAttributes.ActivityTheme(light: roles(dark: false), dark: roles(dark: true))
+        return result.light == nil && result.dark == nil ? nil : result
     }
 }
 

@@ -394,4 +394,20 @@ final class DisplayLogicTests: XCTestCase {
         XCTAssertEqual(region?.latitudeDelta ?? 0, 0.016, accuracy: 1e-9)
         XCTAssertEqual(region?.longitudeDelta ?? 0, 0.032, accuracy: 1e-9)
     }
+
+    // MARK: - Fold posture (iPhone Duo)
+
+    func testFoldPosture() {
+        let size = CGSize(width: 951, height: 669)
+        XCTAssertEqual(FoldPosture.of(container: size, folds: []), .flat)
+        // A horizontal fold across the middle: tabletop.
+        XCTAssertEqual(FoldPosture.of(container: size, folds: [CGRect(x: 0, y: 320, width: 951, height: 24)]),
+                       .tabletop(foldMinY: 320, foldMaxY: 344))
+        // A vertical fold: book.
+        let tall = CGSize(width: 669, height: 951)
+        XCTAssertEqual(FoldPosture.of(container: tall, folds: [CGRect(x: 322, y: 0, width: 24, height: 951)]),
+                       .book(foldMinX: 322, foldMaxX: 346))
+        // A small strip at the edge (not a fold across the screen): flat.
+        XCTAssertEqual(FoldPosture.of(container: size, folds: [CGRect(x: 0, y: 0, width: 951, height: 30)]), .flat)
+    }
 }

@@ -254,6 +254,11 @@ final class AssistantController {
             }
             return
         }
+        // "Let's do music, food, then more music": one proposal with the steps filled in.
+        if path != .search && path != .ask, let sequence = PlanProposals.sequence(text, ctx) {
+            propose(sequence, input: text, started, ctx)
+            return
+        }
         let routed = AssistantRouter.route(text, ctx)
         switch AssistantFlow.path(routed.intent, text, modelAvailable: ctx.modelAvailable, forced: path) {
         case .search:

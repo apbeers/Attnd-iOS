@@ -336,7 +336,7 @@ private struct ScheduleItemPeekModifier: ViewModifier {
             Button {
                 appState.toggleHeart(target)
             } label: {
-                Label(hearted ? MyScheduleText.remove : "Add to My Schedule", systemImage: hearted ? "minus.circle" : "plus.circle")
+                Label(hearted ? MyScheduleText.remove : "Add to My Schedule", systemImage: hearted ? "heart.slash" : "heart")
             }
             if let location, location.coordinate != nil, appState.shows(.map) {
                 Button {
@@ -366,6 +366,8 @@ struct ScheduleItemDetailView: View {
     let item: ScheduleItem
 
     @Environment(AppState.self) private var appState
+    /// The container's width: two columns from `DetailColumns.minWidth`.
+    @State private var width: CGFloat = 0
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
@@ -390,11 +392,30 @@ struct ScheduleItemDetailView: View {
         ) { bundle, state in
             ScreenFacts.item(item, bundle, state)
         }
-        return List {
-            ForEach(sections, id: \.type) { section in
-                self.section(section, now: now)
+        return Group {
+            if let columns = DetailColumns.split(sections, screen: .itemDetail, width: Double(width)) {
+                // Wide (iPhone Duo unfolded): when and where leading, the details trailing.
+                HStack(spacing: 0) {
+                    List {
+                        ForEach(columns.leading, id: \.type) { section in
+                            self.section(section, now: now)
+                        }
+                    }
+                    List {
+                        ForEach(columns.trailing, id: \.type) { section in
+                            self.section(section, now: now)
+                        }
+                    }
+                }
+            } else {
+                List {
+                    ForEach(sections, id: \.type) { section in
+                        self.section(section, now: now)
+                    }
+                }
             }
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
     }
 
     @ViewBuilder
@@ -497,7 +518,7 @@ struct ScheduleItemDetailView: View {
 // MARK: - My schedule section
 
 /// The Schedule tab's first section: My schedule's timed entries (items and places at a time),
-/// upcoming first and the ended ones dimmed at the end, then saved places. Hidden while empty.
+/// upcoming first and the ended ones dimmed at the end; then "Saved Places" (no time). Hidden while empty.
 private struct MyScheduleSection: View {
     let now: Date
     let open: (ScheduleItem) -> Void
@@ -509,7 +530,7 @@ private struct MyScheduleSection: View {
             let rows = appState.mySchedule.sectionRows(bundle, now: now)
             let saved = appState.mySchedule.savedPlaceIds.compactMap { bundle.location($0) }
             let changes = appState.scheduleOrganizerChanges
-            if !rows.isEmpty || !saved.isEmpty || !changes.isEmpty {
+            if !rows.isEmpty || !changes.isEmpty {
                 Section {
                     ForEach(changes) { change in
                         OrganizerChangeRow(change: change)
@@ -518,6 +539,13 @@ private struct MyScheduleSection: View {
                         rowView(row, bundle)
                             .opacity(row.ended ? 0.5 : 1)
                     }
+                } header: {
+                    Text(MyScheduleText.title)
+                }
+            }
+            // Places saved without a time (a time only when asked for: the heart's menu).
+            if !saved.isEmpty {
+                Section {
                     ForEach(saved) { location in
                         Button {
                             appState.navigate(to: .location(location.id))
@@ -526,13 +554,12 @@ private struct MyScheduleSection: View {
                                 Label(location.name, systemImage: "mappin.and.ellipse")
                                     .foregroundStyle(.primary)
                                 Spacer()
-                                Text("Saved").font(.caption).foregroundStyle(.secondary)
                                 HeartButton(target: .location(location.id), font: .subheadline)
                             }
                         }
                     }
                 } header: {
-                    Text(MyScheduleText.title)
+                    Text(MyScheduleText.savedPlaces)
                 }
             }
         }

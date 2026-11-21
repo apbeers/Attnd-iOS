@@ -88,12 +88,15 @@ final class ConversationContextTests: XCTestCase {
         XCTAssertEqual(found.intent, .search)
         XCTAssertEqual(memory.focus?.kind, .location)
         let place = memory.focus!
-        // A place without a time asks "When?" with times and "Just save it".
-        let when = turn("add it to my schedule", &schedule, &memory)
-        XCTAssertEqual(when.intent, .schedule)
-        XCTAssertTrue(when.actions.isEmpty)
-        guard case .chips(let chips)? = when.blocks.last else { return XCTFail("chips") }
-        XCTAssertEqual(chips.last?.label, "Just save it")
+        // A place is saved at once without a time; the chips offer a time.
+        let saved = turn("add it to my schedule", &schedule, &memory)
+        XCTAssertEqual(saved.intent, .schedule)
+        XCTAssertEqual(saved.actions.map(\.name), [.scheduleAdd])
+        XCTAssertNotNil(schedule.entry(.place, place.id))
+        XCTAssertNil(schedule.entry(.place, place.id)?.at)
+        guard case .chips(let chips)? = saved.blocks.last else { return XCTFail("chips") }
+        XCTAssertTrue(chips.first?.label.hasPrefix("Pick a time: ") ?? false)
+        XCTAssertEqual(chips.first?.action.name, .scheduleMove)
         // "add it at 7" → 7:00 PM today.
         let added = turn("add it at 7", &schedule, &memory)
         XCTAssertEqual(added.actions.map(\.name), [.scheduleAdd])
@@ -176,5 +179,59 @@ final class ConversationContextTests: XCTestCase {
         XCTAssertEqual(decoded.entries.last, entries.last)
         XCTAssertEqual(ChatTranscript.followUps(decoded.entries).map(\.label), ["Remind me 30 min before"])
         XCTAssertTrue(ChatTranscript.decode("nonsense").entries.isEmpty)
+    }
+
+    // MARK: - Build 164: "Let's do music, food, then more music" (owner, Nov 21, 2026)
+
+    func testSequenceBecomesOneProposal() throws {
+        let sentence = "Let's do music, food, then more music"
+        XCTAssertEqual(PlanProposals.sequenceSteps(sentence), [.music, .food, .music])
+        XCTAssertEqual(PlanProposals.sequenceSteps("tacos then a band"), [.food, .music])
+        XCTAssertEqual(PlanProposals.sequenceSteps("morning music, lunch, drinks"), [.music, .food, .drinks])
+        // Not sequences: no "then" / comma, one step, a name inside a step.
+        XCTAssertNil(PlanProposals.sequenceSteps("music and food"))
+        XCTAssertNil(PlanProposals.sequenceSteps("music"))
+        XCTAssertNil(PlanProposals.sequenceSteps("Juniper Lane then tacos"))
+        XCTAssertNil(PlanProposals.sequenceSteps("what's on, and where is food"))
+
+        // Sat 10:00, no plan: Juniper Lane (11:00, Main Stage), Taco Row (nearest food) at 12:15
+        // for 45 min, then Ana Morales Trio (13:00).
+        let proposal = try XCTUnwrap(PlanProposals.sequence(sentence, ctx()))
+        XCTAssertEqual(proposal.kind, .add)
+        XCTAssertEqual(proposal.options.count, 1)
+        guard case .newPlan(let plan) = proposal.options[0].apply else { return XCTFail("new plan") }
+        XCTAssertEqual(AssistantFixture.clock(plan), ["11:00 109", "12:15 lunch", "13:00 102"])
+        XCTAssertEqual(plan.days.first?.meals.first?.locationId, 6)
+        XCTAssertTrue(proposal.text.contains("Taco Row"))
+        XCTAssertEqual(proposal.options[0].edit.after, plan)
+        // With a plan: its entries stay, the new ones are added.
+        let withPlan = try XCTUnwrap(PlanProposals.sequence(sentence, AssistantFixture.ctx()))
+        guard case .newPlan(let merged) = withPlan.options[0].apply else { return XCTFail("merged") }
+        XCTAssertTrue(Set(AssistantFixture.plan.itemIds).isSubset(of: Set(merged.itemIds)))
+    }
+
+    func testTextOnlyModelAnswerGetsItsComponents() throws {
+        // The stub model answers with text alone (build 164's answer, the fixture's names).
+        let text = "Right now: Juniper Lane is playing folk music, and you can grab food at Taco Row. Want me to add dinner or another band to your plan?"
+        let answer = AssistantModel.assemble(text: text, shown: [], actions: [], ctx())
+        XCTAssertEqual(answer.blocks.map(\.type), ["text", "carousel"])
+        guard case .carousel(let ids, _) = answer.blocks[1] else { return XCTFail("carousel") }
+        XCTAssertEqual(ids, [s(109), l(6)])
+        // Remembered, so "add it" works.
+        var memory = ConversationContext()
+        memory.record(answer)
+        XCTAssertEqual(memory.focus, s(109))
+        var schedule = MySchedule()
+        let added = turn("add it to my schedule", &schedule, &memory)
+        XCTAssertEqual(added.actions.map(\.name), [.scheduleAdd])
+        XCTAssertTrue(schedule.contains(.scheduleItem(109)))
+
+        // One name → a card; generic words and lower-case one-word names → nothing.
+        XCTAssertEqual(AssistantModel.assemble(text: "Taco Row has tacos.", shown: [], actions: [], ctx()).blocks.map(\.type), ["text", "place_card"])
+        XCTAssertEqual(AssistantModel.namedEntities(in: "There's music on the main stage and food everywhere.", ctx()), [l(1)])
+        XCTAssertEqual(AssistantModel.namedEntities(in: "Grab some food and music.", ctx()), [])
+        // The model showed something: nothing added.
+        let shown = AssistantModel.assemble(text: text, shown: [.placeCard(id: 6)], actions: [], ctx())
+        XCTAssertEqual(shown.blocks.map(\.type), ["text", "place_card"])
     }
 }

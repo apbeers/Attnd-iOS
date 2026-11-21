@@ -139,8 +139,10 @@ enum ScreenLayout {
         .optionsEvent: [LayoutSection("header"), LayoutSection("website"), LayoutSection("event_info_link")],
         .mapOverlay: [LayoutSection("now_playing"), LayoutSection("selected_place")],
         .home: [
+            // No now_next by default (owner, Nov 21, 2026: My schedule and the schedule below show
+            // it); organizers can still add it.
             LayoutSection("header"), LayoutSection("urgent"), LayoutSection("countdown"),
-            LayoutSection("now_next", when: ["not:after_end"]), LayoutSection("my_schedule"),
+            LayoutSection("my_schedule"),
             LayoutSection("map"), LayoutSection("updates", limit: 3), LayoutSection("faq", limit: 3),
             LayoutSection("getting_there"), LayoutSection("about"),
         ],
@@ -441,5 +443,42 @@ private struct LossyScreens: Decodable {
         for key in c.allKeys {
             if let spec = try? c.decode(ScreenSpec.self, forKey: key) { screens[key.stringValue] = spec }
         }
+    }
+}
+
+// MARK: - Two columns on wide containers (iPhone Duo unfolded)
+
+/// Detail screens in two columns from a container width of 700 pt (the inner display of an
+/// unfolded iPhone Duo; never a device check): the header and the "where / when" parts leading,
+/// everything else trailing, each in layout order. nil = one column.
+enum DetailColumns {
+    static let minWidth = 700.0
+
+    static let leadingTypes: [LayoutScreen: Set<String>] = [
+        .placeDetail: ["header", "walk_map", "directions", "now_next"],
+        .itemDetail: ["header", "place_link", "countdown"],
+    ]
+
+    static func split(_ sections: [LayoutSection], screen: LayoutScreen, width: Double)
+        -> (leading: [LayoutSection], trailing: [LayoutSection])? {
+        guard width >= minWidth, let types = leadingTypes[screen] else { return nil }
+        let leading = sections.filter { types.contains($0.type) }
+        let trailing = sections.filter { !types.contains($0.type) }
+        guard !leading.isEmpty, !trailing.isEmpty else { return nil }
+        return (leading, trailing)
+    }
+}
+
+/// Home in tabletop posture (iPhone Duo partly folded, the fold across the middle): the top half
+/// for viewing (header, urgent, countdown, now / next, the map), the bottom half the rest as a
+/// list. nil = nothing for one of the halves (one scroll view as usual).
+enum TabletopSplit {
+    static let topTypes: Set<String> = ["header", "urgent", "countdown", "now_next", "map"]
+
+    static func home(_ sections: [LayoutSection]) -> (top: [LayoutSection], bottom: [LayoutSection])? {
+        let top = sections.filter { topTypes.contains($0.type) }
+        let bottom = sections.filter { !topTypes.contains($0.type) }
+        guard !top.isEmpty, !bottom.isEmpty else { return nil }
+        return (top, bottom)
     }
 }

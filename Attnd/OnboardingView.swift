@@ -105,7 +105,7 @@ struct OnboardingView: View {
                 FeatureRow(systemImage: "calendar", text: "See what's on now and next, with live countdowns.")
                 FeatureRow(systemImage: "bell", text: "Get the organizers' updates the moment they're sent.")
                 FeatureRow(systemImage: "magnifyingglass", text: "Search everything with the button in the corner.")
-                FeatureRow(systemImage: "plus.circle", text: "Add what you don't want to miss to your schedule and follow it on your Lock Screen.")
+                FeatureRow(systemImage: "heart", text: "Tap the heart on what you don't want to miss: it goes in your schedule, and you can follow it on your Lock Screen.")
             }
         case .location:
             CardLayout(systemImage: "location.north.line", title: "Find your way") {

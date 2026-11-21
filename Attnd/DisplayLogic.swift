@@ -437,3 +437,32 @@ enum ReservedRegionLayout {
         )
     }
 }
+
+// MARK: - Fold posture (iPhone Duo)
+
+/// The fold as the app sees it, from the active `.division` regions (there is no pose API; the
+/// fold region is active only while the device is partly folded): none (flat or folded shut), a
+/// vertical fold (book: side by side), or a horizontal fold across the middle (tabletop: the top
+/// half for viewing, the bottom half for the list / controls).
+enum FoldPosture: Hashable, Sendable {
+    case flat
+    case book(foldMinX: CGFloat, foldMaxX: CGFloat)
+    case tabletop(foldMinY: CGFloat, foldMaxY: CGFloat)
+
+    static func of(container size: CGSize, folds: [CGRect]) -> FoldPosture {
+        let bounds = CGRect(origin: .zero, size: size)
+        for raw in folds {
+            let rect = raw.intersection(bounds)
+            guard !rect.isNull, !rect.isEmpty else { continue }
+            if rect.width > rect.height, rect.width >= size.width * 0.5,
+               rect.midY > size.height * 0.25, rect.midY < size.height * 0.75 {
+                return .tabletop(foldMinY: rect.minY, foldMaxY: rect.maxY)
+            }
+            if rect.height > rect.width, rect.height >= size.height * 0.5,
+               rect.midX > size.width * 0.25, rect.midX < size.width * 0.75 {
+                return .book(foldMinX: rect.minX, foldMaxX: rect.maxX)
+            }
+        }
+        return .flat
+    }
+}

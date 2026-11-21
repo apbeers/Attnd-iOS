@@ -47,11 +47,13 @@ final class LiveFollowTests: XCTestCase {
 
     private let eventStart = date("2026-11-14T09:00:00-06:00")
 
-    private func day(hearted: Set<Int> = [], planned: Set<Int> = [], at time: Date? = nil, schedule: [ScheduleItem]? = nil) -> FollowDay? {
+    private func day(hearted: Set<Int> = [], planned: Set<Int> = [], places: [FollowPlace] = [],
+                     at time: Date? = nil, schedule: [ScheduleItem]? = nil) -> FollowDay? {
         LiveActivityPlanner.followDay(
             schedule: schedule ?? self.schedule,
             hearted: hearted,
             planned: planned,
+            places: places,
             eventStart: eventStart,
             now: time ?? now,
             timeZone: chicago
@@ -63,11 +65,12 @@ final class LiveFollowTests: XCTestCase {
         hearted: Set<Int> = [],
         skipped: Set<Int> = [],
         user: Coordinate? = nil,
+        userAt: Date? = nil,
         at time: Date? = nil
     ) -> EventActivityAttributes.ContentState {
         LiveActivityPlanner.content(
             day: day, locations: locations, hearted: hearted, skipped: skipped,
-            user: user, urgent: nil, now: time ?? now
+            user: user, userAt: userAt, urgent: nil, now: time ?? now, imperial: true, locale: us
         )
     }
 
@@ -188,8 +191,10 @@ final class LiveFollowTests: XCTestCase {
 
     func testStaleDate() throws {
         let state = content(try XCTUnwrap(day()))
-        // Current ends 14:30 (before next starts 16:30), plus a minute.
-        XCTAssertEqual(LiveActivityPlanner.staleDate(state, now: now), date("2026-11-14T14:31:00-06:00"))
+        // Without a position Now is the earliest started (Prairie Lights, ends 15:00, before
+        // Next starts at 16:30), plus a minute.
+        XCTAssertEqual(state.current?.id, 2)
+        XCTAssertEqual(LiveActivityPlanner.staleDate(state, now: now), date("2026-11-14T15:01:00-06:00"))
         XCTAssertEqual(LiveActivityPlanner.staleDate(EventActivityAttributes.ContentState(), now: now),
                        now.addingTimeInterval(3600))
     }
@@ -275,7 +280,7 @@ final class LiveFollowTests: XCTestCase {
     // MARK: - Links
 
     func testLinks_RoundTrip() {
-        let links: [LiveActivityLink] = [.item(12), .map(locationId: 5), .updates(notificationId: 9), .updates(notificationId: nil), .follow, .plan]
+        let links: [LiveActivityLink] = [.item(12), .map(locationId: 5), .updates(notificationId: 9), .updates(notificationId: nil), .follow, .plan, .place(3)]
         for link in links {
             let url = link.url(eventId: 42)
             XCTAssertEqual(LiveActivityLink.parse(url)?.eventId, 42, url.absoluteString)
@@ -360,6 +365,129 @@ final class LiveFollowTests: XCTestCase {
         XCTAssertFalse(everything.followsPlan)
         XCTAssertFalse(everything.followsHearts)
         XCTAssertEqual(everything.items.map(\.id), [1, 2, 3, 4, 5])
+    }
+
+    // MARK: - Now / Next always filled (owner, Nov 21, 2026)
+
+    func testContent_GapInMyScheduleShowsWhatsOnAtTheEvent() throws {
+        let mine = try XCTUnwrap(day(hearted: [4]))
+        XCTAssertEqual(mine.eventItems.map(\.id), [1, 2, 3, 4, 5])
+        // Nothing of mine on: the event's item nearest to the user (Taco Tasting at the Food Court).
+        let state = content(mine, hearted: [4], user: atFoodCourt)
+        XCTAssertEqual(state.current?.id, 3)
+        XCTAssertEqual(state.nowSource, "event")
+        XCTAssertTrue(state.nowIsFromEvent)
+        XCTAssertEqual(state.next?.id, 4)
+        XCTAssertEqual(state.nextSource, "schedule")
+        XCTAssertEqual(state.freeUntil, date("2026-11-14T16:30:00-06:00"))
+        // Without a position: the earliest started (Prairie Lights, 1:30 PM).
+        XCTAssertEqual(content(mine, hearted: [4]).current?.id, 2)
+
+        // Mine in progress: no gap, Now from My schedule.
+        let planned = content(try XCTUnwrap(day(planned: [2, 5])))
+        XCTAssertEqual(planned.nowSource, "schedule")
+        XCTAssertNil(planned.freeUntil)
+
+        // Nothing of mine left after Next: Next comes from the event.
+        let lastMine = content(try XCTUnwrap(day(hearted: [2])), hearted: [2])
+        XCTAssertEqual(lastMine.current?.id, 2)
+        XCTAssertEqual(lastMine.next?.id, 4)
+        XCTAssertEqual(lastMine.nextSource, "event")
+        XCTAssertNil(lastMine.freeUntil)
+    }
+
+    func testContent_TimedPlacesOfMySchedule() throws {
+        let dinner = FollowPlace(locationId: 20, name: "Food Court",
+                                 start: date("2026-11-14T15:00:00-06:00"), end: date("2026-11-14T15:45:00-06:00"))
+        // Only a place today: it is followed (My schedule), the event fills Now.
+        let onlyPlace = try XCTUnwrap(day(places: [dinner]))
+        XCTAssertTrue(onlyPlace.followsHearts)
+        XCTAssertEqual(onlyPlace.places, [dinner])
+        let state = content(onlyPlace)
+        XCTAssertEqual(state.nowSource, "event")
+        XCTAssertEqual(state.next?.kind, "place")
+        XCTAssertTrue(try XCTUnwrap(state.next).isPlace)
+        XCTAssertNil(state.next?.id)
+        XCTAssertEqual(state.next?.locationId, 20)
+        XCTAssertEqual(state.next?.link, .place(20))
+        XCTAssertEqual(state.freeUntil, dinner.start)
+
+        // With an item: by start.
+        let both = content(try XCTUnwrap(day(hearted: [4], places: [dinner])), hearted: [4])
+        XCTAssertEqual(both.next?.kind, "place")
+        XCTAssertEqual(both.after?.id, 4)
+        XCTAssertEqual(both.after?.link, .item(4))
+        // During dinner Now is the place.
+        let during = content(try XCTUnwrap(day(hearted: [4], places: [dinner])), hearted: [4], at: date("2026-11-14T15:10:00-06:00"))
+        XCTAssertEqual(during.current?.locationId, 20)
+        XCTAssertEqual(during.nowSource, "schedule")
+        XCTAssertEqual(during.next?.id, 4)
+        // A place a day ahead makes that day's start.
+        XCTAssertNil(day(places: [dinner], at: date("2026-11-14T23:30:00-06:00"))?.places.first)
+    }
+
+    func testContent_DirectionAndDistanceToNext() throws {
+        let state = content(try XCTUnwrap(day()), user: atFoodCourt, userAt: now.addingTimeInterval(-600))
+        XCTAssertEqual(state.next?.id, 4)
+        // Main Stage is south-east of the Food Court, ~139 m (450 ft).
+        XCTAssertEqual(state.nextPoint, CompassPoint.southeast.rawValue)
+        XCTAssertEqual(state.nextDistance, "450 ft")
+        XCTAssertEqual(state.nextDirectionLabel, "Southeast, 450 feet")
+        XCTAssertEqual(state.nextArrow, "↘")
+        XCTAssertEqual(state.nextDirectionLine, "↘ 450 ft · 3 min walk")
+
+        // A position older than 30 min: nothing.
+        let stale = content(try XCTUnwrap(day()), user: atFoodCourt, userAt: now.addingTimeInterval(-31 * 60))
+        XCTAssertNil(stale.walkMinutesToNext)
+        XCTAssertNil(stale.nextPoint)
+        XCTAssertNil(stale.nextDirectionLine)
+        // At the place itself (< 20 m): no arrow or distance.
+        let here = content(try XCTUnwrap(day()), user: mainStage.coordinate!)
+        XCTAssertNil(here.nextPoint)
+        XCTAssertNil(here.nextDistance)
+        XCTAssertEqual(here.nextDirectionLine, "\(here.walkMinutesToNext ?? 0) min walk")
+    }
+
+    func testContentState_NewFieldsRoundTripAndStayLenient() throws {
+        var state = content(try XCTUnwrap(day(hearted: [4])), hearted: [4], user: atFoodCourt)
+        state.nextPoint = 1
+        let data = try JSONEncoder().encode(state)
+        let text = String(decoding: data, as: UTF8.self)
+        XCTAssertTrue(text.contains("\"now_source\""))
+        XCTAssertTrue(text.contains("\"free_until\""))
+        XCTAssertEqual(try JSONDecoder().decode(EventActivityAttributes.ContentState.self, from: data), state)
+        let odd = #"{"next_point": 9, "now_source": 3, "free_until": "soon"}"#
+        let lenient = try JSONDecoder().decode(EventActivityAttributes.ContentState.self, from: Data(odd.utf8))
+        XCTAssertNil(lenient.nextPoint)
+        XCTAssertNil(lenient.nowSource)
+        XCTAssertNil(lenient.freeUntil)
+    }
+
+    // MARK: - Theme (API-023)
+
+    func testActivityTheme_FromTheEventsThemeAndLenientAttributes() throws {
+        XCTAssertNil(LiveThemeMapping.activityTheme(nil))
+        XCTAssertNil(LiveThemeMapping.activityTheme(EventTheme()))
+        let theme = EventTheme(light: ThemeColors(primary: "#0B6E4F", secondary: "#CDEBDD", tertiary: "#C4471B"),
+                               dark: ThemeColors(primary: "#5FD3A6"))
+        let mapped = try XCTUnwrap(LiveThemeMapping.activityTheme(theme))
+        XCTAssertEqual(mapped.hex(\.primary, dark: false), "#0B6E4F")
+        XCTAssertEqual(mapped.hex(\.primary, dark: true), "#5FD3A6")
+        // A role missing in dark uses light's.
+        XCTAssertEqual(mapped.hex(\.tertiary, dark: true), "#C4471B")
+
+        let attributes = EventActivityAttributes(eventId: 1, eventName: "Fest", accentHex: "#431F86",
+                                                 timeZoneIdentifier: "America/Chicago", dayStart: now, theme: mapped)
+        let data = try JSONEncoder().encode(attributes)
+        XCTAssertEqual(try JSONDecoder().decode(EventActivityAttributes.self, from: data).theme, mapped)
+        // Attributes from an older build (no theme) and a malformed theme still decode.
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        object["theme"] = nil
+        let old = try JSONDecoder().decode(EventActivityAttributes.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertNil(old.theme)
+        XCTAssertEqual(old.accentHex, "#431F86")
+        object["theme"] = "purple"
+        XCTAssertNil(try JSONDecoder().decode(EventActivityAttributes.self, from: JSONSerialization.data(withJSONObject: object)).theme)
     }
 
     // MARK: - Personal state

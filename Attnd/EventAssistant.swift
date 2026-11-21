@@ -4,7 +4,7 @@
 // Apple's on-device foundation model (Foundation Models framework) for the plan page: the
 // event assistant's turns (`assistantTurn`: streamed block JSON, with the `lookup` and
 // `eventInfo` tools over the joined event's local bundle), the planner's preferences
-// (`planPreferences`, spec §6) and the day summaries (`daySummary`). Nothing leaves the device.
+// (`planPreferences`, spec §6). Nothing leaves the device.
 //
 // Used only where the model is available (`isAvailable`; AppState.modelReady): without it
 // the app has no plan page and shows the plain search sheet.
@@ -153,7 +153,10 @@ final class AssistantSessionStore {
             tools; never invent places, times or ids. Ids look like s12 (schedule item), l3 (place), \
             u9 (update). "It", "that" and "the second one" mean the SHOWN entries. To change the \
             attendee's schedule call add_to_schedule, remove_from_schedule, move_entry or \
-            set_reminder; to show things call show with a component; plan_day makes a plan. \
+            set_reminder; plan_day makes a plan. Every answer that names a schedule item or a place \
+            MUST call show with their ids (card for one, carousel for several, now_next for what's \
+            on, timeline for a sequence of times); the text never lists them without show. \
+            "Music, food, then more music" or "X then Y" is a plan: call plan_day. \
             "My plan", "itinerary" and "agenda" mean My schedule. If a tool returns an error, fix \
             the call and try once more.
             """
@@ -547,37 +550,5 @@ extension EventAssistant {
         var text = ""
         for line in lines where text.count + line.count < 1_600 { text += (text.isEmpty ? "" : "\n") + line }
         return text
-    }
-}
-
-// MARK: - Plan page day summary
-
-/// The plan page's summary of one day: one line and a few sentences for "Read more".
-@Generable(description: "A short summary of an attendee's planned day at an event.")
-struct PlanDaySummaryReply {
-    @Guide(description: "One friendly line of at most 90 characters, for example \"Country and blues all afternoon, then the headliners at 7\".")
-    var line: String
-
-    @Guide(description: "Two to four sentences about the day: highlights, walking, breaks and the weather plan if given. Use only facts from the prompt.")
-    var more: String
-}
-
-extension EventAssistant {
-    /// The day's summary from `PlanPage.summaryPrompt` (throws when the model fails).
-    static func daySummary(_ prompt: String) async throws -> (line: String, more: String) {
-        let session = LanguageModelSession {
-            """
-            You summarise an attendee's plan for one day of an event in the Attnd app. Use only the \
-            facts in the prompt; never invent acts, times or places.
-            """
-        }
-        var options = GenerationOptions()
-        options.temperature = 0.3
-        let response = try await session.respond(generating: PlanDaySummaryReply.self, options: options) {
-            prompt
-        }
-        let line = response.content.line.trimmingCharacters(in: .whitespacesAndNewlines)
-        let more = response.content.more.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (String(line.prefix(120)), String(more.prefix(600)))
     }
 }

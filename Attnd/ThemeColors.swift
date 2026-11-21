@@ -59,6 +59,12 @@ extension AppState {
     var liveActivityAccentHex: String? {
         eventTheme?.hex(\.primary, dark: false) ?? accentHex
     }
+
+    /// The Live Activity's full theme (API-023): nil without a theme (the server sends none
+    /// when the organizer switched it off for the apps) → `liveActivityAccentHex` alone.
+    var liveActivityTheme: EventActivityAttributes.ActivityTheme? {
+        LiveThemeMapping.activityTheme(eventTheme)
+    }
 }
 
 extension EnvironmentValues {
@@ -77,3 +83,4 @@ extension View {
             .environment(\.themeHighlight, appState.themeHighlightColor)
     }
 }
+

@@ -29,6 +29,79 @@ struct EventActivityAttributes: ActivityAttributes {
     var timeZoneIdentifier: String
     /// Start of the followed day in the event's time zone: one activity per event day.
     var dayStart: Date
+    /// The event's full colour theme (API-023), nil without one (or with the apps switch off):
+    /// `accentHex` then. Optional, so activities started by older builds still decode.
+    var theme: ActivityTheme? = nil
+
+    /// API-023 for the activity: light / dark × primary (progress, buttons, island tint),
+    /// secondary (soft backgrounds), tertiary (highlights: "Now", the countdown). `#RRGGBB`.
+    struct ActivityTheme: Codable, Hashable, Sendable {
+        var light: Roles?
+        var dark: Roles?
+
+        struct Roles: Codable, Hashable, Sendable {
+            var primary: String?
+            var secondary: String?
+            var tertiary: String?
+
+            init(primary: String? = nil, secondary: String? = nil, tertiary: String? = nil) {
+                self.primary = primary
+                self.secondary = secondary
+                self.tertiary = tertiary
+            }
+
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                primary = try? c.decodeIfPresent(String.self, forKey: .primary)
+                secondary = try? c.decodeIfPresent(String.self, forKey: .secondary)
+                tertiary = try? c.decodeIfPresent(String.self, forKey: .tertiary)
+            }
+
+            var isEmpty: Bool { primary == nil && secondary == nil && tertiary == nil }
+        }
+
+        init(light: Roles? = nil, dark: Roles? = nil) {
+            self.light = light
+            self.dark = dark
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            light = (try? c.decodeIfPresent(Roles.self, forKey: .light)).flatMap { $0.isEmpty ? nil : $0 }
+            dark = (try? c.decodeIfPresent(Roles.self, forKey: .dark)).flatMap { $0.isEmpty ? nil : $0 }
+        }
+
+        /// One role for an appearance; a missing mode uses the other one.
+        func hex(_ role: KeyPath<Roles, String?>, dark isDark: Bool) -> String? {
+            let first = isDark ? dark : light
+            let other = isDark ? light : dark
+            return first?[keyPath: role] ?? other?[keyPath: role]
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case eventId, eventName, accentHex, timeZoneIdentifier, dayStart, theme
+    }
+
+    init(eventId: Int, eventName: String, accentHex: String?, timeZoneIdentifier: String, dayStart: Date,
+         theme: ActivityTheme? = nil) {
+        self.eventId = eventId
+        self.eventName = eventName
+        self.accentHex = accentHex
+        self.timeZoneIdentifier = timeZoneIdentifier
+        self.dayStart = dayStart
+        self.theme = theme
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        eventId = try c.decode(Int.self, forKey: .eventId)
+        eventName = (try? c.decodeIfPresent(String.self, forKey: .eventName)) ?? ""
+        accentHex = try? c.decodeIfPresent(String.self, forKey: .accentHex)
+        timeZoneIdentifier = (try? c.decodeIfPresent(String.self, forKey: .timeZoneIdentifier)) ?? TimeZone.current.identifier
+        dayStart = try c.decode(Date.self, forKey: .dayStart)
+        theme = try? c.decodeIfPresent(ActivityTheme.self, forKey: .theme)
+    }
 
     struct ContentState: Codable, Hashable, Sendable {
         /// The item in progress.
@@ -55,6 +128,19 @@ struct EventActivityAttributes: ActivityAttributes {
         var leaveBy: Date?
         /// "leave_now" (still makes it when leaving now) or "cant_make_it".
         var lateState: String?
+        /// Where Now comes from: "schedule" (My schedule) or "event" ("At the event").
+        var nowSource: String?
+        /// Where Next comes from: "schedule" or "event".
+        var nextSource: String?
+        /// My schedule has a gap until Next: "Free until 3:00 · Next: X at Y".
+        var freeUntil: Date?
+        /// The 8-point compass direction to Next from the user's last position (0 = north,
+        /// clockwise in 45° steps), relative to north: the arrow can't follow the phone.
+        var nextPoint: Int?
+        /// "0.4 mi" to Next.
+        var nextDistance: String?
+        /// VoiceOver: "Northeast, 0.4 miles".
+        var nextDirectionLabel: String?
 
         /// The next item's "Leave now" / "Running late" line, nil when on time.
         var lateText: String? {
@@ -74,7 +160,13 @@ struct EventActivityAttributes: ActivityAttributes {
             dayComplete: Bool? = nil,
             completedCount: Int? = nil,
             leaveBy: Date? = nil,
-            lateState: String? = nil
+            lateState: String? = nil,
+            nowSource: String? = nil,
+            nextSource: String? = nil,
+            freeUntil: Date? = nil,
+            nextPoint: Int? = nil,
+            nextDistance: String? = nil,
+            nextDirectionLabel: String? = nil
         ) {
             self.current = current
             self.next = next
@@ -88,6 +180,12 @@ struct EventActivityAttributes: ActivityAttributes {
             self.completedCount = completedCount
             self.leaveBy = leaveBy
             self.lateState = lateState
+            self.nowSource = nowSource
+            self.nextSource = nextSource
+            self.freeUntil = freeUntil
+            self.nextPoint = nextPoint
+            self.nextDistance = nextDistance
+            self.nextDirectionLabel = nextDirectionLabel
         }
 
         private enum CodingKeys: String, CodingKey {
@@ -100,6 +198,12 @@ struct EventActivityAttributes: ActivityAttributes {
             case completedCount = "completed_count"
             case leaveBy = "leave_by"
             case lateState = "late_state"
+            case nowSource = "now_source"
+            case nextSource = "next_source"
+            case freeUntil = "free_until"
+            case nextPoint = "next_point"
+            case nextDistance = "next_distance"
+            case nextDirectionLabel = "next_direction_label"
         }
 
         /// Lenient: a missing, null or mistyped field is nil, never a decoding failure.
@@ -117,6 +221,28 @@ struct EventActivityAttributes: ActivityAttributes {
             completedCount = try? c.decodeIfPresent(Int.self, forKey: .completedCount)
             leaveBy = try? c.decodeIfPresent(Date.self, forKey: .leaveBy)
             lateState = try? c.decodeIfPresent(String.self, forKey: .lateState)
+            nowSource = try? c.decodeIfPresent(String.self, forKey: .nowSource)
+            nextSource = try? c.decodeIfPresent(String.self, forKey: .nextSource)
+            freeUntil = try? c.decodeIfPresent(Date.self, forKey: .freeUntil)
+            nextPoint = (try? c.decodeIfPresent(Int.self, forKey: .nextPoint)).flatMap { (0..<8).contains($0) ? $0 : nil }
+            nextDistance = try? c.decodeIfPresent(String.self, forKey: .nextDistance)
+            nextDirectionLabel = try? c.decodeIfPresent(String.self, forKey: .nextDirectionLabel)
+        }
+
+        /// Now isn't from My schedule: label it "At the event".
+        var nowIsFromEvent: Bool { nowSource == "event" }
+
+        /// The arrow for `nextPoint` (north-relative): "↑", "↗", "→", …
+        var nextArrow: String? {
+            nextPoint.map { ["↑", "↗", "→", "↘", "↓", "↙", "←", "↖"][$0] }
+        }
+
+        /// "↗ 0.4 mi · 8 min walk", "8 min walk", nil without either.
+        var nextDirectionLine: String? {
+            var parts: [String] = []
+            if let arrow = nextArrow, let distance = nextDistance { parts.append("\(arrow) \(distance)") }
+            if let walk = walkMinutesToNext { parts.append("\(walk) min walk") }
+            return parts.isEmpty ? nil : parts.joined(separator: " · ")
         }
 
         /// The symbol for what it follows: the plan, hearts, or the event's own day.
@@ -137,9 +263,12 @@ struct EventActivityAttributes: ActivityAttributes {
         var start: Date?
         var end: Date?
         var hearted: Bool?
+        /// "place" for a timed place of My schedule (then `id` is nil), nil for a schedule item.
+        var kind: String?
 
         init(id: Int? = nil, name: String? = nil, location: String? = nil, locationId: Int? = nil,
-             start: Date? = nil, end: Date? = nil, hearted: Bool? = nil) {
+             start: Date? = nil, end: Date? = nil, hearted: Bool? = nil, kind: String? = nil) {
+            self.kind = kind
             self.id = id
             self.name = name
             self.location = location
@@ -150,7 +279,7 @@ struct EventActivityAttributes: ActivityAttributes {
         }
 
         private enum CodingKeys: String, CodingKey {
-            case id, name, location, start, end, hearted
+            case id, name, location, start, end, hearted, kind
             case locationId = "location_id"
         }
 
@@ -163,6 +292,15 @@ struct EventActivityAttributes: ActivityAttributes {
             start = try? c.decodeIfPresent(Date.self, forKey: .start)
             end = try? c.decodeIfPresent(Date.self, forKey: .end)
             hearted = try? c.decodeIfPresent(Bool.self, forKey: .hearted)
+            kind = try? c.decodeIfPresent(String.self, forKey: .kind)
+        }
+
+        var isPlace: Bool { kind == "place" }
+
+        /// Where a tap on this row goes: the item's detail, a place's detail.
+        var link: LiveActivityLink? {
+            if let id, !isPlace { return .item(id) }
+            return locationId.map { .place($0) }
         }
 
         /// The end used for progress: the end, or start + 1 h.
@@ -223,6 +361,8 @@ enum LiveActivityLink: Hashable, Sendable {
     case follow
     /// The plan page (spec §6), when the activity follows the plan.
     case plan
+    /// A place's detail (a timed place of My schedule).
+    case place(Int)
 
     static let scheme = "attnd-live"
 
@@ -235,6 +375,7 @@ enum LiveActivityLink: Hashable, Sendable {
         case .updates(nil):                 path = "updates"
         case .follow:                       path = "follow"
         case .plan:                         path = "plan"
+        case .place(let id):                path = "place/\(id)"
         }
         path = "\(Self.scheme)://event/\(eventId)/\(path)"
         // Only digits and fixed words: always a valid URL.
@@ -264,6 +405,9 @@ enum LiveActivityLink: Hashable, Sendable {
         case "plan":
             guard parts.count == 2 else { return nil }
             return (eventId, .plan)
+        case "place":
+            guard let id, parts.count == 3 else { return nil }
+            return (eventId, .place(id))
         default:
             return nil
         }

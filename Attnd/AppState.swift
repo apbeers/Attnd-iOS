@@ -163,6 +163,8 @@ final class AppState {
 
     /// The user's position and heading while a screen showing distances is visible.
     let userLocation = UserLocationTracker()
+    /// The Undo toast over the tabs (a swiped-away urgent card, a heart tapped).
+    var undoToast: UndoToast?
     /// Walking routes for the map card.
     let walkingRoutes = WalkingRouteProvider()
     /// Hearts and the Updates "seen" mark for the current event (UserDefaults, per event).
@@ -184,9 +186,6 @@ final class AppState {
     /// and live hints. The floating My plan button opens its plan page (only with the on-device
     /// model; otherwise, like screenshot mode, the search button and sheet).
     let assistant = AssistantController()
-
-    /// The plan page's day summaries (on-device model, cached on disk per event).
-    let daySummaries = PlanSummaryStore()
 
     /// Apple Intelligence's on-device model can be used, never in screenshot mode
     /// (planner_view_spec §1: the My plan button, plan page, planner and assistant exist only
@@ -447,6 +446,12 @@ final class AppState {
             await launchForScreenshots(screenshot)
             return
         }
+        #if DEBUG
+        if let audit = LayoutAudit.screen {
+            await launchForAudit(audit)
+            return
+        }
+        #endif
         Task { await syncDevice() }
         Task { await checkForUpdate() }
         Task { await sendPendingLeaves() }
@@ -605,6 +610,48 @@ final class AppState {
             ScreenshotMode.writeMarker("ready \(screenshot.screen.rawValue) \(Self.keyWindowSize)")
         }
     }
+
+    #if DEBUG
+    /// The iPhone Duo layout audit (Debug / Dev builds; scripts/ci/screenshots.sh with
+    /// SCREENSHOT_MODE=duo-audit): NOT screenshot mode, so Home, My schedule and the chat are the
+    /// real ones. Joins `-AttndEventCode` (default DEMO) through the normal path, opens the screen
+    /// and writes the same ready marker.
+    private func launchForAudit(_ screen: String) async {
+        ScreenshotMode.clearMarker()
+        let code = UserDefaults.standard.string(forKey: "AttndEventCode") ?? "DEMO"
+        for attempt in 1...8 {
+            if currentEvent == nil { _ = await join(code: code) } else { await refreshBundle(source: .join) }
+            if hasAppliedDefaultTab { break }
+            if attempt < 8 { try? await Task.sleep(for: .seconds(5)) }
+        }
+        guard hasAppliedDefaultTab, let bundle = currentBundle else {
+            ScreenshotMode.writeMarker("failed bundle not loaded")
+            return
+        }
+        pendingTour = false
+        switch screen {
+        case "home": _ = select(.home)
+        case "schedule": _ = select(.schedule)
+        case "map": _ = select(.map)
+        case "locations": _ = select(.locations)
+        case "place":
+            if let first = bundle.locations.first { navigate(to: .location(first.id)) }
+        case "chat":
+            guard hasAssistant else {
+                ScreenshotMode.writeMarker("failed no on-device model in this simulator")
+                return
+            }
+            openPlanPage()
+        default:
+            ScreenshotMode.writeMarker("failed unknown audit screen \(screen)")
+            return
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(4))
+            ScreenshotMode.writeMarker("ready \(screen) \(Self.keyWindowSize)")
+        }
+    }
+    #endif
 
     /// The key window's size in points ("669x951") for the screenshot ready marker, so the
     /// capture script can check which iPhone Duo display hosts the app. Diagnostics only.
@@ -1237,7 +1284,6 @@ final class AppState {
         planner.load(eventId: eventId)
         planner.onApply = { [weak self] plan, previous in self?.applyPlanToSchedule(plan, replacing: previous) }
         assistant.load(eventId: eventId)
-        daySummaries.load(eventId: eventId)
     }
 
     func savePersonalState() {
@@ -1278,6 +1324,20 @@ final class AppState {
             return change
         }
         scheduleDidChange(change.map { [$0] } ?? [])
+    }
+
+    /// The heart: adds at once (a place as a saved place, no time), with an Undo toast.
+    func addToScheduleWithUndo(_ target: SearchTarget) {
+        guard currentEvent != nil, !isInSchedule(target) else { return }
+        addToSchedule(target)
+        guard isInSchedule(target) else { return }
+        let name: String
+        switch target {
+        case .scheduleItem(let id): name = schedule.first { $0.id == id }?.name ?? "It"
+        case .location(let id): name = location(id: id)?.name ?? "It"
+        default: name = "It"
+        }
+        showUndo("\(name) added to My Schedule") { [weak self] in self?.removeFromSchedule(target) }
     }
 
     /// Items in My schedule the organizer moved, changed or cancelled (Schedule tab hints).
@@ -1387,6 +1447,30 @@ final class AppState {
         liveFollowNeedsUpdate()
     }
 
+    /// Home's urgent card swiped away: dismissed like the banner, with an Undo toast (~6 s).
+    func dismissUrgentWithUndo(_ notificationId: Int) {
+        dismissUrgent(notificationId)
+        showUndo("Urgent update dismissed") { [weak self] in self?.restoreUrgent(notificationId) }
+    }
+
+    /// Shows the Undo toast for ~6 s (a newer one replaces it).
+    func showUndo(_ message: String, undo: @escaping @MainActor () -> Void) {
+        let token = UUID()
+        undoToast = UndoToast(id: token, message: message, undo: undo)
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(6))
+            if self?.undoToast?.id == token { self?.undoToast = nil }
+        }
+    }
+
+    /// Undo of a dismissed urgent announcement.
+    func restoreUrgent(_ notificationId: Int) {
+        guard currentEvent != nil, personal.dismissedUrgentIds.remove(notificationId) != nil else { return }
+        if personal.dismissedUpdateBannerId == notificationId { personal.dismissedUpdateBannerId = nil }
+        savePersonalState()
+        liveFollowNeedsUpdate()
+    }
+
     // MARK: - Follow on Lock Screen (Live Activity), reminders, onboarding
 
     /// "Follow on Lock Screen" for this event (default: on once something is hearted or planned).
@@ -1407,6 +1491,15 @@ final class AppState {
         guard currentEvent != nil, personal.skippedItems.insert(itemId).inserted else { return }
         savePersonalState()
         liveFollowNeedsUpdate()
+    }
+
+    /// My schedule's places with a time, for the Live Activity.
+    func followPlaces(_ bundle: EventBundle) -> [FollowPlace] {
+        mySchedule.entries.compactMap { entry -> FollowPlace? in
+            guard entry.kind == .place, let start = entry.at, let location = bundle.location(entry.id) else { return nil }
+            let end = start.addingTimeInterval(TimeInterval((entry.minutes ?? MySchedule.defaultMinutes) * 60))
+            return FollowPlace(locationId: location.id, name: location.name, start: start, end: end)
+        }
     }
 
     /// The user's position changed (walk minutes in the Live Activity).
@@ -1462,6 +1555,8 @@ final class AppState {
             LiveFollowController.shared.followNow()
         case .plan:
             showMyPlan()
+        case .place(let id):
+            navigate(to: .location(id))
         }
     }
 
@@ -1900,3 +1995,24 @@ final class ImageMemoryCache: @unchecked Sendable {
         cache.removeAllObjects()
     }
 }
+
+/// The Undo toast over the tabs.
+struct UndoToast: Identifiable {
+    var id: UUID
+    var message: String
+    var undo: @MainActor () -> Void
+}
+
+#if DEBUG
+/// `-AttndAudit <home|schedule|map|locations|place|chat>`: the iPhone Duo layout audit (Debug / Dev
+/// builds only; see `AppState.launchForAudit`).
+enum LayoutAudit {
+    static var screen: String? {
+        UserDefaults.standard.string(forKey: "AttndAudit")?.trimmingCharacters(in: .whitespaces).lowercased().nilIfEmptyAudit
+    }
+}
+
+private extension String {
+    var nilIfEmptyAudit: String? { isEmpty ? nil : self }
+}
+#endif

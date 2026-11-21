@@ -49,6 +49,7 @@ private struct PlanButtonModifier: ViewModifier {
                         FloatingPlanButton(peek: appState.planButtonPeek) {
                             appState.openPlanPage()
                         }
+                        .debugFloatingFrame("plan_button")
                         .padding(.trailing, FloatingSearchButtonMetrics.trailingPadding)
                         .padding(.bottom, FloatingSearchButtonMetrics.bottomPadding)
                     }
@@ -140,7 +141,11 @@ private struct PlanChatStack: View {
     var body: some View {
         @Bindable var assistant = appState.assistant
         NavigationStack(path: $assistant.pagePath) {
-            PlanChatView()
+            // The chat, its composer, chips, working line and Undo card keep clear of the fold and
+            // the camera housings (iPhone Duo; nothing to avoid on other iPhones).
+            ReservedRegionAvoiding {
+                PlanChatView()
+            }
                 .navigationTitle("My Plan")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { PageCloseItem() }
@@ -149,6 +154,9 @@ private struct PlanChatStack: View {
                 }
                 .navigationDestination(for: Location.self) { location in
                     LocationDetailView(location: location)
+                }
+                .navigationDestination(for: HeartedListRoute.self) { route in
+                    HeartedListView(savedPlacesOnly: route.savedPlacesOnly)
                 }
         }
     }
@@ -179,44 +187,6 @@ private struct LastComponentPane: View {
     }
 }
 
-/// The plan page in its own navigation stack (item details pushed from the page).
-private struct PlanPageStack: View {
-    /// Phones: the dock (results, pills, bottom bar, text box) on the keyboard. Wide: only the
-    /// bottom bar (the chat column has the text box).
-    let showsDock: Bool
-
-    @Environment(AppState.self) private var appState
-    @State private var available: CGFloat = 700
-
-    var body: some View {
-        @Bindable var assistant = appState.assistant
-        NavigationStack(path: $assistant.pagePath) {
-            PlanPageView()
-                .navigationTitle("My Plan")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    if showsDock { PageCloseItem() }
-                }
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    VStack(spacing: 8) {
-                        PlanBottomBar()
-                        if showsDock {
-                            PlanDockView(maxPaneHeight: max(160, available / 3))
-                        }
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, showsDock ? 0 : 10)
-                }
-                .navigationDestination(for: SearchTarget.self) { target in
-                    SearchDestinationView(target: target)
-                }
-                .navigationDestination(for: Location.self) { location in
-                    LocationDetailView(location: location)
-                }
-        }
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { available = $0 }
-    }
-}
 
 private struct PageCloseItem: ToolbarContent {
     @Environment(AppState.self) private var appState
@@ -262,128 +232,6 @@ private struct PlanArrangement<Primary: View, Secondary: View>: View {
                     .frame(width: max(320, proxy.size.width * 0.4))
                 Divider()
                 secondary
-            }
-        }
-    }
-}
-
-// MARK: - Dock (phones; the chat column has its own)
-
-private struct PlanDockView: View {
-    let maxPaneHeight: CGFloat
-
-    @Environment(AppState.self) private var appState
-    @FocusState private var inputFocused: Bool
-    @State private var results: [EventSearchResult] = []
-    @State private var resultsQuery: String?
-
-    var body: some View {
-        let assistant = appState.assistant
-        let pane = PlanDock.pane(
-            draft: assistant.draft, resultsQuery: resultsQuery,
-            hasAnswer: assistant.answer != nil, proposalOptions: assistant.proposal?.options.count
-        )
-        VStack(spacing: 8) {
-            switch pane {
-            case .results:
-                ResultsPane(results: results, query: resultsQuery ?? "", maxHeight: maxPaneHeight, focused: $inputFocused)
-                    .transition(.opacity)
-            case .answer:
-                if let answer = assistant.answer {
-                    AnswerCard(turn: answer, maxHeight: maxPaneHeight)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
-            case .none:
-                EmptyView()
-            }
-            DockPills()
-            AssistantInputBar(focused: $inputFocused, onSend: send)
-        }
-        .padding(.bottom, 8)
-        .animation(.snappy, value: pane)
-        .animation(.snappy, value: assistant.answer?.id)
-        .animation(.snappy, value: assistant.proposal)
-        .animation(.snappy, value: assistant.undoPill)
-        .modifier(DockResultsTracking(results: $results, resultsQuery: $resultsQuery))
-        .modifier(DockFocus(focused: $inputFocused))
-    }
-
-    private func send() {
-        let text = appState.assistant.draft
-        appState.assistant.draft = ""
-        resultsQuery = nil
-        results = []
-        appState.assistant.submit(text)
-    }
-}
-
-/// The proposal pill (+ "Also fill this gap?" after a Remove) and the Undo pill.
-private struct DockPills: View {
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        let assistant = appState.assistant
-        if let proposal = assistant.proposal, let preview = assistant.preview {
-            ProposalPill(proposal: proposal, preview: preview)
-            FillGapChips(proposal: proposal)
-        }
-        if let pill = assistant.undoPill {
-            UndoPillView(pill: pill)
-        }
-    }
-}
-
-/// After a row's Remove: "Also fill this gap?" with the gap's ideas (each a new proposal).
-private struct FillGapChips: View {
-    let proposal: PlanProposal
-
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        let assistant = appState.assistant
-        if let bundle = appState.currentBundle, let removal = PlanPage.removal(proposal, bundle, now: .now) {
-            let ideas = PlanPage.fillIdeas(removal.edit, removed: removal.itemId, bundle, appState.likeSet, now: .now)
-            if !ideas.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Also fill this gap?")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    ChipRow(chips: ideas.map { ChipItem(id: String($0), label: bundle.scheduleItem($0)?.name ?? "An item") }) { chip in
-                        guard let id = Int(chip.id) else { return }
-                        let removedName = bundle.scheduleItem(removal.itemId)?.name ?? "it"
-                        let name = bundle.scheduleItem(id)?.name ?? "it"
-                        assistant.proposeEdit([.replace(item: removal.itemId, with: id)], label: "Swap \(removedName) for \(name)")
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 6)
-            }
-        }
-    }
-}
-
-/// The search results for the typed text, debounced; the previous ones stay until then.
-private struct DockResultsTracking: ViewModifier {
-    @Binding var results: [EventSearchResult]
-    @Binding var resultsQuery: String?
-
-    @Environment(AppState.self) private var appState
-
-    func body(content: Content) -> some View {
-        let draft = appState.assistant.draft
-        content.task(id: draft) {
-            let query = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !query.isEmpty else {
-                resultsQuery = nil
-                results = []
-                return
-            }
-            try? await Task.sleep(for: .milliseconds(250))
-            guard !Task.isCancelled, let index = appState.searchIndex else { return }
-            let found = Array(index.search(query, now: .now).prefix(8))
-            withAnimation(.snappy) {
-                results = found
-                resultsQuery = query
             }
         }
     }
@@ -489,6 +337,7 @@ private struct PlanChatView: View {
                     .padding(.horizontal, 6)
                 }
                 AssistantInputBar(focused: $inputFocused, onSend: send)
+                    .debugFloatingFrame("composer")
             }
             .padding(.horizontal, 10)
             .padding(.bottom, 8)
@@ -650,213 +499,12 @@ struct AssistantInputBar: View {
 
 // MARK: - Results pane
 
-/// Results as you type (nothing is sent; Return runs the full turn), with inline plan actions.
-private struct ResultsPane: View {
-    let results: [EventSearchResult]
-    let query: String
-    let maxHeight: CGFloat
-    var focused: FocusState<Bool>.Binding
-
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        let ctx = appState.assistant.context()
-        ScrollView {
-            VStack(alignment: .leading, spacing: 6) {
-                if results.isEmpty {
-                    Text("Nothing matches “\(query)”. Press Return to ask.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                ForEach(results) { result in
-                    let action = ctx.flatMap { ctx in Self.ref(result.target).flatMap { PlanDock.resultAction($0, ctx) } }
-                    ResultLine(result: result, action: action, focused: focused)
-                    if result.id != results.last?.id { Divider() }
-                }
-            }
-            .padding(12)
-        }
-        .scrollBounceBehavior(.basedOnSize)
-        .frame(maxHeight: maxHeight)
-        .fixedSize(horizontal: false, vertical: true)
-        .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 22))
-    }
-
-    /// Search targets as assistant references (the event itself has no plan action).
-    static func ref(_ target: SearchTarget) -> EntityRef? {
-        switch target {
-        case .location(let id): return EntityRef(kind: .location, id: id)
-        case .scheduleItem(let id): return EntityRef(kind: .schedule, id: id)
-        case .notification(let id): return EntityRef(kind: .update, id: id)
-        case .event: return nil
-        }
-    }
-}
-
-private struct ResultLine: View {
-    let result: EventSearchResult
-    let action: DockResultAction?
-    var focused: FocusState<Bool>.Binding
-
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Button {
-                focused.wrappedValue = false
-                appState.open(result.target)
-            } label: {
-                HeartableResultRow(result: result)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(.rect)
-            }
-            .buttonStyle(.plain)
-            if let action {
-                actionView(action)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func actionView(_ action: DockResultAction) -> some View {
-        switch action {
-        case .inPlan:
-            Image(systemName: action.systemImage)
-                .foregroundStyle(.tint)
-                .accessibilityLabel(action.label)
-        case .addToPlan(let id):
-            Button(action.label, systemImage: action.systemImage) {
-                appState.assistant.draft = ""
-                appState.assistant.addToPlan(id)
-            }
-            .labelStyle(.iconOnly)
-            .font(.title3)
-            .buttonStyle(.plain)
-            .foregroundStyle(.tint)
-            .accessibilityLabel("\(action.label): \(result.title)")
-        case .planAround(let id):
-            Button(action.label, systemImage: action.systemImage) {
-                appState.assistant.draft = ""
-                appState.assistant.planAround(id)
-            }
-            .labelStyle(.iconOnly)
-            .font(.title3)
-            .buttonStyle(.plain)
-            .foregroundStyle(.tint)
-            .accessibilityLabel("\(action.label): \(result.title)")
-        }
-    }
-}
 
 // MARK: - Answer card
 
-/// The last non-edit turn, compact (≤ a third of the window, scrollable inside). Swipe down or ×
-/// dismisses it; results replace it while typing.
-private struct AnswerCard: View {
-    let turn: AssistantController.Turn
-    let maxHeight: CGFloat
-
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        VStack(spacing: 0) {
-            AnswerCardHandle()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(Array(turn.blocks.enumerated()), id: \.offset) { index, block in
-                        AssistantBlockView(block: block, turn: turn, index: index)
-                    }
-                    if turn.streaming && turn.blocks.isEmpty {
-                        HStack(spacing: 10) {
-                            ProgressView()
-                            Text("Thinking on your iPhone…").foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 12)
-            }
-            .scrollBounceBehavior(.basedOnSize)
-        }
-        .frame(maxHeight: maxHeight)
-        .fixedSize(horizontal: false, vertical: true)
-        .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 22))
-        .gesture(DragGesture(minimumDistance: 20).onEnded { value in
-            if value.translation.height > 60 { appState.assistant.dismissAnswer() }
-        })
-        .accessibilityAction(named: "Dismiss") { appState.assistant.dismissAnswer() }
-    }
-}
-
-private struct AnswerCardHandle: View {
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        HStack {
-            Spacer(minLength: 0)
-            Button {
-                appState.assistant.dismissAnswer()
-            } label: {
-                Label("Dismiss", systemImage: "xmark")
-                    .labelStyle(.iconOnly)
-                    .font(.caption.weight(.bold))
-                    .frame(width: 28, height: 28)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 8)
-        .padding(.top, 4)
-    }
-}
 
 // MARK: - Pills
 
-/// The shown proposal: "−2 items, +1 lunch break" with Apply (one option, or each option of a
-/// change such as a shared plan), or "Pick one of 3" when the options are rows; × clears it.
-private struct ProposalPill: View {
-    let proposal: PlanProposal
-    let preview: PlanPreview
-
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        let assistant = appState.assistant
-        HStack(spacing: 8) {
-            Image(systemName: "list.bullet.clipboard")
-                .foregroundStyle(.tint)
-            Text(preview.pill)
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(2)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            if !proposal.hasOptionRows || proposal.options.count == 1 {
-                ForEach(Array(proposal.options.prefix(2).enumerated()), id: \.offset) { index, option in
-                    Button(proposal.options.count == 1 ? "Apply" : option.label) {
-                        assistant.applyProposal(index)
-                    }
-                    .buttonStyle(.glassProminent)
-                    .controlSize(.small)
-                }
-            }
-            Button {
-                assistant.clearProposal()
-            } label: {
-                Label("Cancel", systemImage: "xmark")
-                    .labelStyle(.iconOnly)
-                    .frame(width: 28, height: 28)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-        }
-        .padding(.leading, 14)
-        .padding(.trailing, 8)
-        .padding(.vertical, 6)
-        .glassEffect(.regular.interactive(), in: .capsule)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(proposal.text)
-    }
-}
 
 /// "Removed Velvet Mesquite. · Undo" for ~8 s after a plan change.
 private struct UndoPillView: View {

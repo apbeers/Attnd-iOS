@@ -356,3 +356,150 @@ enum PlanProposals {
         return "Apply"
     }
 }
+
+// MARK: - Sequences ("let's do music, food, then more music")
+
+/// A plan-like sequence of kinds ("music, food, then more music", "tacos then a band", "morning
+/// music, lunch, …") becomes one proposal (owner, Nov 21, 2026): each step filled from the
+/// schedule in order — music = a live-music item in progress or next (later steps: starting after
+/// the previous step), food / drinks = the place nearest the previous step at the next quarter
+/// hour after it (+ 5 min walk), 45 min (lunch before 4 PM, dinner after) — previewed as the plan
+/// with those entries added. Apply adds them (My schedule follows the plan), with Undo. nil: not a
+/// sequence, or a step can't be filled (the router / model answer instead).
+enum SequenceKind: String, Hashable, Sendable {
+    case music, food, drinks
+}
+
+extension PlanProposals {
+    /// The steps of a sequence, or nil (fewer than two, a step that isn't a kind, no "then" / comma).
+    static func sequenceSteps(_ input: String) -> [SequenceKind]? {
+        let lower = " " + input.lowercased() + " "
+        guard lower.contains(" then ") || lower.contains(",") || lower.contains("→") || lower.contains("->") else { return nil }
+        // Normalised text has no punctuation: split on the original's commas and on "then".
+        let raw = input.lowercased()
+            .replacingOccurrences(of: "→", with: ",")
+            .replacingOccurrences(of: "->", with: ",")
+            .replacingOccurrences(of: " and then ", with: ",")
+            .replacingOccurrences(of: " after that ", with: ",")
+            .replacingOccurrences(of: " then ", with: ",")
+            .split(separator: ",")
+            .map { PlanText.normalize(String($0)) }
+            .filter { !$0.isEmpty }
+        guard raw.count >= 2, raw.count <= 6 else { return nil }
+        var steps: [SequenceKind] = []
+        for part in raw {
+            let words = Set(part.split(separator: " ").map(String.init))
+            let fillers: Set<String> = ["lets", "let", "s", "do", "some", "more", "a", "an", "the", "and", "then", "first", "go", "get",
+                                        "grab", "see", "catch", "bit", "of", "to", "for", "with", "i", "we", "want", "like", "maybe",
+                                        "after", "that", "later", "another", "one", "morning", "afternoon", "evening", "night", "finally",
+                                        "end", "start", "live", "good", "great", "something", "quick", "have"]
+            let music: Set<String> = ["music", "band", "bands", "show", "shows", "concert", "concerts", "set", "sets", "gig", "act", "acts", "stage"]
+            let food: Set<String> = ["food", "lunch", "dinner", "tacos", "taco", "bbq", "snack", "snacks", "bite", "meal", "eat", "brunch"]
+            let drinks: Set<String> = ["drinks", "drink", "beer", "beers", "cocktail", "cocktails"]
+            let kind: SequenceKind?
+            if !words.isDisjoint(with: music) { kind = .music }
+            else if !words.isDisjoint(with: food) { kind = .food }
+            else if !words.isDisjoint(with: drinks) { kind = .drinks }
+            else { kind = nil }
+            // Every word must be a kind word or a filler (so "music by Juniper Lane" isn't read as a kind).
+            let known = fillers.union(music).union(food).union(drinks)
+            guard let kind, words.isSubset(of: known) else { return nil }
+            steps.append(kind)
+        }
+        return steps
+    }
+
+    /// The proposal for a sequence typed in the chat (nil: not one, or a step can't be filled).
+    static func sequence(_ input: String, _ ctx: RouterContext) -> PlanProposal? {
+        guard let steps = sequenceSteps(input) else { return nil }
+        let bundle = ctx.bundle
+        let calendar = PlanCalendar.calendar(bundle.event.timeZone)
+        var cursor = ctx.now
+        var lastPlace: Coordinate? = ctx.user
+        var used = Set<Int>()
+        var usedPlaces = Set<Int>()
+        var picked: [PlanEntry] = []
+        var parts: [String] = []
+
+        func isMusic(_ item: ScheduleItem) -> Bool {
+            item.tags.contains { PlanText.normalize($0).contains("music") }
+                || (bundle.location(item.locationId)?.category).map { PlanText.normalize($0) == "stage" } ?? false
+        }
+        func kindMatches(_ location: Location, _ kind: SequenceKind) -> Bool {
+            let texts = ([location.category ?? ""] + location.tags).map(PlanText.normalize)
+            switch kind {
+            case .food: return texts.contains { $0.contains("food") }
+            case .drinks: return texts.contains { $0.contains("drink") || $0.contains("beer") }
+            case .music: return false
+            }
+        }
+        func clock(_ date: Date) -> String { AssistantText.format(date, "h:mm a", bundle.event.timeZone, ctx.locale) }
+
+        for (index, step) in steps.enumerated() {
+            switch step {
+            case .music:
+                let candidates = bundle.schedule.filter { item in
+                    guard let start = item.startTime, !used.contains(item.id), isMusic(item),
+                          let end = ScheduleTiming.effectiveEnd(of: item), end > cursor else { return false }
+                    // The first step may be on already; later ones start after the previous step.
+                    return index == 0 ? start >= cursor || ScheduleTiming.isHappening(item, at: cursor) : start >= cursor
+                }
+                guard let item = candidates.min(by: { ($0.startTime!, $0.id) < ($1.startTime!, $1.id) }),
+                      let start = item.startTime, let end = ScheduleTiming.effectiveEnd(of: item) else { return nil }
+                used.insert(item.id)
+                picked.append(.item(PlannedItem(itemId: item.id, start: start, end: end, reason: "In your sequence",
+                                                walkMinutes: nil, alternatives: [], orInstead: [])))
+                parts.append("**\(item.name)** (\(clock(start)))")
+                cursor = end
+                if let c = bundle.location(item.locationId)?.coordinate { lastPlace = c }
+            case .food, .drinks:
+                let places = bundle.locations.filter { kindMatches($0, step) && !usedPlaces.contains($0.id) }
+                guard !places.isEmpty else { return nil }
+                let place = places.min { a, b in
+                    let da = lastPlace.flatMap { p in a.coordinate.map { Planner.distance(p, $0) } } ?? .infinity
+                    let db = lastPlace.flatMap { p in b.coordinate.map { Planner.distance(p, $0) } } ?? .infinity
+                    return da != db ? da < db : (a.sortOrder, a.id) < (b.sortOrder, b.id)
+                }!
+                usedPlaces.insert(place.id)
+                // The next quarter hour after the previous step and a short walk.
+                let earliest = cursor.addingTimeInterval(5 * 60)
+                let minute = calendar.component(.minute, from: earliest)
+                let second = calendar.component(.second, from: earliest)
+                let roundUp = (15 - minute % 15) % 15
+                var start = earliest.addingTimeInterval(TimeInterval(roundUp * 60 - second))
+                if start < earliest { start = start.addingTimeInterval(15 * 60) }
+                let end = start.addingTimeInterval(TimeInterval(MySchedule.defaultMinutes * 60))
+                let hour = calendar.component(.hour, from: start)
+                picked.append(.meal(MealBreak(kind: hour < 16 ? .lunch : .dinner, start: start, end: end, locationId: place.id)))
+                parts.append("**\(place.name)** at \(clock(start))")
+                cursor = end
+                if let c = place.coordinate { lastPlace = c }
+            }
+        }
+        let before = ctx.plan ?? emptyPlan(eventId: bundle.event.id, createdAt: ctx.now)
+        var after = before
+        for entry in picked {
+            let date = PlanDate(entry.start, in: calendar)
+            if case .item(let planned) = entry, after.itemIds.contains(planned.itemId) { continue }
+            if let i = after.days.firstIndex(where: { $0.date == date }) {
+                after.days[i].entries.append(entry)
+                after.days[i].entries.sort { ($0.start, $0.end) < ($1.start, $1.end) }
+                after.days[i].windowStart = min(after.days[i].windowStart, entry.start)
+                after.days[i].windowEnd = max(after.days[i].windowEnd, entry.end)
+            } else {
+                after.days.append(PlanDay(date: date, windowStart: entry.start, windowEnd: entry.end, entries: [entry]))
+                after.days.sort { $0.date < $1.date }
+            }
+            if case .item(let planned) = entry, let item = bundle.scheduleItem(planned.itemId) {
+                after.fingerprints[planned.itemId] = Planner.fingerprint(item)
+            }
+        }
+        if after.request.isEmpty { after.request = input }
+        let edit = PlanEdit(before: before, after: after, diff: PlanDiff.between(before, after, bundle), notes: [])
+        let text = parts.count == 2
+            ? "\(parts[0]), then \(parts[1])."
+            : parts.dropLast().joined(separator: ", ") + ", then " + parts.last! + "."
+        let option = ProposalOption(label: "Add to My Schedule", apply: .newPlan(after), edit: edit)
+        return PlanProposal(kind: .add, text: text.prefix(1).uppercased() + text.dropFirst(), options: [option])
+    }
+}

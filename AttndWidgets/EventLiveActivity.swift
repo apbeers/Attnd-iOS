@@ -1,16 +1,28 @@
 // EventLiveActivity.swift
-// AttndWidgets (widget extension)
+// AttndWidgets, AttndClipWidgets (widget extensions)
 //
 // "Follow on Lock Screen": the event's Live Activity (shared spec §8). The app starts and
 // updates it (LiveFollowController); the server only pushes urgent announcements (API-011).
 //
-//   - Lock Screen (and StandBy): urgent block first, then Now (with a progress bar that
-//     ticks by itself), Up next (live countdown, walk minutes, location) and the one after;
-//     "Gates open in …" before the event; an end-of-day summary. Buttons: Heart (current),
-//     Skip (next), Map (opens the map with the walking route).
-//   - Dynamic Island: compact (icon + countdown), minimal (icon or progress ring),
-//     expanded (now / next, countdown, buttons; the urgent block when there is one).
-//   - Apple Watch Smart Stack and CarPlay: the small family (`supplementalActivityFamilies`).
+// Now and Next are always shown together (owner, Nov 21, 2026): Now = My schedule's entry in
+// progress, else what's on at the event ("At the event"); Next = My schedule's next entry, else
+// the event's. Between entries "Free until 3:00 · Next: X at Y"; before the gates "Gates open
+// 10:00 · First: X". An urgent announcement always comes first.
+//
+//   - Lock Screen (and StandBy): urgent block, Now (progress that ticks by itself), Next
+//     (place, start time, live countdown, "↗ 0.4 mi · 8 min walk" from the last position, which
+//     the app computed: the activity can't read location), "Then: X", buttons Skip and Map.
+//     No Add / heart button (owner).
+//   - Dynamic Island: compact leading = Now's name (short), trailing = Next's countdown (or its
+//     clock time where the island is narrow, iPhone Duo's vertical island); minimal = a progress
+//     ring; expanded = Now on top, Next with countdown, direction and walk, then the buttons.
+//     The compact trailing region is never empty (iOS 27–27.2 layout bug on iPhone Duo).
+//   - Apple Watch Smart Stack and CarPlay: the small family, two lines (Now / Next).
+//
+// Colours (API-023, `attributes.theme`): primary for progress, buttons and the island's tint,
+// secondary for soft backgrounds, tertiary for highlights (the "Now" label, the countdown), each
+// with its light and dark variant; without a theme the event's accent, else the brand purple.
+// Urgent stays red.
 //
 // Countdowns and progress use `Text(timerInterval:)` / `ProgressView(timerInterval:)`, so they
 // keep ticking between updates. Links (`widgetURL`, `Link`) are `attnd-live://event/<id>/…`
@@ -26,7 +38,7 @@ struct EventLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: EventActivityAttributes.self) { context in
             LockScreenActivityView(context: context)
-                .activitySystemActionForegroundColor(ActivityStyle.accent(context.attributes))
+                .activitySystemActionForegroundColor(ActivityPalette(context.attributes, dark: false).primary)
                 .widgetURL(ActivityStyle.primaryURL(context))
         } dynamicIsland: { context in
             DynamicIsland {
@@ -40,14 +52,15 @@ struct EventLiveActivity: Widget {
                     ExpandedBottomView(context: context)
                 }
             } compactLeading: {
-                CompactLeadingView(context: context)
+                CompactLeadingSelector(context: context)
             } compactTrailing: {
                 CompactTrailingSelector(context: context)
             } minimal: {
                 MinimalView(context: context)
             }
             .widgetURL(ActivityStyle.primaryURL(context))
-            .keylineTint(ActivityStyle.accent(context.attributes))
+            // The island is always dark.
+            .keylineTint(ActivityPalette(context.attributes, dark: true).primary)
         }
         // Apple Watch Smart Stack and CarPlay use the small family.
         .supplementalActivityFamilies([.small])
@@ -58,19 +71,48 @@ struct EventLiveActivity: Widget {
 
 private typealias Context = ActivityViewContext<EventActivityAttributes>
 
-private enum ActivityStyle {
-    /// The event's accent (`#RRGGBB`), else the brand purple from the asset catalog.
-    static func accent(_ attributes: EventActivityAttributes) -> Color {
-        guard var hex = attributes.accentHex?.trimmingCharacters(in: .whitespaces) else { return Color.accentColor }
+/// The activity's colours for one appearance (API-023).
+private struct ActivityPalette {
+    var primary: Color
+    var soft: Color
+    var highlight: Color
+
+    init(_ attributes: EventActivityAttributes, dark: Bool) {
+        let accent = Self.color(attributes.accentHex) ?? Color.accentColor
+        let theme = attributes.theme
+        let main = Self.color(theme?.hex(\.primary, dark: dark)) ?? accent
+        primary = main
+        soft = Self.color(theme?.hex(\.secondary, dark: dark)).map { $0.opacity(dark ? 0.35 : 0.5) }
+            ?? main.opacity(0.12)
+        highlight = Self.color(theme?.hex(\.tertiary, dark: dark)) ?? main
+    }
+
+    /// `#RRGGBB` → a colour; nil for anything else.
+    static func color(_ hex: String?) -> Color? {
+        guard var hex = hex?.trimmingCharacters(in: .whitespaces) else { return nil }
         if hex.hasPrefix("#") { hex.removeFirst() }
-        guard hex.count == 6, let value = UInt32(hex, radix: 16) else { return Color.accentColor }
+        guard hex.count == 6, let value = UInt32(hex, radix: 16) else { return nil }
         return Color(
             red: Double((value >> 16) & 0xFF) / 255,
             green: Double((value >> 8) & 0xFF) / 255,
             blue: Double(value & 0xFF) / 255
         )
     }
+}
 
+/// The palette for the current appearance (Lock Screen, StandBy, Watch follow it).
+private struct PaletteReader<Content: View>: View {
+    let attributes: EventActivityAttributes
+    @ViewBuilder var content: (ActivityPalette) -> Content
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        content(ActivityPalette(attributes, dark: colorScheme == .dark))
+    }
+}
+
+private enum ActivityStyle {
     /// "7:30 PM" in the event's time zone.
     static func clock(_ date: Date, _ attributes: EventActivityAttributes) -> String {
         var style = Date.FormatStyle.dateTime.hour().minute()
@@ -78,27 +120,63 @@ private enum ActivityStyle {
         return date.formatted(style)
     }
 
-    /// The whole activity opens Updates at the urgent announcement, else the item in
-    /// progress, else the next one, else My plan (when it follows the plan), else Updates.
+    /// "3:00" (no AM/PM): the narrow places.
+    static func shortClock(_ date: Date, _ attributes: EventActivityAttributes) -> String {
+        var style = Date.FormatStyle.dateTime.hour(.defaultDigits(amPM: .omitted)).minute()
+        style.timeZone = TimeZone(identifier: attributes.timeZoneIdentifier) ?? .current
+        return date.formatted(style)
+    }
+
+    /// The whole activity opens Updates at the urgent announcement, else Now, else Next, else
+    /// My plan (when it follows the plan), else Updates.
     static func primaryURL(_ context: Context) -> URL {
         let eventId = context.attributes.eventId
         let state = context.state
         if let id = state.urgent?.id { return LiveActivityLink.updates(notificationId: id).url(eventId: eventId) }
-        if let id = state.current?.id ?? state.next?.id { return LiveActivityLink.item(id).url(eventId: eventId) }
+        if let link = state.current?.link ?? state.next?.link { return link.url(eventId: eventId) }
         if state.followsPlan == true { return LiveActivityLink.plan.url(eventId: eventId) }
         return LiveActivityLink.updates(notificationId: nil).url(eventId: eventId)
     }
 
-    /// The item the Heart button acts on: in progress, else the next one.
-    static func heartTarget(_ state: EventActivityAttributes.ContentState) -> EventActivityAttributes.Slot? {
-        state.current ?? state.next
-    }
-
+    /// "7:30 PM · Main Stage".
     static func placeLine(_ slot: EventActivityAttributes.Slot, _ attributes: EventActivityAttributes) -> String {
         var parts: [String] = []
         if let start = slot.start { parts.append(clock(start, attributes)) }
-        if let location = slot.location, !location.isEmpty { parts.append(location) }
+        if let location = slot.location, !location.isEmpty, location != slot.name { parts.append(location) }
         return parts.joined(separator: " · ")
+    }
+
+    /// "Free until 3:00 · Next: X at Y" / "Gates open 10:00 · First: X", nil otherwise.
+    static func gapLine(_ state: EventActivityAttributes.ContentState, _ attributes: EventActivityAttributes) -> String? {
+        if let opens = state.opensAt {
+            var text = "Gates open \(shortClock(opens, attributes))"
+            if let name = state.next?.name { text += " · First: \(name)" }
+            return text
+        }
+        if let free = state.freeUntil, let next = state.next {
+            var text = "Free until \(shortClock(free, attributes)) · Next: \(next.name ?? "")"
+            if let place = next.location, !place.isEmpty, place != next.name { text += " at \(place)" }
+            return text
+        }
+        return nil
+    }
+
+    /// "Now" or "At the event".
+    static func nowLabel(_ state: EventActivityAttributes.ContentState) -> String {
+        state.nowIsFromEvent ? "At the event" : "Now"
+    }
+
+    /// The first word or two of a name, for the compact island (≤ 12 characters).
+    static func short(_ name: String?) -> String {
+        guard let name, !name.isEmpty else { return "" }
+        if name.count <= 12 { return name }
+        var result = ""
+        for word in name.split(separator: " ") {
+            let candidate = result.isEmpty ? String(word) : result + " " + word
+            if candidate.count > 12 { break }
+            result = candidate
+        }
+        return result.isEmpty ? String(name.prefix(11)) + "…" : result
     }
 }
 
@@ -126,6 +204,28 @@ private struct SlotProgress: View {
             }
             .tint(tint)
         }
+    }
+}
+
+/// "↗ 0.4 mi · 8 min walk" (north-relative arrow), VoiceOver "Northeast, 0.4 miles, 8 min walk".
+private struct DirectionLine: View {
+    let state: EventActivityAttributes.ContentState
+
+    var body: some View {
+        if let line = state.nextDirectionLine {
+            Text(line)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .accessibilityLabel(accessibility)
+        }
+    }
+
+    private var accessibility: String {
+        var parts: [String] = []
+        if let label = state.nextDirectionLabel { parts.append(label) }
+        if let walk = state.walkMinutesToNext { parts.append("\(walk) min walk") }
+        return parts.joined(separator: ", ")
     }
 }
 
@@ -172,21 +272,17 @@ private struct UrgentBlock: View {
     }
 }
 
-// MARK: - Buttons
+// MARK: - Buttons (Skip, Map)
 
 private struct ActivityButtons: View {
     let context: Context
+    let palette: ActivityPalette
 
     var body: some View {
         let state = context.state
         let eventId = context.attributes.eventId
         HStack(spacing: 8) {
-            if let target = ActivityStyle.heartTarget(state), let id = target.id {
-                Button(intent: HeartActivityItemIntent(eventId: eventId, itemId: id)) {
-                    Label(target.hearted == true ? "In My Schedule" : "Add", systemImage: target.hearted == true ? "checkmark.circle.fill" : "plus.circle")
-                }
-            }
-            if let next = state.next, let id = next.id {
+            if let next = state.next, !next.isPlace, let id = next.id {
                 Button(intent: SkipActivityItemIntent(eventId: eventId, itemId: id)) {
                     Label("Skip", systemImage: "forward")
                 }
@@ -199,7 +295,7 @@ private struct ActivityButtons: View {
         }
         .font(.caption.weight(.semibold))
         .buttonStyle(.bordered)
-        .tint(ActivityStyle.accent(context.attributes))
+        .tint(palette.primary)
     }
 }
 
@@ -211,27 +307,33 @@ private struct LockScreenActivityView: View {
     @Environment(\.activityFamily) private var family
 
     var body: some View {
-        switch family {
-        case .small:
-            SmallActivityView(context: context)
-        case .medium:
-            fullView
-        @unknown default:
-            fullView
+        PaletteReader(attributes: context.attributes) { palette in
+            switch family {
+            case .small:
+                SmallActivityView(context: context, palette: palette)
+            case .medium:
+                FullActivityView(context: context, palette: palette)
+            @unknown default:
+                FullActivityView(context: context, palette: palette)
+            }
         }
     }
+}
 
-    private var fullView: some View {
+private struct FullActivityView: View {
+    let context: Context
+    let palette: ActivityPalette
+
+    var body: some View {
         let attributes = context.attributes
         let state = context.state
-        let accent = ActivityStyle.accent(attributes)
-        return VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 8) {
             if let urgent = state.urgent {
                 UrgentBlock(urgent: urgent, eventId: attributes.eventId)
             }
             HStack(spacing: 6) {
                 Image(systemName: state.followSymbol)
-                    .foregroundStyle(accent)
+                    .foregroundStyle(palette.primary)
                     .accessibilityHidden(true)
                 Text(attributes.eventName)
                     .font(.caption.weight(.semibold))
@@ -254,64 +356,82 @@ private struct LockScreenActivityView: View {
                     }
                 }
             } else {
+                if let gap = ActivityStyle.gapLine(state, attributes) {
+                    Text(gap)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(palette.highlight)
+                        .lineLimit(1)
+                }
                 if let current = state.current {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(alignment: .firstTextBaseline) {
-                            Text("Now")
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(accent)
-                            Text(current.name ?? "")
-                                .font(.headline)
-                                .lineLimit(1)
-                            Spacer(minLength: 4)
-                            if let end = current.effectiveEnd {
-                                Text("ends \(ActivityStyle.clock(end, attributes))")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        SlotProgress(slot: current, tint: accent)
-                    }
+                    NowRow(current: current, state: state, attributes: attributes, palette: palette)
                 }
                 if let next = state.next {
-                    NextRow(next: next, walkMinutes: state.walkMinutesToNext, late: state.lateText, attributes: attributes)
-                } else if let opens = state.opensAt {
-                    HStack {
-                        Text("Gates open in")
-                            .font(.subheadline)
-                        Countdown(date: opens)
-                            .font(.headline)
-                    }
+                    NextRow(next: next, state: state, attributes: attributes, palette: palette)
                 }
                 if let after = state.after, let name = after.name, state.urgent == nil {
-                    Text("Then \(after.start.map { ActivityStyle.clock($0, attributes) } ?? "") \(name)")
+                    Text("Then: \(after.start.map { ActivityStyle.clock($0, attributes) + " " } ?? "")\(name)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
-                ActivityButtons(context: context)
+                ActivityButtons(context: context, palette: palette)
             }
         }
         .padding(14)
     }
 }
 
+private struct NowRow: View {
+    let current: EventActivityAttributes.Slot
+    let state: EventActivityAttributes.ContentState
+    let attributes: EventActivityAttributes
+    let palette: ActivityPalette
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(ActivityStyle.nowLabel(state))
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(palette.highlight)
+                Text(current.name ?? "")
+                    .font(.headline)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if let end = current.effectiveEnd {
+                    Text("ends \(ActivityStyle.clock(end, attributes))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            if let place = current.location, !place.isEmpty, place != current.name {
+                Text(place)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            SlotProgress(slot: current, tint: palette.primary)
+        }
+        .padding(8)
+        .background(palette.soft, in: .rect(cornerRadius: 12))
+    }
+}
+
 private struct NextRow: View {
     let next: EventActivityAttributes.Slot
-    let walkMinutes: Int?
-    /// "Leave now" / "Running late" (assistant spec §6), nil when on time.
-    var late: String? = nil
+    let state: EventActivityAttributes.ContentState
     let attributes: EventActivityAttributes
+    let palette: ActivityPalette
 
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
-                if let late {
+                if let late = state.lateText {
                     Label(late, systemImage: "figure.walk.motion")
                         .font(.caption.weight(.bold))
                         .foregroundStyle(.orange)
                 } else {
-                    Text("Up next")
+                    Text(state.nextSource == "event" && state.nowSource != "event" ? "Next at the event" : "Up next")
                         .font(.caption.weight(.bold))
                         .foregroundStyle(.secondary)
                 }
@@ -322,33 +442,29 @@ private struct NextRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                DirectionLine(state: state)
             }
             Spacer(minLength: 4)
-            VStack(alignment: .trailing, spacing: 2) {
-                if let start = next.start {
-                    Countdown(date: start)
-                        .font(.title3.weight(.semibold))
-                        .multilineTextAlignment(.trailing)
-                        .frame(maxWidth: 96, alignment: .trailing)
-                }
-                if let walkMinutes {
-                    Label("\(walkMinutes) min walk", systemImage: "figure.walk")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+            if let start = next.start {
+                Countdown(date: start)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(palette.highlight)
+                    .multilineTextAlignment(.trailing)
+                    .frame(maxWidth: 96, alignment: .trailing)
             }
         }
     }
 }
 
-/// Apple Watch Smart Stack / CarPlay: one line of each.
+/// Apple Watch Smart Stack / CarPlay: two lines, Now and Next.
 private struct SmallActivityView: View {
     let context: Context
+    let palette: ActivityPalette
 
     var body: some View {
         let state = context.state
         let attributes = context.attributes
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 3) {
             if let urgent = state.urgent {
                 Label(urgent.title ?? "Urgent update", systemImage: "exclamationmark.triangle.fill")
                     .font(.headline)
@@ -357,29 +473,35 @@ private struct SmallActivityView: View {
             } else if state.dayComplete == true {
                 Text("That's a wrap for today")
                     .font(.headline)
-            } else if let next = state.next {
-                Text(next.name ?? "Up next")
-                    .font(.headline)
-                    .lineLimit(1)
-                HStack(spacing: 4) {
-                    Countdown(date: next.start ?? .now)
-                    if let location = next.location {
-                        Text("· \(location)")
+            } else {
+                if let current = state.current {
+                    HStack(spacing: 4) {
+                        Text(state.nowIsFromEvent ? "Event" : "Now")
+                            .foregroundStyle(palette.highlight)
+                        Text(current.name ?? "")
                             .lineLimit(1)
                     }
+                    .font(.caption.weight(.semibold))
+                    SlotProgress(slot: current, tint: palette.primary)
+                } else if let gap = ActivityStyle.gapLine(state, attributes) {
+                    Text(gap)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(palette.highlight)
+                        .lineLimit(1)
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            } else if let current = state.current {
-                Text(current.name ?? "Now")
-                    .font(.headline)
-                    .lineLimit(1)
-                SlotProgress(slot: current, tint: ActivityStyle.accent(attributes))
-            } else if let opens = state.opensAt {
-                Text("Gates open")
-                    .font(.headline)
-                Countdown(date: opens)
+                if let next = state.next {
+                    HStack(spacing: 4) {
+                        Text(next.name ?? "Next")
+                            .lineLimit(1)
+                        Spacer(minLength: 2)
+                        if let start = next.start {
+                            Countdown(date: start)
+                                .foregroundStyle(palette.highlight)
+                                .frame(maxWidth: 52, alignment: .trailing)
+                        }
+                    }
                     .font(.caption)
+                }
             }
         }
         .padding(8)
@@ -388,24 +510,53 @@ private struct SmallActivityView: View {
 
 // MARK: - Dynamic Island
 
-private struct CompactLeadingView: View {
+/// Leading: Now's name (short); an icon where the island is narrow (iPhone Duo).
+private struct CompactLeadingSelector: View {
     let context: Context
 
     var body: some View {
-        if context.state.urgent != nil {
+        #if IOS27_SDK
+        if #available(iOS 27.0, *) {
+            WidthAwareCompactLeading(context: context)
+        } else {
+            CompactLeadingView(context: context, narrow: false)
+        }
+        #else
+        CompactLeadingView(context: context, narrow: false)
+        #endif
+    }
+}
+
+private struct CompactLeadingView: View {
+    let context: Context
+    let narrow: Bool
+
+    var body: some View {
+        let state = context.state
+        let palette = ActivityPalette(context.attributes, dark: true)
+        if state.urgent != nil {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.red)
                 .accessibilityLabel("Urgent update")
+        } else if let current = state.current, !narrow {
+            Text(ActivityStyle.short(current.name))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(palette.highlight)
+                .lineLimit(1)
+                .frame(maxWidth: 84, alignment: .leading)
+                .accessibilityLabel("\(ActivityStyle.nowLabel(state)): \(current.name ?? "")")
+        } else if let current = state.current {
+            MinimalProgress(slot: current, tint: palette.primary)
+                .accessibilityLabel("\(ActivityStyle.nowLabel(state)): \(current.name ?? "")")
         } else {
-            Image(systemName: context.state.followSymbol)
-                .foregroundStyle(ActivityStyle.accent(context.attributes))
+            Image(systemName: state.followSymbol)
+                .foregroundStyle(palette.primary)
                 .accessibilityLabel(context.attributes.eventName)
         }
     }
 }
 
-/// iOS 27 narrows the Dynamic Island in landscape (`isDynamicIslandLimitedInWidth`): an icon
-/// instead of the countdown there.
+/// Trailing: Next's countdown; Next's clock time where the island is narrow.
 private struct CompactTrailingSelector: View {
     let context: Context
 
@@ -414,15 +565,26 @@ private struct CompactTrailingSelector: View {
         if #available(iOS 27.0, *) {
             WidthAwareCompactTrailing(context: context)
         } else {
-            CompactTrailingView(context: context)
+            CompactTrailingView(context: context, narrow: false)
         }
         #else
-        CompactTrailingView(context: context)
+        CompactTrailingView(context: context, narrow: false)
         #endif
     }
 }
 
 #if IOS27_SDK
+@available(iOS 27.0, *)
+private struct WidthAwareCompactLeading: View {
+    let context: Context
+
+    @Environment(\.isDynamicIslandLimitedInWidth) private var isLimitedInWidth
+
+    var body: some View {
+        CompactLeadingView(context: context, narrow: isLimitedInWidth)
+    }
+}
+
 @available(iOS 27.0, *)
 private struct WidthAwareCompactTrailing: View {
     let context: Context
@@ -430,40 +592,47 @@ private struct WidthAwareCompactTrailing: View {
     @Environment(\.isDynamicIslandLimitedInWidth) private var isLimitedInWidth
 
     var body: some View {
-        if isLimitedInWidth {
-            MinimalView(context: context)
-        } else {
-            CompactTrailingView(context: context)
-        }
+        CompactTrailingView(context: context, narrow: isLimitedInWidth)
     }
 }
 #endif
 
 private struct CompactTrailingView: View {
     let context: Context
+    let narrow: Bool
 
     var body: some View {
         let state = context.state
+        let attributes = context.attributes
+        let palette = ActivityPalette(attributes, dark: true)
         if state.urgent != nil {
-            Text("Urgent")
+            Text(narrow ? "!" : "Urgent")
                 .font(.caption2.weight(.bold))
                 .foregroundStyle(.red)
         } else if let start = state.next?.start {
-            Countdown(date: start)
-                .frame(maxWidth: 52)
-                .font(.caption.weight(.semibold))
-                .multilineTextAlignment(.trailing)
+            Group {
+                if narrow {
+                    Text(ActivityStyle.shortClock(start, attributes))
+                } else {
+                    Countdown(date: start)
+                        .frame(maxWidth: 52)
+                        .multilineTextAlignment(.trailing)
+                }
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(palette.highlight)
+            .accessibilityLabel("Next: \(state.next?.name ?? "") at \(ActivityStyle.clock(start, attributes))")
         } else if let current = state.current {
-            MinimalProgress(slot: current, tint: ActivityStyle.accent(context.attributes))
+            MinimalProgress(slot: current, tint: palette.primary)
         } else if let opens = state.opensAt {
-            Countdown(date: opens)
-                .frame(maxWidth: 52)
+            Text(ActivityStyle.shortClock(opens, attributes))
                 .font(.caption.weight(.semibold))
+                .foregroundStyle(palette.highlight)
         } else {
             // Never an empty region: on iOS 27–27.2 an empty compact trailing view breaks the
             // layout where `isDynamicIslandLimitedInWidth` is true (iPhone Duo).
             Image(systemName: state.followSymbol)
-                .foregroundStyle(ActivityStyle.accent(context.attributes))
+                .foregroundStyle(palette.primary)
         }
     }
 }
@@ -473,14 +642,15 @@ private struct MinimalView: View {
 
     var body: some View {
         let state = context.state
+        let palette = ActivityPalette(context.attributes, dark: true)
         if state.urgent != nil {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.red)
         } else if let current = state.current {
-            MinimalProgress(slot: current, tint: ActivityStyle.accent(context.attributes))
+            MinimalProgress(slot: current, tint: palette.primary)
         } else {
             Image(systemName: state.followSymbol)
-                .foregroundStyle(ActivityStyle.accent(context.attributes))
+                .foregroundStyle(palette.primary)
         }
     }
 }
@@ -512,14 +682,20 @@ private struct ExpandedLeadingView: View {
 
     var body: some View {
         let state = context.state
+        let palette = ActivityPalette(context.attributes, dark: true)
         VStack(alignment: .leading, spacing: 2) {
             if let current = state.current {
-                Text("Now")
+                Text(ActivityStyle.nowLabel(state))
                     .font(.caption2.weight(.bold))
-                    .foregroundStyle(ActivityStyle.accent(context.attributes))
+                    .foregroundStyle(palette.highlight)
                 Text(current.name ?? "")
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
+            } else if let gap = ActivityStyle.gapLine(state, context.attributes) {
+                Text(gap)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(palette.highlight)
+                    .lineLimit(2)
             } else {
                 Text(context.attributes.eventName)
                     .font(.caption.weight(.semibold))
@@ -535,6 +711,7 @@ private struct ExpandedTrailingView: View {
 
     var body: some View {
         let state = context.state
+        let palette = ActivityPalette(context.attributes, dark: true)
         VStack(alignment: .trailing, spacing: 2) {
             if let start = state.next?.start {
                 Text("Next in")
@@ -542,6 +719,7 @@ private struct ExpandedTrailingView: View {
                     .foregroundStyle(.secondary)
                 Countdown(date: start)
                     .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(palette.highlight)
                     .multilineTextAlignment(.trailing)
                     .frame(maxWidth: 80, alignment: .trailing)
             } else if let opens = state.opensAt {
@@ -550,7 +728,11 @@ private struct ExpandedTrailingView: View {
                     .foregroundStyle(.secondary)
                 Countdown(date: opens)
                     .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(palette.highlight)
                     .frame(maxWidth: 80, alignment: .trailing)
+            } else {
+                Image(systemName: state.followSymbol)
+                    .foregroundStyle(palette.primary)
             }
         }
         .padding(.trailing, 4)
@@ -563,7 +745,8 @@ private struct ExpandedBottomView: View {
     var body: some View {
         let state = context.state
         let attributes = context.attributes
-        VStack(alignment: .leading, spacing: 8) {
+        let palette = ActivityPalette(attributes, dark: true)
+        VStack(alignment: .leading, spacing: 6) {
             if let urgent = state.urgent {
                 UrgentBlock(urgent: urgent, eventId: attributes.eventId, compact: true)
             } else if state.dayComplete == true {
@@ -571,29 +754,66 @@ private struct ExpandedBottomView: View {
                     .font(.headline)
             } else {
                 if let current = state.current {
-                    SlotProgress(slot: current, tint: ActivityStyle.accent(attributes))
+                    SlotProgress(slot: current, tint: palette.primary)
                 }
                 if let next = state.next {
-                    HStack(spacing: 6) {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(next.name ?? "")
-                                .font(.subheadline.weight(.semibold))
-                                .lineLimit(1)
-                            Text(ActivityStyle.placeLine(next, attributes))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                        Spacer(minLength: 4)
-                        if let walk = state.walkMinutesToNext {
-                            Label("\(walk) min", systemImage: "figure.walk")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(next.name ?? "")
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                        Text(ActivityStyle.placeLine(next, attributes))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        DirectionLine(state: state)
                     }
                 }
-                ActivityButtons(context: context)
+                if let after = state.after, let name = after.name {
+                    Text("Then: \(name)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                ActivityButtons(context: context, palette: palette)
             }
         }
     }
 }
+
+#if DEBUG
+// Previews: Lock Screen and the island's presentations, with and without a theme.
+private let previewAttributes = EventActivityAttributes(
+    eventId: 1, eventName: "Prairie Fest", accentHex: "#431F86",
+    timeZoneIdentifier: "America/Chicago", dayStart: .now,
+    theme: .init(light: .init(primary: "#0B6E4F", secondary: "#CDEBDD", tertiary: "#C4471B"),
+                 dark: .init(primary: "#5FD3A6", secondary: "#173B2E", tertiary: "#FF9A6B"))
+)
+
+private let previewState = EventActivityAttributes.ContentState(
+    current: .init(id: 2, name: "Juniper Lane", location: "Main Stage", locationId: 10,
+                   start: .now.addingTimeInterval(-1200), end: .now.addingTimeInterval(1800)),
+    next: .init(id: 4, name: "Midnight Choir", location: "Barn Stage", locationId: 11,
+                start: .now.addingTimeInterval(2400), end: .now.addingTimeInterval(6000)),
+    after: .init(id: 5, name: "Late Set", start: .now.addingTimeInterval(9000)),
+    walkMinutesToNext: 8, nowSource: "event", nextSource: "schedule",
+    nextPoint: 1, nextDistance: "0.4 mi", nextDirectionLabel: "Northeast, 0.4 miles"
+)
+
+#Preview("Lock Screen", as: .content, using: previewAttributes) {
+    EventLiveActivity()
+} contentStates: {
+    previewState
+}
+
+#Preview("Compact", as: .dynamicIsland(.compact), using: previewAttributes) {
+    EventLiveActivity()
+} contentStates: {
+    previewState
+}
+
+#Preview("Expanded", as: .dynamicIsland(.expanded), using: previewAttributes) {
+    EventLiveActivity()
+} contentStates: {
+    previewState
+}
+#endif

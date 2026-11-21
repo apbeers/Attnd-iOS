@@ -51,6 +51,8 @@ struct AppRootView: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
+        // Debug / Dev builds: the reserved-region audit (-AttndDebugRegions YES).
+        .overlay { ReservedRegionDebugOverlay() }
         .animation(.easeInOut, value: isLaunching)
         .animation(.easeInOut, value: appState.currentEvent?.id)
         .animation(.easeInOut, value: appState.mustUpdate)
@@ -208,6 +210,7 @@ struct ContentView: View {
         .id(appState.tabs.map(\.rawValue).joined(separator: ","))
         // The tab bar stays visible (no minimize on scroll).
         .eventTheme(appState)
+        .overlay { UndoToastOverlay() }
         .sheet(item: $state.presentedSheet) { sheet in
             Group {
                 switch sheet {
@@ -345,18 +348,28 @@ private struct LatestUpdateBannerModifier: ViewModifier {
         // prominently; otherwise the newest unread update.
         let urgent = enabled ? appState.urgentBanner() : nil
         let notification = enabled && urgent == nil ? appState.latestUpdateBanner() : nil
-        content
-            .safeAreaInset(edge: .top, spacing: 0) {
-                if let urgent {
-                    UrgentUpdateBanner(notification: urgent)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                } else if let notification {
-                    LatestUpdateBanner(notification: notification)
-                        .transition(.move(edge: .top).combined(with: .opacity))
+        // The banner keeps to one side of a vertical fold (iPhone Duo unfolded): the tab's own
+        // container decides which side (ReservedRegionLayout), the banner takes its width.
+        GeometryReader { proxy in
+            let insets = ReservedRegionLayout.insets(container: proxy.size, avoiding: ReservedRegionReader.rects(in: proxy))
+            content
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    Group {
+                        if let urgent {
+                            UrgentUpdateBanner(notification: urgent)
+                                .transition(.move(edge: .top).combined(with: .opacity))
+                        } else if let notification {
+                            LatestUpdateBanner(notification: notification)
+                                .transition(.move(edge: .top).combined(with: .opacity))
+                        }
+                    }
+                    .padding(.leading, insets.leading)
+                    .padding(.trailing, insets.trailing)
+                    .debugFloatingFrame("banner")
                 }
-            }
-            .animation(.easeInOut, value: urgent?.id)
-            .animation(.easeInOut, value: notification?.id)
+                .animation(.easeInOut, value: urgent?.id)
+                .animation(.easeInOut, value: notification?.id)
+        }
     }
 }
 
@@ -455,6 +468,7 @@ private struct FloatingSearchButtonModifier: ViewModifier {
                         FloatingSearchButton {
                             appState.openSearch()
                         }
+                        .debugFloatingFrame("search_button")
                         .padding(.trailing, FloatingSearchButtonMetrics.trailingPadding)
                         .padding(.bottom, FloatingSearchButtonMetrics.bottomPadding)
                     }

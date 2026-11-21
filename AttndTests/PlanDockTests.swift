@@ -1,7 +1,7 @@
 // PlanDockTests.swift
 // AttndTests
 //
-// The plan page dock's rules (PlanDock.swift; iOS only for now) on `AssistantFixture`: now Sat
+// The plan rules kept from the plan page's dock (PlanDock.swift; iOS only for now) on `AssistantFixture`: now Sat
 // 10:00 AM, plan 10:00 111 · 11:00 109 · 12:00 lunch · 13:00 102 · 15:00 103 · 17:00 105 ·
 // 18:15 113 · 19:00 101 · 21:00 104; likes 101, 114.
 
@@ -11,40 +11,6 @@ import XCTest
 final class PlanDockTests: XCTestCase {
 
     private let ctx = AssistantFixture.ctx()
-
-    // MARK: Pane
-
-    func testPaneKeepsResultsWhileTyping() {
-        XCTAssertEqual(PlanDock.pane(draft: "", resultsQuery: nil, hasAnswer: false, proposalOptions: nil), .none)
-        XCTAssertEqual(PlanDock.pane(draft: "  ", resultsQuery: "bb", hasAnswer: true, proposalOptions: nil), .answer)
-        // Results for "bb" stay while "bbq" computes.
-        XCTAssertEqual(PlanDock.pane(draft: "bbq", resultsQuery: "bb", hasAnswer: false, proposalOptions: nil), .results)
-        XCTAssertEqual(PlanDock.pane(draft: "b", resultsQuery: nil, hasAnswer: true, proposalOptions: nil), .answer)
-        XCTAssertEqual(PlanDock.pane(draft: "b", resultsQuery: nil, hasAnswer: false, proposalOptions: nil), .none)
-    }
-
-    func testPaneWithAProposal() {
-        XCTAssertEqual(PlanDock.pane(draft: "do it", resultsQuery: "do", hasAnswer: false, proposalOptions: 1), .none)
-        XCTAssertEqual(PlanDock.pane(draft: "the second one", resultsQuery: "the", hasAnswer: false, proposalOptions: 3), .none)
-        XCTAssertEqual(PlanDock.pane(draft: "no", resultsQuery: "no", hasAnswer: false, proposalOptions: 2), .none)
-        XCTAssertEqual(PlanDock.pane(draft: "tacos", resultsQuery: "taco", hasAnswer: false, proposalOptions: 2), .results)
-    }
-
-    // MARK: Result actions
-
-    func testResultActions() {
-        XCTAssertEqual(PlanDock.resultAction(EntityRef(kind: .schedule, id: 112), ctx), .addToPlan(112))
-        XCTAssertEqual(PlanDock.resultAction(EntityRef(kind: .schedule, id: 109), ctx), .inPlan)
-        XCTAssertNil(PlanDock.resultAction(EntityRef(kind: .schedule, id: 111), ctx), "started at 10:00")
-        XCTAssertEqual(PlanDock.resultAction(EntityRef(kind: .location, id: 4), ctx), .planAround(4))
-        XCTAssertNil(PlanDock.resultAction(EntityRef(kind: .location, id: 9), ctx), "nothing on at the Info Booth")
-        XCTAssertNil(PlanDock.resultAction(EntityRef(kind: .update, id: 31), ctx))
-        var noPlanner = ctx
-        noPlanner.canPlan = false
-        XCTAssertNil(PlanDock.resultAction(EntityRef(kind: .schedule, id: 112), noPlanner))
-        XCTAssertEqual(DockResultAction.addToPlan(1).label, "Add to plan")
-        XCTAssertEqual(DockResultAction.planAround(1).label, "Plan around this")
-    }
 
     func testAddWithoutAClash() throws {
         // Street tacos at home (14:15–15:00) fits between 102 and 103.

@@ -335,7 +335,7 @@ enum AssistantRouter {
         AssistantText.format(date, "h:mm a", ctx.bundle.event.timeZone, ctx.locale)
     }
 
-    /// "Added X" / the clash question / "When?" for a place without a time.
+    /// "Added X" / the clash question; a place without a time is saved (with "Pick a time" chips).
     private static func add(_ ref: EntityRef, time clock: PlanClock?, _ ctx: RouterContext) -> RoutedTurn {
         let bundle = ctx.bundle
         let entry = ctx.mine.entry(for: target(ref))
@@ -357,15 +357,17 @@ enum AssistantRouter {
                     let at = entry?.at.map { " at " + time($0, ctx) } ?? ""
                     return done(.schedule, [.text("**\(name(ref, ctx))** is already in your schedule\(at)."), card, chips(entityChips(ref, ctx))], ctx)
                 }
+                // Saved at once without a time (owner, Nov 21, 2026: no "When?"); the chips offer
+                // a time for whoever wants one.
                 let options = ctx.mine.suggestedTimes(for: ref.id, bundle, now: ctx.now, walkMinutes: walkMinutes(ref.id, ctx))
-                var list = Array(options.times.prefix(3)).map { at in
-                    AssistantChip(label: time(at, ctx), action: .scheduleAdd(ref, time: clockOf(at, ctx).description))
+                var times = Array(options.times.prefix(2))
+                if let suggested = options.suggested, !times.contains(suggested) { times.insert(suggested, at: 0) }
+                var list = times.prefix(2).map { at in
+                    AssistantChip(label: "Pick a time: " + time(at, ctx), action: .scheduleMove(ref, time: clockOf(at, ctx).description))
                 }
-                if let suggested = options.suggested, !options.times.prefix(3).contains(suggested) {
-                    list.insert(AssistantChip(label: time(suggested, ctx), action: .scheduleAdd(ref, time: clockOf(suggested, ctx).description)), at: 0)
-                }
-                list.append(AssistantChip(label: "Just save it", action: .scheduleAdd(ref)))
-                return done(.schedule, [.text("When do you want to go to **\(name(ref, ctx))**?"), card, chips(list)], ctx)
+                list.append(contentsOf: addedChips(ref, ctx).filter { $0.action.name != .scheduleReminder })
+                return done(.schedule, [.text("Saved **\(name(ref, ctx))** to your schedule."), card, chips(list)], ctx,
+                            actions: [.scheduleAdd(ref)])
             }
             let at = MySchedule.date(clock, near: nil, now: ctx.now, timeZone: bundle.event.timeZone)
             if let span = ctx.mine.span(of: target(ref), at: at, bundle),
@@ -395,11 +397,9 @@ enum AssistantRouter {
     }
 
     private static func addMany(_ refs: [EntityRef], _ ctx: RouterContext) -> RoutedTurn {
-        let new = refs.filter { $0.kind == .schedule && !ctx.mine.contains(target($0)) }
+        // Items, and places saved without a time.
+        let new = refs.filter { $0.kind != .update && !ctx.mine.contains(target($0)) }
         guard !new.isEmpty else {
-            if refs.contains(where: { $0.kind == .location }) {
-                return done(.schedule, [.text("Which place? Places need a time."), chips(refs.map { AssistantChip(label: name($0, ctx), action: .scheduleAdd($0)) })], ctx)
-            }
             return done(.schedule, [.text("They're already in your schedule.")], ctx)
         }
         return done(.schedule, [.text("Added \(names(new.map { "**\(name($0, ctx))**" })) to your schedule."), .list(ids: new, title: MyScheduleTitle.title)],

@@ -437,11 +437,61 @@ extension AssistantModel {
         let answer = text.trimmingCharacters(in: .whitespacesAndNewlines)
         var blocks: [AssistantBlock] = answer.isEmpty ? [] : [.text(answer)]
         blocks += shown.filter { !$0.isChips }
+        // Safety net (owner, Nov 21, 2026): an answer that names items or places but showed none of
+        // them gets their cards (1 → card, 2–8 → carousel), so they can be tapped and "add it" works.
+        if !shown.contains(where: { !ConversationContext.refs($0).isEmpty && !$0.isChips }) {
+            let named = namedEntities(in: answer, ctx)
+            if named.count == 1 {
+                blocks.append(BlockValidator.card(named[0]))
+            } else if named.count > 1 {
+                blocks.append(.carousel(ids: Array(named.prefix(8)), title: nil))
+            }
+        }
         let confirms = actions.filter { $0.name.confirm == .chip }.map { AssistantBlock.confirm(action: $0, prompt: ActionRegistry.confirmPrompt($0)) }
         let direct = actions.filter { $0.name.confirm != .chip }
         blocks += confirms
         blocks += shown.filter(\.isChips)
         return AssistantTurn(blocks: BlockValidator.validate(blocks, ctx.blockContext), actions: direct)
+    }
+
+    /// Schedule items and places the text names, in the order they appear (whole-word matches of
+    /// the normalised name; the longer name wins where two overlap). Names under 4 characters are
+    /// never matched; a one-word name only when written with a capital letter (a proper noun, not
+    /// "music" or "food"), and never a generic word ("general", "stage", "food"…).
+    static func namedEntities(in text: String, _ ctx: RouterContext) -> [EntityRef] {
+        guard !text.isEmpty else { return [] }
+        let padded = " " + PlanText.words(text).joined(separator: " ") + " "
+        let generic: Set<String> = ["general", "stage", "food", "music", "drinks", "gates open", "info", "main", "kids", "family"]
+        var candidates: [(ref: EntityRef, name: String, words: [String])] = []
+        for location in ctx.bundle.locations {
+            candidates.append((EntityRef(kind: .location, id: location.id), location.name, PlanText.words(location.name)))
+        }
+        for item in ctx.bundle.schedule {
+            candidates.append((EntityRef(kind: .schedule, id: item.id), item.name, PlanText.words(item.name)))
+        }
+        // Longer names first, so "Main Stage" inside "Main Stage Party" doesn't win.
+        candidates.sort { a, b in
+            let la = a.words.joined(separator: " ").count, lb = b.words.joined(separator: " ").count
+            return la != lb ? la > lb : (a.ref.kind == .location ? 0 : 1, a.ref.id) < (b.ref.kind == .location ? 0 : 1, b.ref.id)
+        }
+        var taken: [Range<String.Index>] = []
+        var found: [(at: String.Index, ref: EntityRef)] = []
+        var seen = Set<EntityRef>()
+        for candidate in candidates {
+            let phrase = candidate.words.joined(separator: " ")
+            guard phrase.count >= 4, !generic.contains(phrase) else { continue }
+            if candidate.words.count == 1 {
+                // One word: only as a proper noun in the original text.
+                guard phrase.count >= 5,
+                      text.range(of: candidate.name, options: [.diacriticInsensitive])
+                          .map({ text[$0].first?.isUppercase ?? false }) ?? false else { continue }
+            }
+            guard let range = padded.range(of: " " + phrase + " "),
+                  !taken.contains(where: { $0.overlaps(range) }), seen.insert(candidate.ref).inserted else { continue }
+            taken.append(range)
+            found.append((range.lowerBound, candidate.ref))
+        }
+        return found.sorted { $0.at < $1.at }.map(\.ref)
     }
 
     /// The `show` tool's component as a block: a screen component (`menu`, `faq`, `my_schedule`…)

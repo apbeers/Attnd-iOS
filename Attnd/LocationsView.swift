@@ -303,7 +303,7 @@ private struct LocationPeekModifier: ViewModifier {
             Button {
                 appState.toggleHeart(target)
             } label: {
-                Label(hearted ? MyScheduleText.remove : "Add to My Schedule", systemImage: hearted ? "minus.circle" : "plus.circle")
+                Label(hearted ? MyScheduleText.remove : "Add to My Schedule", systemImage: hearted ? "heart.slash" : "heart")
             }
             if location.coordinate != nil, appState.shows(.map) {
                 Button {
@@ -723,6 +723,8 @@ struct LocationDetailView: View {
     let location: Location
 
     @Environment(AppState.self) private var appState
+    /// The container's width: two columns from `DetailColumns.minWidth`.
+    @State private var width: CGFloat = 0
 
     var body: some View {
         // TimelineView drives live countdown labels every 30 s across the whole page.
@@ -762,6 +764,7 @@ struct LocationDetailView: View {
             return ScreenFacts.place(location, bundle, walking)
         }
         let header = sections.first { $0.type == "header" }
+        let columns = DetailColumns.split(sections, screen: .placeDetail, width: Double(width))
         return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 if let header, header.shows("image"), let url = location.imageUrl {
@@ -774,19 +777,36 @@ struct LocationDetailView: View {
                         .backgroundExtensionEffect()
                 }
 
-                VStack(alignment: .leading, spacing: 12) {
-                    ForEach(Array(sections.enumerated()), id: \.element.type) { index, section in
-                        if Self.dividerBefore(section, previous: index > 0 ? sections[index - 1] : nil) {
-                            Divider()
-                        }
-                        self.section(section, now: now)
+                if let columns {
+                    // Wide (iPhone Duo unfolded): header and walk map leading, details trailing.
+                    HStack(alignment: .top, spacing: 24) {
+                        sectionColumn(columns.leading, now: now)
+                        sectionColumn(columns.trailing, now: now)
                     }
+                    .padding(.horizontal)
+                    .padding(.vertical, 16)
+                    .padding(.bottom, 24)
+                } else {
+                    sectionColumn(sections, now: now)
+                        .padding(.horizontal)
+                        .padding(.vertical, 16)
+                        .padding(.bottom, 24)
                 }
-                .padding(.horizontal)
-                .padding(.vertical, 16)
-                .padding(.bottom, 24)
             }
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+    }
+
+    private func sectionColumn(_ sections: [LayoutSection], now: Date) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(Array(sections.enumerated()), id: \.element.type) { index, section in
+                if Self.dividerBefore(section, previous: index > 0 ? sections[index - 1] : nil) {
+                    Divider()
+                }
+                self.section(section, now: now)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     /// The place's context parts (hours, good to know, menu, links) are one group: a divider

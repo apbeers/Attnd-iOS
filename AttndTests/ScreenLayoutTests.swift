@@ -219,7 +219,7 @@ final class ScreenLayoutTests: XCTestCase {
         s.hasLikes = true
         s.hasPlan = true
         XCTAssertEqual(types(ScreenLayout.resolve(.home, layouts: nil, facts: ScreenFacts.event(bundle, s))),
-                       ["header", "urgent", "now_next", "my_schedule", "map", "updates", "about"])
+                       ["header", "urgent", "my_schedule", "map", "updates", "about"])
         XCTAssertEqual(ScreenLayout.sections(for: .home, layouts: nil).first { $0.type == "updates" }?.limit, 3)
         // Without anything in My schedule the section still shows (its empty state).
         XCTAssertTrue(types(ScreenLayout.resolve(.home, layouts: nil, facts: ScreenFacts.event(bundle, state))).contains("my_schedule"))
@@ -280,5 +280,30 @@ final class ScreenLayoutTests: XCTestCase {
         let display = try JSONDecoder().decode(DisplayConfig.self, from: Data(json.utf8))
         XCTAssertEqual(display.tabs, [.home, .map, .notifications])
         XCTAssertEqual(display.defaultTab, .home)
+    }
+
+    // MARK: - iPhone Duo: two columns and tabletop
+
+    func testDetailColumnsFromTheContainerWidth() throws {
+        let place = ScreenLayout.sections(for: .placeDetail, layouts: nil)
+        XCTAssertNil(DetailColumns.split(place, screen: .placeDetail, width: 699))
+        let wide = try XCTUnwrap(DetailColumns.split(place, screen: .placeDetail, width: 700))
+        XCTAssertEqual(wide.leading.first?.type, "header")
+        XCTAssertTrue(wide.leading.allSatisfy { DetailColumns.leadingTypes[.placeDetail]!.contains($0.type) })
+        XCTAssertEqual(wide.leading.count + wide.trailing.count, place.count)
+        XCTAssertFalse(wide.trailing.isEmpty)
+        let item = try XCTUnwrap(DetailColumns.split(ScreenLayout.sections(for: .itemDetail, layouts: nil), screen: .itemDetail, width: 900))
+        XCTAssertEqual(item.leading.first?.type, "header")
+        // Screens without columns, or nothing for one side.
+        XCTAssertNil(DetailColumns.split(ScreenLayout.sections(for: .home, layouts: nil), screen: .home, width: 900))
+        XCTAssertNil(DetailColumns.split([LayoutSection("header")], screen: .placeDetail, width: 900))
+    }
+
+    func testHomeTabletopHalves() throws {
+        let home = ScreenLayout.sections(for: .home, layouts: nil)
+        let halves = try XCTUnwrap(TabletopSplit.home(home))
+        XCTAssertEqual(halves.top.map(\.type), ["header", "urgent", "countdown", "map"])
+        XCTAssertEqual(halves.bottom.first?.type, "my_schedule")
+        XCTAssertNil(TabletopSplit.home([LayoutSection("header")]))
     }
 }

@@ -25,6 +25,8 @@ final class UserLocationTracker {
     private(set) var location: Coordinate?
     /// Horizontal accuracy of `location` in metres.
     private(set) var accuracy: Double?
+    /// When `location` was measured (the Live Activity uses positions ≤ 30 min old).
+    @ObservationIgnored private(set) var locationAt: Date?
     /// Heading of the top of the UI, degrees from true north (magnetic when true north is
     /// unavailable); nil without a compass reading.
     private(set) var heading: Double?
@@ -138,15 +140,17 @@ final class UserLocationTracker {
         if !authorized {
             location = nil
             accuracy = nil
+            locationAt = nil
             heading = nil
         }
         update()
     }
 
-    fileprivate func applyLocation(latitude: Double, longitude: Double, accuracy: Double) {
+    fileprivate func applyLocation(latitude: Double, longitude: Double, accuracy: Double, at timestamp: Date) {
         guard updatingLocation, accuracy >= 0, let coordinate = Coordinate.valid(latitude: latitude, longitude: longitude) else { return }
         location = coordinate
         self.accuracy = accuracy
+        locationAt = timestamp
     }
 
     fileprivate func applyHeading(trueHeading: Double, magneticHeading: Double, headingAccuracy: Double) {
@@ -203,7 +207,8 @@ private final class TrackerDelegate: NSObject, CLLocationManagerDelegate {
         let latitude = last.coordinate.latitude
         let longitude = last.coordinate.longitude
         let accuracy = last.horizontalAccuracy
-        Task { @MainActor in self.owner?.applyLocation(latitude: latitude, longitude: longitude, accuracy: accuracy) }
+        let timestamp = last.timestamp
+        Task { @MainActor in self.owner?.applyLocation(latitude: latitude, longitude: longitude, accuracy: accuracy, at: timestamp) }
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
@@ -385,12 +390,14 @@ struct CompassArrow: View {
     }
 }
 
-// MARK: - My schedule button (was the heart)
+// MARK: - My schedule button (the heart)
 
-/// "+ Add" / "✓ In my schedule" for a location or schedule item (rows, cards, peeks, search,
-/// map card, Home, chat cards). Borderless, so it works inside list rows without opening them.
-/// Icon-only by default (rows); `titled` shows the words (details, cards). Places ask "When?"
-/// (`ScheduleTimeDialog`); ✓ opens the entry's menu (change time, reminder, remove).
+/// The heart for a location or schedule item (rows, cards, peeks, search, map card, Home, chat
+/// cards; owner, Nov 21, 2026: the heart icon again): outline = not in My schedule, filled = in
+/// it. Tapping the outline adds it at once (places as a saved place without a time; no "When?"),
+/// with a haptic and an Undo toast; the filled heart opens the entry's menu (Set a time… for
+/// places, the reminder, Remove). Borderless, so it works inside list rows without opening them.
+/// Icon-only by default (rows); `titled` shows the words (details, cards).
 struct HeartButton: View {
     let target: SearchTarget
     var font: Font = .body
@@ -412,11 +419,7 @@ struct HeartButton: View {
                 .buttonStyle(.borderless)
             } else {
                 Button {
-                    if case .location = target {
-                        asksTime = true
-                    } else {
-                        appState.addToSchedule(target)
-                    }
+                    appState.addToScheduleWithUndo(target)
                 } label: {
                     label(added: false)
                 }
@@ -430,12 +433,13 @@ struct HeartButton: View {
     @ViewBuilder
     private func label(added: Bool) -> some View {
         let title = added ? MyScheduleText.inSchedule : MyScheduleText.add
-        let image = added ? "checkmark.circle.fill" : "plus.circle"
+        let image = added ? "heart.fill" : "heart"
         if titled {
             Label(title, systemImage: image)
                 .font(font)
                 .foregroundStyle(added ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
                 .contentShape(Rectangle())
+                .accessibilityLabel(added ? MyScheduleText.inSchedule : MyScheduleText.addLong)
         } else {
             Label(title, systemImage: image)
                 .labelStyle(.iconOnly)
@@ -472,7 +476,8 @@ struct ScheduleEntryMenuItems: View {
 
     var body: some View {
         if case .location = target {
-            Button("Change Time…", systemImage: "clock") { asksTime = true }
+            let hasTime = appState.mySchedule.entry(for: target)?.at != nil
+            Button(hasTime ? "Change Time…" : "Set a Time…", systemImage: "clock") { asksTime = true }
         }
         let current = appState.mySchedule.entry(for: target)?.reminderMinutes ?? MySchedule.defaultReminder
         Picker(selection: Binding(get: { current }, set: { appState.setReminder(target, minutes: $0) })) {
@@ -490,8 +495,8 @@ struct ScheduleEntryMenuItems: View {
 }
 
 extension View {
-    /// "When?" for a place: today's times (the first free one after the walk suggested) or
-    /// "Just save it".
+    /// "When?" for a place, only when asked (the filled heart's Set a Time…, the place detail):
+    /// today's times (the first free one after the walk suggested) or "Just save it".
     func scheduleTimeDialog(target: SearchTarget, isPresented: Binding<Bool>) -> some View {
         modifier(ScheduleTimeDialog(target: target, isPresented: isPresented))
     }
@@ -522,7 +527,7 @@ private struct ScheduleTimeDialog: ViewModifier {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Add it to your schedule at a time, or just save it.")
+            Text("Pick a time for it in your schedule, or keep it saved without one.")
         }
     }
 
@@ -535,6 +540,7 @@ private struct ScheduleTimeDialog: ViewModifier {
     private var saveTitle: String {
         appState.mySchedule.entry(for: target)?.at == nil ? "Just Save It" : "No Time, Just Save It"
     }
+
 
     private func options(_ id: Int, _ bundle: EventBundle) -> (times: [Date], suggested: Date?) {
         let walk = appState.userLocation.direction(to: bundle.location(id)?.coordinate).flatMap { direction -> Int? in
@@ -868,14 +874,23 @@ struct ScheduleItemPeek: View {
 // MARK: - Hearted list (search)
 
 /// Pushed on the search sheet's stack by the "My Schedule" suggestion.
-struct HeartedListRoute: Hashable {}
+struct HeartedListRoute: Hashable {
+    /// Only the places saved without a time (Home's "3 saved places" row).
+    var savedPlacesOnly = false
+}
 
 struct HeartedListView: View {
+    var savedPlacesOnly = false
+
     @Environment(AppState.self) private var appState
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
-            let targets = appState.currentBundle.map { appState.personal.heartedTargets(in: $0) } ?? []
+            let all = appState.currentBundle.map { appState.personal.heartedTargets(in: $0) } ?? []
+            let saved = Set(appState.mySchedule.savedPlaceIds)
+            let targets = savedPlacesOnly
+                ? all.filter { if case .location(let id) = $0 { return saved.contains(id) } else { return false } }
+                : all
             let rows = targets.compactMap { appState.searchIndex?.result(for: $0, now: context.date) }
             List {
                 ForEach(rows) { result in
@@ -889,12 +904,12 @@ struct HeartedListView: View {
                     ContentUnavailableView(
                         "Nothing in Your Schedule",
                         systemImage: "calendar.badge.plus",
-                        description: Text("Tap \(Image(systemName: "plus.circle")) on a schedule item or place to add it here.")
+                        description: Text("Tap \(Image(systemName: "heart")) on a schedule item or place to add it here.")
                     )
                 }
             }
         }
-        .navigationTitle(MyScheduleText.title)
+        .navigationTitle(savedPlacesOnly ? MyScheduleText.savedPlaces : MyScheduleText.title)
         .navigationBarTitleDisplayMode(.inline)
         .usesUserLocation(heading: true)
     }

@@ -57,6 +57,84 @@ enum ReservedRegionReader {
         #endif
         return []
     }
+
+    /// The fold alone (`.division`), active only while partly folded.
+    @MainActor
+    static func folds(in proxy: GeometryProxy) -> [CGRect] {
+        #if IOS27_SDK
+        if #available(iOS 27.1, *) {
+            return proxy.reservedRegions(kind: .division, options: []).map { $0.frame }
+        }
+        #endif
+        return []
+    }
+}
+
+// MARK: - Reserved-region audit (Debug / Dev builds only)
+
+/// Draws the reserved regions (fold: red, cameras: orange) over the whole window and the frames of
+/// floating controls (`debugFloatingFrame`) in blue, to catch overlaps in simulator screenshots.
+/// On with the launch argument `-AttndDebugRegions YES` (scripts/ci/screenshots.sh passes it for
+/// the Duo captures) or the `AttndDebugRegions` default; never in Release builds.
+enum ReservedRegionDebug {
+    static var isOn: Bool {
+        #if DEBUG
+        return UserDefaults.standard.bool(forKey: "AttndDebugRegions")
+        #else
+        return false
+        #endif
+    }
+}
+
+struct ReservedRegionDebugOverlay: View {
+    var body: some View {
+        #if DEBUG
+        if ReservedRegionDebug.isOn {
+            GeometryReader { proxy in
+                let folds = ReservedRegionReader.folds(in: proxy)
+                let all = ReservedRegionReader.rects(in: proxy)
+                ZStack(alignment: .topLeading) {
+                    ForEach(Array(all.enumerated()), id: \.offset) { _, rect in
+                        let isFold = folds.contains(rect)
+                        Rectangle()
+                            .fill((isFold ? Color.red : Color.orange).opacity(0.25))
+                            .overlay(Rectangle().stroke(isFold ? Color.red : Color.orange, lineWidth: 2))
+                            .frame(width: rect.width, height: rect.height)
+                            .offset(x: rect.minX, y: rect.minY)
+                    }
+                }
+            }
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
+        #endif
+    }
+}
+
+extension View {
+    /// Outlines a floating control in the reserved-region audit (Debug / Dev builds only).
+    @ViewBuilder
+    func debugFloatingFrame(_ name: String) -> some View {
+        #if DEBUG
+        if ReservedRegionDebug.isOn {
+            self.overlay(alignment: .topLeading) {
+                Rectangle()
+                    .stroke(Color.blue, style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                    .overlay(alignment: .topLeading) {
+                        Text(name).font(.system(size: 8, weight: .bold)).foregroundStyle(.white)
+                            .padding(1).background(Color.blue)
+                    }
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        } else {
+            self
+        }
+        #else
+        self
+        #endif
+    }
 }
 
 // MARK: - Toolbar placements
@@ -73,3 +151,36 @@ extension ToolbarItemPlacement {
         return .topBarTrailing
     }
 }
+
+#if DEBUG
+// MARK: - Previews for both iPhone Duo displays (approximate point sizes: the outer display
+// 1398×2034 px and the inner 2007×2853 px at 3×; Apple hasn't published point sizes).
+private struct DuoPreviewProbe: View {
+    @Environment(\.horizontalSizeClass) private var horizontal
+
+    var body: some View {
+        GeometryReader { proxy in
+            VStack(spacing: 8) {
+                Text(horizontal == .regular ? "Inner display (regular)" : "Outer display (compact)").font(.headline)
+                Text("\(Int(proxy.size.width)) × \(Int(proxy.size.height)) pt")
+                Text(String(describing: FoldPosture.of(container: proxy.size, folds: ReservedRegionReader.folds(in: proxy))))
+                    .font(.caption.monospaced())
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .overlay { ReservedRegionDebugOverlay() }
+    }
+}
+
+#Preview("Duo outer", traits: .fixedLayout(width: 466, height: 678)) {
+    DuoPreviewProbe().environment(\.horizontalSizeClass, .compact)
+}
+
+#Preview("Duo inner", traits: .fixedLayout(width: 669, height: 951)) {
+    DuoPreviewProbe().environment(\.horizontalSizeClass, .regular)
+}
+
+#Preview("Duo inner landscape", traits: .fixedLayout(width: 951, height: 669)) {
+    DuoPreviewProbe().environment(\.horizontalSizeClass, .regular)
+}
+#endif

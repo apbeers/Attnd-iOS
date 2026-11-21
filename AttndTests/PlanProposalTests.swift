@@ -72,7 +72,8 @@ final class PlanProposalTests: XCTestCase {
 
     func testRouterEditsBecomeProposalsNotWrites() {
         let ctx = self.ctx
-        let routed = AssistantRouter.route("remove Juniper Lane", ctx)
+        // iOS: "remove X" is a My schedule command now; "more bbq" is still a plan edit (it drops Juniper Lane).
+        let routed = AssistantRouter.route("more bbq", ctx)
         let p = PlanProposals.from(routed: routed, ctx)
         XCTAssertEqual(p?.options.first?.edit.diff.removed, [109])
         XCTAssertEqual(p?.kind, .change)

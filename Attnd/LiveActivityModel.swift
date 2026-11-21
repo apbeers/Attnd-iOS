@@ -122,7 +122,7 @@ struct EventActivityAttributes: ActivityAttributes {
         /// The symbol for what it follows: the plan, hearts, or the event's own day.
         var followSymbol: String {
             if followsPlan == true { return "list.bullet.clipboard" }
-            return followsHearts == true ? "heart.fill" : "calendar"
+            return "calendar"
         }
     }
 

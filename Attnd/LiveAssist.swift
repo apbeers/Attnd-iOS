@@ -233,7 +233,7 @@ enum LiveAssist {
         let liked = likes.scheduleItems.count + likes.locations.count
         let walked = DayRoutes.of(plan, bundle, date: date, only: Set(checked))?.totalMeters ?? 0
         let things = checked.count == 1 ? "1 thing" : "\(checked.count) things"
-        let text = "You saw \(things), liked \(liked) and walked \(AssistantText.distance(walked, units, locale: locale))."
+        let text = "You saw \(things), added \(liked) and walked \(AssistantText.distance(walked, units, locale: locale))."
         var chips: [AssistantChip] = []
         let laterPlanned = plan.days.contains { $0.date > date && !$0.items.isEmpty }
         let laterDay = PlanCalendar.eventDays(bundle, now: now).first { $0 > date }

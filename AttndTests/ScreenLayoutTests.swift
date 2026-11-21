@@ -23,9 +23,9 @@ final class ScreenLayoutTests: XCTestCase {
 
     func testDefaultsAreTodaysScreens() {
         XCTAssertEqual(types(ScreenLayout.sections(for: .itemDetail, layouts: nil)),
-                       ["header", "about", "performers", "good_to_know", "links", "place_link", "ask_about"])
+                       ["header", "about", "performers", "good_to_know", "links", "place_link"])
         XCTAssertEqual(types(ScreenLayout.sections(for: .placeDetail, layouts: nil)),
-                       ["header", "walk_map", "ask_about", "about", "hours", "good_to_know", "menu", "links", "at_this_location"])
+                       ["header", "walk_map", "about", "hours", "good_to_know", "menu", "links", "at_this_location"])
         XCTAssertEqual(types(ScreenLayout.sections(for: .eventInfo, layouts: nil)),
                        ["header", "about", "faq", "amenities", "getting_there", "accessibility", "policies", "weather_plan", "links"])
         XCTAssertEqual(types(ScreenLayout.sections(for: .optionsEvent, layouts: nil)), ["header", "website", "event_info_link"])
@@ -46,11 +46,11 @@ final class ScreenLayoutTests: XCTestCase {
         let gates = bundle.scheduleItem(111)!
         let facts = ScreenFacts.item(gates, bundle, state)
         XCTAssertEqual(types(ScreenLayout.resolve(.itemDetail, layouts: nil, facts: facts)), ["header", "about", "place_link"])
-        // With the model the Ask About This section shows.
+        // No Ask About This any more (Nov 21, 2026), with or without the model.
         var withModel = state
         withModel.modelAvailable = true
         let modelFacts = ScreenFacts.item(gates, bundle, withModel)
-        XCTAssertEqual(types(ScreenLayout.resolve(.itemDetail, layouts: nil, facts: modelFacts)).last, "ask_about")
+        XCTAssertEqual(types(ScreenLayout.resolve(.itemDetail, layouts: nil, facts: modelFacts)), ["header", "about", "place_link"])
         // Context parts.
         var item = bundle.scheduleItem(109)!
         item.context = ScheduleItemContext(performers: [Performer(name: "Juniper Lane")], price: "$5")
@@ -219,8 +219,17 @@ final class ScreenLayoutTests: XCTestCase {
         s.hasLikes = true
         s.hasPlan = true
         XCTAssertEqual(types(ScreenLayout.resolve(.home, layouts: nil, facts: ScreenFacts.event(bundle, s))),
-                       ["header", "urgent", "now_next", "plan_today", "liked", "map", "updates", "about"])
+                       ["header", "urgent", "now_next", "my_schedule", "map", "updates", "about"])
         XCTAssertEqual(ScreenLayout.sections(for: .home, layouts: nil).first { $0.type == "updates" }?.limit, 3)
+        // Without anything in My schedule the section still shows (its empty state).
+        XCTAssertTrue(types(ScreenLayout.resolve(.home, layouts: nil, facts: ScreenFacts.event(bundle, state))).contains("my_schedule"))
+    }
+
+    func testOlderHomeNamesMapToMySchedule() throws {
+        let l = try layouts(#"{"screens": {"home": {"sections": [{"type": "plan_today"}, {"type": "liked", "title": "Faves"}, {"type": "map"}]}}}"#)
+        let sections = ScreenLayout.sections(for: .home, layouts: l)
+        XCTAssertEqual(types(sections), ["my_schedule", "map"])
+        XCTAssertEqual(SectionCatalogue.version, 2)
     }
 
     // MARK: Decoding

@@ -104,7 +104,11 @@ struct FloatingPlanButton: View {
 
 // MARK: - The page (full-screen cover)
 
-/// The cover's root: compact → the plan page with the dock; regular width → chat column + page.
+/// The cover's root: My plan is one continuous chat (iOS, Nov 21, 2026). Compact width (phones,
+/// iPhone Duo folded): the chat alone. Regular width (iPhone Duo unfolded): the chat column and
+/// the last component it showed, large, side by side (`PlanArrangement`: split on the fold, at the
+/// top of the cover only). All state (transcript, composer text, proposal, working line) is the
+/// controller's, so folding mid-conversation keeps it.
 struct PlanPageHost: View {
     @Environment(AppState.self) private var appState
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -113,20 +117,65 @@ struct PlanPageHost: View {
         Group {
             if horizontalSizeClass == .regular {
                 PlanArrangement {
-                    NavigationStack {
-                        ChatColumn()
-                            .navigationTitle("Assistant")
-                            .navigationBarTitleDisplayMode(.inline)
-                            .toolbar { PageCloseItem() }
-                    }
+                    PlanChatStack()
                 } secondary: {
-                    PlanPageStack(showsDock: false)
+                    NavigationStack {
+                        LastComponentPane()
+                            .navigationTitle("My Schedule")
+                            .navigationBarTitleDisplayMode(.inline)
+                    }
                 }
             } else {
-                PlanPageStack(showsDock: true)
+                PlanChatStack()
             }
         }
         .modifier(PageLiveTasks())
+    }
+}
+
+/// The chat in its own navigation stack (cards tapped in it push the item's detail).
+private struct PlanChatStack: View {
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        @Bindable var assistant = appState.assistant
+        NavigationStack(path: $assistant.pagePath) {
+            PlanChatView()
+                .navigationTitle("My Plan")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar { PageCloseItem() }
+                .navigationDestination(for: SearchTarget.self) { target in
+                    SearchDestinationView(target: target)
+                }
+                .navigationDestination(for: Location.self) { location in
+                    LocationDetailView(location: location)
+                }
+        }
+    }
+}
+
+/// Wide layouts: the last component the chat showed (not text or chips), large; before any, the
+/// day in My schedule.
+private struct LastComponentPane: View {
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        let assistant = appState.assistant
+        let turns = assistant.transcript + (assistant.answer.map { [$0] } ?? [])
+        let last = turns.reversed().lazy.compactMap { turn -> (AssistantController.Turn, Int, AssistantBlock)? in
+            guard let index = turn.blocks.lastIndex(where: { !$0.isChips && $0.type != "text" && $0.type != "confirm" }) else { return nil }
+            return (turn, index, turn.blocks[index])
+        }.first
+        ScrollView {
+            Group {
+                if let last {
+                    AssistantBlockView(block: last.2, turn: last.0, index: last.1)
+                } else {
+                    ComponentView(component: Component(type: "my_day"))
+                }
+            }
+            .padding(16)
+        }
     }
 }
 
@@ -190,12 +239,14 @@ private struct PlanArrangement<Primary: View, Secondary: View>: View {
     var body: some View {
         #if IOS27_SDK
         if #available(iOS 27.1, *) {
+            // Side by side only when the container is wider than tall (Apple's "Preparing your app
+            // for iPhone Duo"): a tall inner display shows the chat alone; split on the fold.
             ArrangementView {
                 primary
             } secondary: {
                 secondary
             }
-            .arrangementViewStyle(.split)
+            .arrangementViewStyle(.split.axes(.horizontal))
         } else {
             fallback
         }
@@ -376,85 +427,153 @@ private struct PageLiveTasks: ViewModifier {
     }
 }
 
-// MARK: - Chat column (wide windows)
+// MARK: - The chat
 
-private struct ChatColumn: View {
+/// My plan as one chat: the history (per event, ≤ 40 turns), each answer's text and components
+/// inline and interactive, the working line while a turn runs, a pending plan change as a card
+/// with Apply, the Undo card after one, follow-up chips above the composer. Typing does nothing
+/// until Return. Before anything is asked: the day in My schedule.
+private struct PlanChatView: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var inputFocused: Bool
-    @State private var results: [EventSearchResult] = []
-    @State private var resultsQuery: String?
 
     var body: some View {
         let assistant = appState.assistant
-        let pane = PlanDock.pane(
-            draft: assistant.draft, resultsQuery: resultsQuery,
-            hasAnswer: false, proposalOptions: assistant.proposal?.options.count
-        )
+        let chips = followUps
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 14) {
+                LazyVStack(alignment: .leading, spacing: 16) {
                     if assistant.transcript.isEmpty && assistant.answer == nil {
-                        ChatEmptyState()
+                        ComponentView(component: Component(type: "my_day"))
                     }
                     ForEach(assistant.transcript) { turn in
-                        ChatTurnView(turn: turn)
+                        ChatTurnView(turn: turn, hidesChips: turn.id == assistant.transcript.last?.id)
                             .id(turn.id)
+                            .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
                     }
                     if let answer = assistant.answer, answer.streaming || !assistant.transcript.contains(where: { $0.id == answer.id }) {
-                        ChatTurnView(turn: answer)
+                        ChatTurnView(turn: answer, hidesChips: true)
                             .id(answer.id)
                     }
+                    if let stage = assistant.stage, assistant.busy != nil {
+                        WorkingLine(text: stage)
+                            .id("working")
+                    }
+                    if let proposal = assistant.proposal, let preview = assistant.preview {
+                        ProposalCard(proposal: proposal, preview: preview)
+                            .id("proposal")
+                    }
+                    if let pill = assistant.undoPill {
+                        UndoPillView(pill: pill)
+                            .id("undo")
+                    }
+                    Color.clear.frame(height: 1).id("bottom")
                 }
                 .padding(16)
+                .animation(reduceMotion ? .easeInOut(duration: 0.2) : .snappy, value: assistant.transcript.count)
             }
             .scrollDismissesKeyboard(.interactively)
             .defaultScrollAnchor(.bottom)
-            .onChange(of: assistant.transcript.last?.id) {
-                if let id = assistant.transcript.last?.id {
-                    withAnimation(.snappy) { proxy.scrollTo(id, anchor: .bottom) }
-                }
-            }
+            .onChange(of: assistant.transcript.last?.id) { scrollDown(proxy) }
+            .onChange(of: assistant.proposal) { scrollDown(proxy) }
+            .onChange(of: assistant.stage) { scrollDown(proxy) }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 8) {
-                if pane == .results {
-                    ResultsPane(results: results, query: resultsQuery ?? "", maxHeight: 260, focused: $inputFocused)
+                if !chips.isEmpty, assistant.busy == nil {
+                    ChipRow(chips: chips.enumerated().map { ChipItem(id: String($0.offset), label: $0.element.label) }) { item in
+                        guard let index = Int(item.id), index < chips.count else { return }
+                        assistant.chip(chips[index])
+                    }
+                    .padding(.horizontal, 6)
                 }
-                DockPills()
                 AssistantInputBar(focused: $inputFocused, onSend: send)
             }
             .padding(.horizontal, 10)
             .padding(.bottom, 8)
-            .animation(.snappy, value: pane)
         }
-        .modifier(DockResultsTracking(results: $results, resultsQuery: $resultsQuery))
         .modifier(DockFocus(focused: $inputFocused))
+    }
+
+    private var followUps: [AssistantChip] {
+        guard let last = appState.assistant.transcript.last else { return [] }
+        for case .chips(let chips) in last.blocks.reversed() { return chips }
+        return []
+    }
+
+    private func scrollDown(_ proxy: ScrollViewProxy) {
+        withAnimation(reduceMotion ? nil : .snappy) { proxy.scrollTo("bottom", anchor: .bottom) }
     }
 
     private func send() {
         let text = appState.assistant.draft
-        appState.assistant.draft = ""
-        resultsQuery = nil
-        results = []
-        appState.assistant.submit(text)
-    }
-}
-
-private struct ChatEmptyState: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label("Ask or change your plan", systemImage: "sparkles")
-                .font(.headline)
-            Text("Type what you'd like below — \"swap the next thing\", \"where are the restrooms?\", \"no food until 3\". Everything stays on your iPhone.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        withAnimation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(duration: 0.32)) {
+            appState.assistant.draft = ""
+            appState.assistant.submit(text)
         }
     }
 }
 
-/// One turn of the chat column: what was typed, then the answer's blocks.
+/// The thin working line: a spinning ring and the current stage ("Searching…", "Adding Taco Row…").
+private struct WorkingLine: View {
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+            Text(text)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .contentTransition(.opacity)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.updatesFrequently)
+    }
+}
+
+/// A pending plan change as a card in the chat: what it does, its options (each an Apply), Cancel.
+private struct ProposalCard: View {
+    let proposal: PlanProposal
+    let preview: PlanPreview
+
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        let assistant = appState.assistant
+        VStack(alignment: .leading, spacing: 10) {
+            Label(preview.pill, systemImage: "list.bullet.clipboard")
+                .font(.subheadline.weight(.semibold))
+            if !proposal.text.isEmpty, proposal.text != preview.pill {
+                Text(proposal.text)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(Array(proposal.options.prefix(PlanProposal.maxOptions).enumerated()), id: \.offset) { index, option in
+                Button {
+                    assistant.applyProposal(index)
+                } label: {
+                    Label(proposal.options.count == 1 ? "Apply" : option.label, systemImage: "checkmark")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            Button("Cancel", systemImage: "xmark", role: .cancel) {
+                assistant.clearProposal()
+            }
+            .buttonStyle(.bordered)
+        }
+        .blockCardBackground()
+    }
+}
+
+/// One turn: what was typed (a right bubble), the done line, then the answer's components.
 private struct ChatTurnView: View {
     let turn: AssistantController.Turn
+    /// The last turn's chips are above the composer instead.
+    var hidesChips = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -462,19 +581,20 @@ private struct ChatTurnView: View {
                 HStack {
                     Spacer(minLength: 40)
                     Text(input)
-                        .font(.subheadline)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(Color.accentColor.opacity(0.15), in: .rect(cornerRadius: 16))
+                        .font(.body)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 9)
+                        .background(Color.accentColor.opacity(0.18), in: .rect(cornerRadius: 18))
                 }
             }
-            ForEach(Array(turn.blocks.enumerated()), id: \.offset) { index, block in
-                AssistantBlockView(block: block, turn: turn, index: index)
+            if let status = turn.status, !turn.streaming {
+                Label(status, systemImage: "checkmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            if turn.streaming && turn.blocks.isEmpty {
-                HStack(spacing: 10) {
-                    ProgressView()
-                    Text("Thinking on your iPhone…").foregroundStyle(.secondary)
+            ForEach(Array(turn.blocks.enumerated()), id: \.offset) { index, block in
+                if !(hidesChips && block.isChips) {
+                    AssistantBlockView(block: block, turn: turn, index: index)
                 }
             }
         }
@@ -498,7 +618,7 @@ struct AssistantInputBar: View {
                     .controlSize(.small)
                     .accessibilityLabel(busy == .ask ? "Thinking" : busy == .plan ? "Planning" : "Working")
             }
-            TextField("Change your plan or search…", text: $assistant.draft)
+            TextField("Ask, or change your schedule…", text: $assistant.draft)
                 .focused(focused)
                 .submitLabel(.send)
                 .onSubmit(onSend)

@@ -464,9 +464,9 @@ enum SettingCardKind: String, CaseIterable, Hashable, Sendable {
     var detail: String {
         switch self {
         case .followLockScreen:
-            return "What's on now and next from your plan or your likes, on the Lock Screen and in the Dynamic Island."
+            return "What's on now and next from your schedule, on the Lock Screen and in the Dynamic Island."
         case .reminders:
-            return "A reminder 15 minutes before anything you've liked or planned. Comes with notifications."
+            return "A reminder before anything in your schedule (15 minutes unless you change it). Comes with notifications."
         case .notifications:
             return "Set-time changes and urgent news from the organizers."
         }

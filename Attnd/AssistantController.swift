@@ -57,6 +57,8 @@ final class AssistantController {
         var answered: [Int: Bool] = [:]
         /// The model is still writing this turn.
         var streaming = false
+        /// The working line's last stage, shown as done ("✓ Added Taco Row") once answered.
+        var status: String? = nil
     }
 
     /// "Undo" for ~8 s after a plan change was applied.
@@ -75,9 +77,11 @@ final class AssistantController {
             appState?.openPlanPage()
         }
     }
-    /// This session's turns for the wide layout's chat column (≤ 30, not stored).
+    /// The chat's turns (My plan is one continuous chat; ≤ 40, stored per event, ChatTranscript).
     private(set) var transcript: [Turn] = []
-    private static let maxTranscript = 30
+    private static let maxTranscript = ChatTranscript.maxTurns
+    /// The working line's current stage ("Searching…", "Adding Taco Row…"), nil when idle.
+    private(set) var stage: String?
     /// The Undo pill after a plan change (nil: none).
     private(set) var undoPill: UndoPill?
     /// The path of the turn being worked on (busy indicator in the input bar).
@@ -134,10 +138,12 @@ final class AssistantController {
         transcript = []
         focusPending = false
         draft = ""
-        guard eventId != nil, appState != nil, !ScreenshotMode.isActive else {
+        stage = nil
+        guard let eventId, appState != nil, !ScreenshotMode.isActive else {
             live = LiveHints()
             return
         }
+        restoreTranscript(eventId)
         refreshLive()
     }
 
@@ -155,7 +161,9 @@ final class AssistantController {
             modelAvailable: AppState.modelReady,
             history: appState.planner.history,
             units: DistanceText.usesImperial() ? .imperial : .metric,
-            locale: .current
+            locale: .current,
+            schedule: appState.mySchedule,
+            memory: appState.planner.conversation(bundle.event.id).memory
         )
     }
 
@@ -293,40 +301,49 @@ final class AssistantController {
         nextId += 1
         answer = Turn(id: id, input: text, blocks: [], source: .model, streaming: true)
         busy = .ask
+        stage = "Thinking…"
         let retrieved = AssistantModel.retrieve(text, ctx)
-        let prompt = AssistantModel.prompt(text, ctx, appState.planner.conversation(eventId), retrieved)
+        let conversation = appState.planner.conversation(eventId)
         modelTask = Task { [weak self] in
-            var raw: String?
-            var toolCalls = 0
+            var output: ModelTurnOutput?
             do {
-                let reply = try await EventAssistant.assistantTurn(prompt, bundle: ctx.bundle, now: ctx.now) { [weak self] partial in
+                output = try await EventAssistant.assistantTurn(text, ctx, conversation: conversation, retrieved: retrieved) { [weak self] partial, shown, stage in
                     guard let self, self.answer?.id == id else { return }
-                    let shown = AssistantModel.completeBlocks(partial, ctx).filter { !$0.isChips }
-                    if shown != self.answer?.blocks { self.answer?.blocks = shown }
+                    if let stage, stage != self.stage { self.stage = stage }
+                    let trimmed = partial.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let blocks = (trimmed.isEmpty ? [] : [AssistantBlock.text(trimmed)]) + shown.filter { !$0.isChips }
+                    if blocks != self.answer?.blocks { self.answer?.blocks = blocks }
                 }
-                raw = reply.raw
-                toolCalls = reply.toolCalls
             } catch is CancellationError {
                 if self?.answer?.id == id { self?.answer = nil }
                 self?.busy = nil
+                self?.stage = nil
                 return
             } catch {
+                // Never silent: logged, and the router answers this turn.
                 AppLog.warning(.assistant, "assistant.error", "Assistant turn failed", [
                     "kind": "turn", "error": .string(String(describing: type(of: error))),
                     "domain": .string((error as NSError).domain), "code": .int((error as NSError).code),
                 ])
-                raw = nil
+                output = nil
             }
             guard let self, !Task.isCancelled, self.eventId == eventId else { return }
-            let resolved = AssistantModel.resolve(text, raw: raw, ctx)
             if self.answer?.id == id { self.answer = nil }
-            if let p = PlanProposals.from(actions: resolved.turn.actions, ctx)
-                ?? resolved.routed.flatMap({ PlanProposals.from(routed: $0, ctx) }) {
-                self.propose(p, input: text, started, ctx, source: resolved.source)
+            let turn = output.map { AssistantModel.assemble(text: $0.text, shown: $0.shown, actions: $0.actions, ctx) }
+            if let turn, !turn.blocks.isEmpty || !turn.actions.isEmpty {
+                if let p = PlanProposals.from(actions: turn.actions, ctx) {
+                    self.propose(p, input: text, started, ctx, source: .model)
+                    return
+                }
+                self.finish(text, turn, .model, .question, started, ctx, modelTried: true, toolCalls: output?.toolCalls ?? 0)
                 return
             }
-            self.finish(text, resolved.turn, resolved.source, resolved.routed?.intent ?? .question, started, ctx,
-                        fallback: resolved.source == .rules, modelTried: true, toolCalls: toolCalls)
+            let routed = AssistantRouter.route(text, ctx)
+            if let p = PlanProposals.from(routed: routed, ctx) {
+                self.propose(p, input: text, started, ctx, source: .rules)
+                return
+            }
+            self.finish(text, routed.turn, .rules, routed.intent, started, ctx, fallback: true, modelTried: true, toolCalls: output?.toolCalls ?? 0)
         }
     }
 
@@ -356,6 +373,7 @@ final class AssistantController {
         }
         if proposal != nil { blocks = blocks.map(Self.withoutPlanChips).filter(Self.isNotEmptyChips) }
         let validated = context().map { BlockValidator.validate(blocks, $0.blockContext) } ?? blocks
+        if stage == nil || stage == "Thinking…", input != nil { stage = Self.stageText(for: intent, turn.actions, ctx.bundle) ?? stage }
         show(input, validated, source: source, applied: applied)
         if [.search, .question, .noMatch].contains(intent), input != nil { appState?.track(.search) }
         let ms = (ContinuousClock.now - started).wholeMilliseconds
@@ -369,7 +387,7 @@ final class AssistantController {
         if modelTried { fields["tool_calls"] = .int(toolCalls) }
         if let input { fields.merge(LogRedaction.textFields(input)) { _, new in new } }
         AppLog.info(.assistant, "assistant.turn", "Assistant turn (\(source == .model ? "model" : "rules"))", fields)
-        remember(ctx.bundle.event.id, input, AssistantTurn(blocks: validated))
+        remember(ctx.bundle.event.id, input, AssistantTurn(blocks: validated, actions: turn.actions))
     }
 
     /// A like-clash chip in the turn ("Add to plan instead of X?") as a proposal.
@@ -407,10 +425,65 @@ final class AssistantController {
 
     /// Adds a turn to the chat column (replacing one with the same id).
     private func record(_ turn: Turn) {
+        var turn = turn
+        if turn.status == nil, let stage, !turn.streaming { turn.status = Self.doneText(stage) }
         transcript.removeAll { $0.id == turn.id }
         transcript.append(turn)
         if transcript.count > Self.maxTranscript { transcript.removeFirst(transcript.count - Self.maxTranscript) }
+        if !turn.streaming {
+            stage = nil
+            saveTranscript()
+        }
     }
+
+    /// The working line of a router turn, by what it did.
+    static func stageText(for intent: AssistantIntent, _ actions: [AssistantAction], _ bundle: EventBundle) -> String? {
+        if let action = actions.first {
+            let name = action.scheduleTarget()?.name(bundle) ?? "it"
+            switch action.name {
+            case .scheduleAdd, .like: return "Adding \(name)…"
+            case .scheduleRemove, .unlike: return "Removing \(name)…"
+            case .scheduleMove: return "Moving \(name)…"
+            case .scheduleReminder: return "Setting a reminder for \(name)…"
+            case .planMake: return "Planning your day…"
+            default: break
+            }
+        }
+        switch intent {
+        case .search, .question, .noMatch, .nearMe, .whatsOn: return "Searching…"
+        case .schedule, .liked: return "Checking your schedule…"
+        default: return nil
+        }
+    }
+
+    /// "Searching…" → "Searched", "Adding Taco Row…" → "Added Taco Row".
+    static func doneText(_ stage: String) -> String {
+        let text = stage.hasSuffix("…") ? String(stage.dropLast()) : stage
+        let words: [(String, String)] = [("Searching", "Searched"), ("Adding", "Added"), ("Removing", "Removed"), ("Moving", "Moved"),
+                                         ("Setting", "Set"), ("Planning", "Planned"), ("Checking", "Checked"), ("Reading", "Read"),
+                                         ("Showing", "Showed"), ("Thinking", "Done")]
+        for (from, to) in words where text.hasPrefix(from) { return to + text.dropFirst(from.count) }
+        return text
+    }
+
+    private static func transcriptKey(_ eventId: Int) -> String { "pref.assistantTranscript.\(eventId)" }
+
+    private func saveTranscript() {
+        guard let eventId, !ScreenshotMode.isActive else { return }
+        let entries = transcript.filter { !$0.streaming }.map {
+            ChatTranscript.Entry(id: $0.id, input: $0.input, blocks: $0.blocks, fromModel: $0.source == .model, status: $0.status)
+        }
+        UserDefaults.standard.set(ChatTranscript(entries: entries).encode(), forKey: Self.transcriptKey(eventId))
+    }
+
+    private func restoreTranscript(_ eventId: Int) {
+        let stored = ChatTranscript.decode(UserDefaults.standard.string(forKey: Self.transcriptKey(eventId)))
+        transcript = stored.entries.map { Turn(id: $0.id, input: $0.input, blocks: $0.blocks, source: $0.fromModel ? .model : .rules, status: $0.status) }
+        nextId = (transcript.map(\.id).max() ?? 0) + 1
+    }
+
+    /// Starts the working line ("Searching…") for a turn.
+    func setStage(_ text: String?) { stage = text }
 
     /// The model's conversation: the user's text and what the assistant answered (text only).
     private func remember(_ eventId: Int, _ input: String?, _ turn: AssistantTurn) {
@@ -418,6 +491,7 @@ final class AssistantController {
         var conversation = appState.planner.conversation(eventId)
         if let input { conversation = conversation.with(ConversationTurn(fromUser: true, text: input)) }
         conversation = conversation.with(ConversationTurn(fromUser: false, text: AssistantFlow.replyText(turn, bundle)))
+        conversation = conversation.remembering(turn)
         appState.planner.setConversation(conversation, eventId: eventId)
     }
 
@@ -696,6 +770,50 @@ final class AssistantController {
 
     // MARK: - Executor (only validated, confirmed actions arrive here)
 
+    /// My schedule's actions (router, model tools, chips): add (a place at "HH:MM" or saved,
+    /// replacing a clashing entry), remove, move a place's time, an entry's reminder.
+    private func executeSchedule(_ action: AssistantAction, _ bundle: EventBundle, now: Date) -> ActionOutcome {
+        guard let appState else { return .failed("No event.") }
+        guard let ref = action.scheduleTarget() else { return .failed("That can't go in your schedule.") }
+        let target = AssistantRouter.target(ref)
+        let name = ref.name(bundle) ?? "it"
+        let zone = bundle.event.timeZone
+        func date(_ key: String) -> Date? {
+            action.string(key).flatMap(PlanClock.parse).map { clock in
+                MySchedule.date(clock, near: appState.mySchedule.entry(for: target)?.at, now: now, timeZone: zone)
+            }
+        }
+        defer { refreshLive() }
+        switch action.name {
+        case .scheduleAdd:
+            if let replaced = action.scheduleTarget("replace") {
+                appState.removeFromSchedule(AssistantRouter.target(replaced))
+            }
+            let at = ref.kind == .location ? action.string("time").flatMap(PlanClock.parse).map {
+                MySchedule.date($0, near: nil, now: now, timeZone: zone)
+            } : nil
+            appState.addToSchedule(target, at: at, minutes: action.params["minutes"]?.intValue)
+            let when = at.map { " at " + EventTimeFormat.time($0, in: zone) } ?? ""
+            return .done(message: "Added \(name) to your schedule\(when).", blocks: [BlockValidator.card(ref)])
+        case .scheduleRemove:
+            guard appState.isInSchedule(target) else { return .failed("\(name) isn't in your schedule.") }
+            appState.removeFromSchedule(target)
+            return .done(message: "Removed \(name) from your schedule.")
+        case .scheduleMove:
+            guard ref.kind == .location else { return .failed("\(name) is at a set time; the organizer decides when it is.") }
+            guard let at = date("time") else { return .failed("What time?") }
+            if appState.isInSchedule(target) { appState.moveEntry(target, to: at) } else { appState.addToSchedule(target, at: at) }
+            return .done(message: "Moved \(name) to \(EventTimeFormat.time(at, in: zone)).", blocks: [BlockValidator.card(ref)])
+        case .scheduleReminder:
+            guard appState.isInSchedule(target) else { return .failed("Add \(name) to your schedule first.") }
+            let minutes = MySchedule.nearestReminder(action.params["minutes"]?.intValue ?? MySchedule.defaultReminder)
+            appState.setReminder(target, minutes: minutes)
+            return .done(message: minutes == 0 ? "No reminder for \(name)." : "I'll remind you \(MyScheduleTitle.reminder(minutes)) \(name).")
+        default:
+            return .failed("I can't do that here.")
+        }
+    }
+
     fileprivate func execute(_ action: AssistantAction) -> ActionOutcome {
         guard let appState, let bundle = appState.currentBundle else { return .failed("No event.") }
         let now = Date.now
@@ -712,7 +830,9 @@ final class AssistantController {
                 blocks.append(.chips([clash]))
             }
             refreshLive()
-            return .done(message: liked ? "Liked \(name)." : "Unliked \(name).", blocks: blocks)
+            return .done(message: liked ? "Added \(name) to your schedule." : "Removed \(name) from your schedule.", blocks: blocks)
+        case .scheduleAdd, .scheduleRemove, .scheduleMove, .scheduleReminder:
+            return executeSchedule(action, bundle, now: now)
         case .planEdit:
             guard let plan else { return .failed(AssistantRouter.noPlanText) }
             guard let ops = action.ops(bundle, now: now) else { return .failed("I couldn't read that change.") }
@@ -754,7 +874,7 @@ final class AssistantController {
             }
             let text: String
             if name == .reminders {
-                text = on ? "Reminders are on: 15 minutes before liked and planned items." : "Reminders are off."
+                text = on ? "Reminders are on: 15 minutes before everything in your schedule." : "Reminders are off."
             } else {
                 text = on ? "Notifications from the organizer are on." : "Notifications from the organizer are off."
             }
@@ -888,14 +1008,6 @@ final class AssistantController {
             "target": .string(target == "plan" ? "plan" : "item"), "items": .int(items),
             "payload_len": .int(url.lastPathComponent.count), "via": "share_sheet",
         ])
-    }
-
-    /// "Ask about this" from a detail screen: "Tell me about X", put to the model, in the
-    /// answer card.
-    func askAbout(_ ref: EntityRef) {
-        guard let ctx = context(), let text = AssistantFlow.askAbout(ref, ctx.bundle) else { return }
-        proposal = nil
-        submit(text, forced: .ask)
     }
 
     /// Puts the keyboard up on the plan page's text box (now, or as soon as the page is shown).

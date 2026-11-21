@@ -28,14 +28,6 @@ struct NotificationsView: View {
                 ForEach(appState.notifications) { notification in
                     NotificationRow(notification: notification, timeZone: appState.timeZone)
                         .listRowBackground(rowBackground(notification))
-                        // Assistant spec §8 ("Ask about this"; for now the search sheet with its title).
-                        .contextMenu {
-                            if appState.hasAssistant {
-                                Button("Ask About This", systemImage: "sparkles") {
-                                    appState.askAbout(.notification(notification.id))
-                                }
-                            }
-                        }
                 }
             }
             .onAppear {

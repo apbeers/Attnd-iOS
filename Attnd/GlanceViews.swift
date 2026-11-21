@@ -385,49 +385,174 @@ struct CompassArrow: View {
     }
 }
 
-// MARK: - Hearts
+// MARK: - My schedule button (was the heart)
 
-/// A heart toggle for a location or schedule item (rows, cards, peeks). Borderless, so it
-/// works inside list rows without opening them.
+/// "+ Add" / "✓ In my schedule" for a location or schedule item (rows, cards, peeks, search,
+/// map card, Home, chat cards). Borderless, so it works inside list rows without opening them.
+/// Icon-only by default (rows); `titled` shows the words (details, cards). Places ask "When?"
+/// (`ScheduleTimeDialog`); ✓ opens the entry's menu (change time, reminder, remove).
 struct HeartButton: View {
     let target: SearchTarget
     var font: Font = .body
+    var titled = false
+
+    @Environment(AppState.self) private var appState
+    @State private var asksTime = false
+
+    var body: some View {
+        let added = appState.isInSchedule(target)
+        Group {
+            if added {
+                Menu {
+                    ScheduleEntryMenuItems(target: target, asksTime: $asksTime)
+                } label: {
+                    label(added: true)
+                }
+                .menuStyle(.button)
+                .buttonStyle(.borderless)
+            } else {
+                Button {
+                    if case .location = target {
+                        asksTime = true
+                    } else {
+                        appState.addToSchedule(target)
+                    }
+                } label: {
+                    label(added: false)
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+        .sensoryFeedback(.selection, trigger: added)
+        .scheduleTimeDialog(target: target, isPresented: $asksTime)
+    }
+
+    @ViewBuilder
+    private func label(added: Bool) -> some View {
+        let title = added ? MyScheduleText.inSchedule : MyScheduleText.add
+        let image = added ? "checkmark.circle.fill" : "plus.circle"
+        if titled {
+            Label(title, systemImage: image)
+                .font(font)
+                .foregroundStyle(added ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+                .contentShape(Rectangle())
+        } else {
+            Label(title, systemImage: image)
+                .labelStyle(.iconOnly)
+                .font(font)
+                .foregroundStyle(added ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                .frame(minWidth: 32, minHeight: 32)
+                .contentShape(Rectangle())
+                .accessibilityLabel(added ? MyScheduleText.inSchedule : MyScheduleText.addLong)
+        }
+    }
+}
+
+/// The words of My schedule (no "like" anywhere in the UI).
+enum MyScheduleText {
+    static let title = MyScheduleTitle.title
+    static let add = "Add"
+    static let addLong = "Add to my schedule"
+    static let inSchedule = "In my schedule"
+    static let remove = "Remove from My Schedule"
+    static let savedPlaces = "Saved Places"
+    static let empty = "Add things to your schedule to see them here"
+
+    static func reminder(_ minutes: Int) -> String {
+        minutes == 0 ? "Off" : minutes == 60 ? "1 hour before" : "\(minutes) min before"
+    }
+}
+
+/// An entry's menu: Change time (places), the reminder, Remove.
+struct ScheduleEntryMenuItems: View {
+    let target: SearchTarget
+    @Binding var asksTime: Bool
 
     @Environment(AppState.self) private var appState
 
     var body: some View {
-        let hearted = appState.isHearted(target)
-        Button {
-            appState.toggleHeart(target)
-        } label: {
-            Label(hearted ? "Unlike" : "Like", systemImage: hearted ? "heart.fill" : "heart")
-                .labelStyle(.iconOnly)
-                .font(font)
-                .foregroundStyle(hearted ? AnyShapeStyle(Color.pink) : AnyShapeStyle(.secondary))
-                .frame(minWidth: 32, minHeight: 32)
-                .contentShape(Rectangle())
+        if case .location = target {
+            Button("Change Time…", systemImage: "clock") { asksTime = true }
         }
-        .buttonStyle(.borderless)
-        .sensoryFeedback(.selection, trigger: hearted)
-        .accessibilityValue(hearted ? "Liked" : "")
+        let current = appState.mySchedule.entry(for: target)?.reminderMinutes ?? MySchedule.defaultReminder
+        Picker(selection: Binding(get: { current }, set: { appState.setReminder(target, minutes: $0) })) {
+            ForEach(MySchedule.reminderChoices, id: \.self) { minutes in
+                Text(MyScheduleText.reminder(minutes)).tag(minutes)
+            }
+        } label: {
+            Label("Remind Me", systemImage: current == 0 ? "bell.slash" : "bell")
+        }
+        .pickerStyle(.menu)
+        Button(MyScheduleText.remove, systemImage: "minus.circle", role: .destructive) {
+            appState.removeFromSchedule(target)
+        }
     }
 }
 
-/// The heart in a detail screen's toolbar (icon + title for vertical bars).
+extension View {
+    /// "When?" for a place: today's times (the first free one after the walk suggested) or
+    /// "Just save it".
+    func scheduleTimeDialog(target: SearchTarget, isPresented: Binding<Bool>) -> some View {
+        modifier(ScheduleTimeDialog(target: target, isPresented: isPresented))
+    }
+}
+
+private struct ScheduleTimeDialog: ViewModifier {
+    let target: SearchTarget
+    @Binding var isPresented: Bool
+
+    @Environment(AppState.self) private var appState
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog("When?", isPresented: $isPresented, titleVisibility: .visible) {
+            if case .location(let id) = target, let bundle = appState.currentBundle {
+                let choice = options(id, bundle)
+                ForEach(choice.times, id: \.self) { time in
+                    Button(label(time, suggested: choice.suggested)) {
+                        appState.addToSchedule(target, at: time)
+                    }
+                }
+                Button(saveTitle) {
+                    if appState.isInSchedule(target) {
+                        appState.moveEntry(target, to: nil)
+                    } else {
+                        appState.addToSchedule(target)
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Add it to your schedule at a time, or just save it.")
+        }
+    }
+
+    private func label(_ time: Date, suggested: Date?) -> String {
+        let text = EventTimeFormat.time(time, in: appState.timeZone)
+        return time == suggested ? "\(text) (Suggested)" : text
+    }
+
+    /// "Just Save It", or "No Time, Just Save It" when the place already has a time.
+    private var saveTitle: String {
+        appState.mySchedule.entry(for: target)?.at == nil ? "Just Save It" : "No Time, Just Save It"
+    }
+
+    private func options(_ id: Int, _ bundle: EventBundle) -> (times: [Date], suggested: Date?) {
+        let walk = appState.userLocation.direction(to: bundle.location(id)?.coordinate).flatMap { direction -> Int? in
+            WalkTime.isWithinWalkingRange(direction.meters) ? WalkTime.minutes(WalkTime.estimatedSeconds(straightMeters: direction.meters)) : nil
+        }
+        return appState.mySchedule.suggestedTimes(for: id, bundle, now: .now, walkMinutes: walk)
+    }
+}
+
+/// The add button in a detail screen's toolbar (icon + title for vertical bars).
 struct HeartToolbarItem: ToolbarContent {
     let target: SearchTarget
     let appState: AppState
 
     var body: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
-            let hearted = appState.isHearted(target)
-            Button {
-                appState.toggleHeart(target)
-            } label: {
-                Label(hearted ? "Liked" : "Like", systemImage: hearted ? "heart.fill" : "heart")
-            }
-            .tint(hearted ? Color.pink : nil)
-            .sensoryFeedback(.selection, trigger: hearted)
+            HeartButton(target: target, titled: true)
+                .environment(appState)
         }
     }
 }
@@ -550,26 +675,26 @@ struct UrgentUpdateBanner: View {
     }
 }
 
-// MARK: - Liked filter, empty
+// MARK: - My schedule filter, empty
 
-/// The Liked chip's empty state (Places, Schedule, Map): "Nothing liked yet" until something is
-/// liked; with likes that the current filter hides, a shorter note.
+/// The My schedule chip's empty state (Places, Map): until something is in My schedule; with
+/// entries that the current filter hides, a shorter note.
 struct NothingLikedView: View {
-    /// Something of this kind is liked already (the filter just shows none of it here).
+    /// Something of this kind is in My schedule already (the filter just shows none of it here).
     var hasLikes = false
 
     var body: some View {
         if hasLikes {
             ContentUnavailableView(
-                "Nothing Liked Here",
-                systemImage: "heart",
-                description: Text("None of your likes match this view.")
+                "Nothing Here",
+                systemImage: "calendar.badge.plus",
+                description: Text("Nothing in your schedule matches this view.")
             )
         } else {
             ContentUnavailableView {
-                Label("Nothing Liked Yet", systemImage: "heart")
+                Label("Nothing in Your Schedule Yet", systemImage: "calendar.badge.plus")
             } description: {
-                Text("Tap \(Image(systemName: "heart")) on places and events to see them here.")
+                Text("Tap \(Image(systemName: "plus.circle")) on places and events to add them to your schedule.")
             }
         }
     }
@@ -648,12 +773,20 @@ struct PinGlanceBadge: View {
 struct ItemProgressBar: View {
     let progress: Double
 
+    @Environment(\.themeHighlight) private var highlight
+
     var body: some View {
-        ProgressView(value: progress)
+        let bar = ProgressView(value: progress)
             .progressViewStyle(.linear)
             .scaleEffect(x: 1, y: 0.6, anchor: .center)
             .accessibilityLabel("Progress")
             .accessibilityValue("\(Int((progress * 100).rounded())) percent")
+        // API-023: the theme's highlight colour; otherwise the tint as before.
+        if let highlight {
+            bar.tint(highlight)
+        } else {
+            bar
+        }
     }
 }
 
@@ -678,7 +811,7 @@ struct LocationPeek: View {
                 HStack(alignment: .firstTextBaseline) {
                     Text(location.name).font(.headline)
                     Spacer()
-                    if hearted { Image(systemName: "heart.fill").foregroundStyle(.pink) }
+                    if hearted { Image(systemName: "checkmark.circle.fill").foregroundStyle(.tint) }
                 }
                 if let category = location.category {
                     Text(category).font(.subheadline.weight(.medium)).foregroundStyle(.tint)
@@ -713,7 +846,7 @@ struct ScheduleItemPeek: View {
             HStack(alignment: .firstTextBaseline) {
                 Text(item.name).font(.headline)
                 Spacer()
-                if hearted { Image(systemName: "heart.fill").foregroundStyle(.pink) }
+                if hearted { Image(systemName: "checkmark.circle.fill").foregroundStyle(.tint) }
             }
             Text(timeText).font(.subheadline).foregroundStyle(.secondary).monospacedDigit()
             if let relativeText {
@@ -734,7 +867,7 @@ struct ScheduleItemPeek: View {
 
 // MARK: - Hearted list (search)
 
-/// Pushed on the search sheet's stack by the "Liked" suggestion.
+/// Pushed on the search sheet's stack by the "My Schedule" suggestion.
 struct HeartedListRoute: Hashable {}
 
 struct HeartedListView: View {
@@ -754,14 +887,14 @@ struct HeartedListView: View {
             .overlay {
                 if rows.isEmpty {
                     ContentUnavailableView(
-                        "Nothing Liked",
-                        systemImage: "heart",
-                        description: Text("Tap the heart on a schedule item or place to like it and keep it here.")
+                        "Nothing in Your Schedule",
+                        systemImage: "calendar.badge.plus",
+                        description: Text("Tap \(Image(systemName: "plus.circle")) on a schedule item or place to add it here.")
                     )
                 }
             }
         }
-        .navigationTitle("Liked")
+        .navigationTitle(MyScheduleText.title)
         .navigationBarTitleDisplayMode(.inline)
         .usesUserLocation(heading: true)
     }

@@ -1178,15 +1178,15 @@ private struct NoPlanSection: View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Plan your day", systemImage: "sparkles")
                 .font(.title3.weight(.semibold))
-            Text("Say what you'd like below, or try one of these. Your iPhone plans it from the schedule, your likes and walking times. Nothing leaves your iPhone.")
+            Text("Say what you'd like below, or try one of these. Your iPhone plans it from the event's schedule, what's in your schedule and walking times. Nothing leaves your iPhone.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             if !appState.likeSet.isEmpty {
                 // Liked items are must-includes.
                 Button {
-                    assistant.makePlan("Plan my day around what I liked")
+                    assistant.makePlan("Plan my day around my schedule")
                 } label: {
-                    Label("Plan my day around what I liked", systemImage: "heart")
+                    Label("Plan my day around my schedule", systemImage: "calendar")
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .buttonStyle(.borderedProminent)
@@ -1225,10 +1225,10 @@ private struct LikedItemsList: View {
             .map { SearchTarget.scheduleItem($0.id) }
         let places = appState.locations.filter { likes.locations.contains($0.id) }.map { SearchTarget.location($0.id) }
         if !items.isEmpty || !places.isEmpty {
-            CompactList(targets: items + places, title: "Your likes", limit: 6)
+            CompactList(targets: items + places, title: "In Your Schedule", limit: 6)
                 .blockCardBackground()
         } else {
-            Text("Like things on the Map, Places or Schedule and they're planned first.")
+            Text("Add things to your schedule on the Map, Places or Schedule and they're planned first.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }

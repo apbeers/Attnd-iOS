@@ -303,7 +303,7 @@ private struct LocationPeekModifier: ViewModifier {
             Button {
                 appState.toggleHeart(target)
             } label: {
-                Label(hearted ? "Unlike" : "Like", systemImage: hearted ? "heart.slash" : "heart")
+                Label(hearted ? MyScheduleText.remove : "Add to My Schedule", systemImage: hearted ? "minus.circle" : "plus.circle")
             }
             if location.coordinate != nil, appState.shows(.map) {
                 Button {
@@ -427,8 +427,8 @@ struct CategoryChips: View {
     @Binding var selection: String?
     /// True over the map; false inside the Locations list.
     var floating = false
-    /// The "Liked" toggle chip, first in the row (nil: not shown). Places, Schedule and the Map
-    /// always show it, even before anything is liked (their empty state explains it).
+    /// The "My Schedule" toggle chip (places in My schedule), first in the row (nil: not shown).
+    /// Places and the Map always show it (their empty state explains it).
     var heartedOnly: Binding<Bool>? = nil
 
     var body: some View {
@@ -456,7 +456,7 @@ struct CategoryChips: View {
         HStack(spacing: 8) {
             if let heartedOnly {
                 let isOn = heartedOnly.wrappedValue
-                chip("Liked", systemImage: isOn ? "heart.fill" : "heart", isSelected: isOn) {
+                chip(MyScheduleText.title, systemImage: isOn ? "checkmark.circle.fill" : "checkmark.circle", isSelected: isOn) {
                     heartedOnly.wrappedValue.toggle()
                 }
             }
@@ -809,18 +809,7 @@ struct LocationDetailView: View {
         case "walk_map": walkMap
         case "directions":
             if location.coordinate != nil { directionsButton }
-        case "ask_about":
-            if appState.hasAssistant {
-                // Assistant spec §8: the plan page's assistant (only with the on-device model).
-                Button {
-                    appState.askAbout(.location(location.id))
-                } label: {
-                    Label("Ask About This", systemImage: "sparkles")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
-            }
+        // "ask_about": removed Nov 21, 2026 (no Ask About This); older layouts draw nothing.
         case "about":
             if let title = section.title {
                 Text(title).font(.title3.bold())

@@ -214,11 +214,6 @@ private struct EventRow: View {
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
-            if event.isDemo {
-                Text("Demo Event")
-                    .font(.caption.bold())
-                    .foregroundStyle(.orange)
-            }
         }
         .padding(.vertical, 4)
     }

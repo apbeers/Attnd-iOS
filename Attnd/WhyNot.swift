@@ -77,7 +77,7 @@ enum WhyNot {
             let walk = planner.walkBetween(clash, item)
             let limit = c.maxWalkMinutes
             let overLimit = !overlaps && walk != nil && limit != nil && walk! > limit!
-            let qualifier = liked ? " (liked)" : pinned ? " (you added it)" : ""
+            let qualifier = liked ? " (in your schedule)" : pinned ? " (you added it)" : ""
             let text: String
             if overlaps {
                 text = "\(name) clashes with \(clash.name)\(qualifier)."

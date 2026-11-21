@@ -845,6 +845,10 @@ final class AppState {
         locations = bundle.locations
         schedule = bundle.schedule
         notifications = bundle.notifications
+        // Migrated entries start from the content as it is now (organizer changes count from here).
+        if !ScreenshotMode.isActive, personal.mySchedule != nil, personal.updateSchedule({ $0.fillFingerprints(bundle) }) {
+            savePersonalState()
+        }
         // Screenshot mode always draws the built-in layouts, so the store screenshots never change.
         screenLayouts = ScreenshotMode.isActive ? nil : bundle.layout
 
@@ -937,35 +941,6 @@ final class AppState {
             return
         }
         navigate(to: target)
-    }
-
-    /// "Ask About This" on a location, schedule item or update detail (assistant spec §8): the
-    /// plan page's assistant with the item as context ("Tell me about X"). Only with the
-    /// on-device model (the button is hidden without it).
-    func askAbout(_ target: SearchTarget) {
-        guard currentEvent != nil, Self.modelReady else { return }
-        let name: String?
-        switch target {
-        case .location(let id):     name = location(id: id)?.name
-        case .scheduleItem(let id): name = schedule.first { $0.id == id }?.name
-        case .notification(let id): name = notifications.first { $0.id == id }?.title
-        case .event:                name = currentEvent?.name
-        }
-        guard let name, !name.isEmpty else { return }
-        AppLog.debug(.ui, "ui.action", "Ask about this", ["name": "ask_about", "id": .string(target.reference)])
-        let ref: EntityRef?
-        switch target {
-        case .location(let id):     ref = EntityRef(kind: .location, id: id)
-        case .scheduleItem(let id): ref = EntityRef(kind: .schedule, id: id)
-        case .notification(let id): ref = EntityRef(kind: .update, id: id)
-        case .event:                ref = nil
-        }
-        openPlanPage()
-        if let ref {
-            assistant.askAbout(ref)
-        } else {
-            assistant.submit("Tell me about \(name)")
-        }
     }
 
     /// The floating search button (no on-device model, screenshot mode): opens the search sheet on
@@ -1239,19 +1214,33 @@ final class AppState {
               let saved = try? JSONDecoder().decode(EventPersonalState.self, from: data) else {
             personal = EventPersonalState()
             loadPlan(for: eventId)
+            migrateScheduleIfNeeded()
             return
         }
         personal = saved
         loadPlan(for: eventId)
+        migrateScheduleIfNeeded()
+    }
+
+    /// My schedule replaces likes and the stored plan (iOS, Nov 21, 2026): once per event, the
+    /// hearted items and places and the plan's items and meal places become entries. No metrics.
+    private func migrateScheduleIfNeeded() {
+        guard personalEventId != nil, !ScreenshotMode.isActive else { return }
+        if personal.migrateSchedule(plan: planner.plan) {
+            if let bundle = currentBundle { _ = personal.updateSchedule { $0.fillFingerprints(bundle) } }
+            savePersonalState()
+            AppLog.debug(.ui, "ui.action", "My schedule migrated", ["name": "schedule_migrate", "count": .int(personal.schedule.entries.count)])
+        }
     }
 
     private func loadPlan(for eventId: Int?) {
         planner.load(eventId: eventId)
+        planner.onApply = { [weak self] plan, previous in self?.applyPlanToSchedule(plan, replacing: previous) }
         assistant.load(eventId: eventId)
         daySummaries.load(eventId: eventId)
     }
 
-    private func savePersonalState() {
+    func savePersonalState() {
         guard let eventId = personalEventId, !ScreenshotMode.isActive,
               let data = try? JSONEncoder().encode(personal) else { return }
         UserDefaults.standard.set(data, forKey: Keys.personal(eventId))
@@ -1264,20 +1253,86 @@ final class AppState {
     /// Hearts or unhearts a location or schedule item of the current event, counted as
     /// `location_heart` / `schedule_item_unheart` … with the item's id (API-009).
     func setHeart(_ hearted: Bool, for target: SearchTarget) {
-        guard currentEvent != nil, let metric = personal.setHeart(hearted, for: target) else { return }
-        savePersonalState()
-        // The Live Activity follows hearts; reminders are for hearted items.
-        liveFollowNeedsUpdate()
-        switch target {
-        case .location(let id), .scheduleItem(let id):
-            track(metric, id: id)
-        case .notification, .event:
-            break
-        }
+        hearted ? addToSchedule(target) : removeFromSchedule(target)
     }
 
     func toggleHeart(_ target: SearchTarget) {
         setHeart(!isHearted(target), for: target)
+    }
+
+    // MARK: - My schedule (iOS, replaces likes and the stored plan)
+
+    /// The current event's My schedule (empty outside an event and in screenshot mode).
+    var mySchedule: MySchedule { personal.schedule }
+
+    func isInSchedule(_ target: SearchTarget) -> Bool { personal.schedule.contains(target) }
+
+    /// Adds an item, or a place at a time (nil: saved without one). A place already there gets
+    /// the new time. Counted (API-009) only when it wasn't in My schedule.
+    func addToSchedule(_ target: SearchTarget, at: Date? = nil, minutes: Int? = nil) {
+        guard currentEvent != nil else { return }
+        let bundle = currentBundle
+        scheduleDidChange(personal.updateSchedule { schedule in
+            let change = schedule.add(target, at: at, minutes: minutes)
+            if let bundle { _ = schedule.fillFingerprints(bundle) }
+            return change
+        }.map { [$0] } ?? [])
+    }
+
+    /// Items in My schedule the organizer moved, changed or cancelled (Schedule tab hints).
+    var scheduleOrganizerChanges: [MySchedule.OrganizerChange] {
+        guard let bundle = currentBundle, !ScreenshotMode.isActive else { return [] }
+        return mySchedule.organizerChanges(bundle)
+    }
+
+    /// "Keep" on an organizer change: the item as it is now.
+    func keepOrganizerChange(_ itemId: Int) {
+        guard let bundle = currentBundle else { return }
+        personal.updateSchedule { $0.keepChange(itemId, bundle) }
+        savePersonalState()
+        liveFollowNeedsUpdate()
+    }
+
+    func removeFromSchedule(_ target: SearchTarget) {
+        guard currentEvent != nil else { return }
+        scheduleDidChange(personal.updateSchedule { $0.remove(target) }.map { [$0] } ?? [])
+    }
+
+    /// A place entry's time (nil: keep it saved without a time).
+    func moveEntry(_ target: SearchTarget, to at: Date?) {
+        guard currentEvent != nil else { return }
+        scheduleDidChange(personal.updateSchedule { $0.move(target, to: at) }.map { [$0] } ?? [])
+    }
+
+    /// The entry's reminder (minutes before; 0 = off; nil = the default 15 min).
+    func setReminder(_ target: SearchTarget, minutes: Int?) {
+        guard currentEvent != nil else { return }
+        scheduleDidChange(personal.updateSchedule { $0.setReminder(target, minutes: minutes) }.map { [$0] } ?? [])
+    }
+
+    /// A plan the planner made or changed fills My schedule (PlanStore's `onApply`).
+    func applyPlanToSchedule(_ plan: Plan?, replacing previous: Plan?) {
+        guard currentEvent != nil, !ScreenshotMode.isActive else { return }
+        scheduleDidChange(personal.updateSchedule { $0.apply(plan: plan, replacing: previous) }, reconcile: false)
+    }
+
+    /// Saves, counts real adds / removes (API-009), keeps the planner's copy of the day in line
+    /// and updates the Live Activity, reminders and widgets that follow My schedule.
+    private func scheduleDidChange(_ changes: [MyScheduleChange], reconcile: Bool = true) {
+        guard !changes.isEmpty else { return }
+        savePersonalState()
+        for change in changes {
+            guard let metric = change.metric else { continue }
+            switch change.target {
+            case .location(let id), .scheduleItem(let id): track(metric, id: id)
+            case .notification, .event: break
+            }
+        }
+        if reconcile, let bundle = currentBundle, let plan = planner.plan {
+            let reconciled = personal.schedule.reconcile(plan, bundle)
+            if reconciled != plan, let reconciled { planner.update(reconciled) }
+        }
+        liveFollowNeedsUpdate()
     }
 
     var hasHearts: Bool { personal.hasHearts }

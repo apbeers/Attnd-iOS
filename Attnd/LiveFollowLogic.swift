@@ -228,6 +228,8 @@ struct PlannedReminder: Hashable, Sendable {
     var fireDate: Date
     var title: String
     var body: String
+    /// A place entry of My schedule ("Dinner at Taco Row"): its location; `itemId` is then 0.
+    var locationId: Int? = nil
 }
 
 enum ReminderPlanner {
@@ -237,8 +239,9 @@ enum ReminderPlanner {
     static let maxReminders = 40
     static let idPrefix = "attnd.reminder."
 
-    /// One reminder per hearted schedule item (the controller passes hearted ∪ planned items)
-    /// whose reminder time is still ahead:
+    /// One reminder per schedule item in My schedule (the controller passes My schedule's items)
+    /// whose reminder time is still ahead, `leadMinutes[id]` before (default 15, 0 = none), and
+    /// one per timed place entry ("Taco Row in 15 min · 3 min walk", "In your schedule · 7:00 PM"):
     /// "Prairie Lights in 15 min · 8 min walk" (walk from `user` when within walking range and
     /// more than 20 m away), body "Main Stage · 7:30 PM". Soonest first, at most `maxReminders`.
     static func reminders(
@@ -249,24 +252,28 @@ enum ReminderPlanner {
         user: Coordinate?,
         now: Date,
         timeZone: TimeZone,
-        locale: Locale = .current
+        locale: Locale = .current,
+        leadMinutes: [Int: Int] = [:],
+        places: [ScheduleEntry] = []
     ) -> [PlannedReminder] {
         let byId = Dictionary(locations.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        let minutes = Int(leadTime / 60)
-        return schedule
+        let defaultMinutes = Int(leadTime / 60)
+        func walk(to location: Location?) -> String? {
+            guard let user, let target = location?.coordinate else { return nil }
+            let meters = Compass.distance(user, target)
+            guard meters >= DistanceText.hereMeters, WalkTime.isWithinWalkingRange(meters) else { return nil }
+            return WalkTime.rowText(straightMeters: meters)
+        }
+        let items = schedule
             .filter { hearted.contains($0.id) }
             .compactMap { item -> PlannedReminder? in
-                guard let start = item.startTime else { return nil }
-                let fire = start.addingTimeInterval(-leadTime)
+                let minutes = leadMinutes[item.id] ?? defaultMinutes
+                guard minutes > 0, let start = item.startTime else { return nil }
+                let fire = start.addingTimeInterval(-TimeInterval(minutes * 60))
                 guard fire > now else { return nil }
                 let location = item.locationId.flatMap { byId[$0] }
                 var title = "\(item.name) in \(minutes) min"
-                if let user, let target = location?.coordinate {
-                    let meters = Compass.distance(user, target)
-                    if meters >= DistanceText.hereMeters, WalkTime.isWithinWalkingRange(meters) {
-                        title += " · " + WalkTime.rowText(straightMeters: meters)
-                    }
-                }
+                if let walk = walk(to: location) { title += " · " + walk }
                 let time = EventTimeFormat.time(start, in: timeZone, locale: locale)
                 let place = location?.name ?? item.locationName
                 let body = place.map { "\($0) · \(time)" } ?? time
@@ -278,7 +285,24 @@ enum ReminderPlanner {
                     body: body
                 )
             }
-            .sorted { ($0.fireDate, $0.itemId) < ($1.fireDate, $1.itemId) }
+        let timedPlaces = places.compactMap { entry -> PlannedReminder? in
+            guard let location = byId[entry.id], let start = entry.at, entry.reminderMinutes > 0 else { return nil }
+            let minutes = entry.reminderMinutes
+            let fire = start.addingTimeInterval(-TimeInterval(minutes * 60))
+            guard fire > now else { return nil }
+            var title = "\(location.name) in \(minutes) min"
+            if let walk = walk(to: location) { title += " · " + walk }
+            return PlannedReminder(
+                id: "\(idPrefix)\(eventId).p\(location.id)",
+                itemId: 0,
+                fireDate: fire,
+                title: title,
+                body: "In your schedule · " + EventTimeFormat.time(start, in: timeZone, locale: locale),
+                locationId: location.id
+            )
+        }
+        return (items + timedPlaces)
+            .sorted { ($0.fireDate, $0.itemId, $0.locationId ?? 0) < ($1.fireDate, $1.itemId, $1.locationId ?? 0) }
             .prefix(maxReminders)
             .map { $0 }
     }

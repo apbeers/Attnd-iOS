@@ -46,6 +46,7 @@ enum LiveFollowKeys {
     static let localKindKey = "attnd_local"
     static let localEventKey = "attnd_event"
     static let localItemKey = "attnd_item"
+    static let localLocationKey = "attnd_location"
 }
 
 // ActivityKit's `Activity` is a final class Apple documents as safe to use from any thread, but the
@@ -325,7 +326,7 @@ final class LiveFollowController {
         let attributes = EventActivityAttributes(
             eventId: event.id,
             eventName: event.name,
-            accentHex: appState?.accentHex,
+            accentHex: appState?.liveActivityAccentHex,
             timeZoneIdentifier: event.timeZone.identifier,
             dayStart: day.dayStart
         )
@@ -547,6 +548,8 @@ final class LiveFollowController {
         }
         if let itemId = info.itemId {
             appState.navigate(to: .scheduleItem(itemId))
+        } else if let locationId = info.locationId {
+            appState.navigate(to: .location(locationId))
         }
         setNeedsUpdate()
         return true
@@ -564,7 +567,12 @@ final class LiveFollowController {
                 locations: bundle.locations,
                 user: appState.userLocation.location,
                 now: .now,
-                timeZone: bundle.event.timeZone
+                timeZone: bundle.event.timeZone,
+                leadMinutes: Dictionary(
+                    appState.mySchedule.entries.filter { $0.kind == .item && $0.reminder != nil }.map { ($0.id, $0.reminderMinutes) },
+                    uniquingKeysWith: { a, _ in a }
+                ),
+                places: appState.mySchedule.entries.filter { $0.kind == .place && $0.at != nil }
             )
         }
         guard planned != lastReminders else { return }
@@ -589,7 +597,13 @@ final class LiveFollowController {
             content.threadIdentifier = "attnd.reminders.\(eventId)"
             // The user asked for it by hearting the item.
             content.interruptionLevel = .timeSensitive
-            content.userInfo = [LiveFollowKeys.localKindKey: LiveFollowKeys.reminderCategory, LiveFollowKeys.localEventKey: eventId, LiveFollowKeys.localItemKey: reminder.itemId]
+            var info: [String: Any] = [LiveFollowKeys.localKindKey: LiveFollowKeys.reminderCategory, LiveFollowKeys.localEventKey: eventId]
+            if let locationId = reminder.locationId {
+                info[LiveFollowKeys.localLocationKey] = locationId
+            } else {
+                info[LiveFollowKeys.localItemKey] = reminder.itemId
+            }
+            content.userInfo = info
             let interval = max(1, reminder.fireDate.timeIntervalSinceNow)
             let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
             do {
@@ -657,6 +671,8 @@ struct LocalNotificationInfo: Hashable, Sendable {
     var kind: String
     var eventId: Int
     var itemId: Int?
+    /// A place entry's reminder (My schedule).
+    var locationId: Int?
 
     init?(userInfo: [AnyHashable: Any]) {
         guard let kind = userInfo[LiveFollowKeys.localKindKey] as? String,
@@ -664,6 +680,7 @@ struct LocalNotificationInfo: Hashable, Sendable {
         self.kind = kind
         self.eventId = eventId
         itemId = Self.int(userInfo[LiveFollowKeys.localItemKey])
+        locationId = Self.int(userInfo[LiveFollowKeys.localLocationKey])
     }
 
     private static func int(_ value: Any?) -> Int? {

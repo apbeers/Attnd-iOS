@@ -66,8 +66,6 @@ struct ScheduleView: View {
     @State private var searchText = ""
     @State private var selectedLocationId: Int?
     @State private var showEnded = false
-    /// The "Liked" chip: only liked (hearted) items.
-    @State private var heartedOnly = false
 
     private var resolvedStyle: ScheduleStyle { style ?? appState.display.scheduleStyle }
 
@@ -82,7 +80,6 @@ struct ScheduleView: View {
         appState.schedule.filter { item in
             if hidesEnded, ScheduleTiming.hasEnded(item, at: now) { return false }
             if let id = selectedLocationId, item.locationId != id { return false }
-            if heartedOnly, !appState.isHearted(.scheduleItem(item.id)) { return false }
             return SearchMatching.matches(item, query: searchText)
         }
     }
@@ -135,18 +132,13 @@ struct ScheduleView: View {
         }
     }
 
-    /// The Liked chip is always there (an empty state explains it before anything is liked). The
-    /// plan is the plan page's (PlanView.swift); the Schedule list never shows it.
+    /// "My schedule" first (iOS, Nov 21, 2026: upcoming entries, then the ended ones dimmed),
+    /// then the event's whole schedule in its style. No Liked chip any more.
     @ViewBuilder
     private func listContent(sections: [ScheduleSection], now: Date) -> some View {
-        CategoryChips(
-            categories: [],
-            selection: .constant(nil),
-            heartedOnly: $heartedOnly
-        )
-        .listRowInsets(EdgeInsets())
-        .listRowSeparator(.hidden)
-        .listRowBackground(Color.clear)
+        if searchText.isEmpty, selectedLocationId == nil {
+            MyScheduleSection(now: now, open: open)
+        }
         scheduleSections(sections, now: now)
     }
 
@@ -220,10 +212,6 @@ struct ScheduleView: View {
                 ContentUnavailableView.search(text: searchText)
             } else if appState.isLoading {
                 ProgressView()
-            } else if heartedOnly, !appState.schedule.contains(where: { appState.isHearted(.scheduleItem($0.id)) }) {
-                NothingLikedView()
-            } else if heartedOnly, selectedLocationId != nil {
-                NothingLikedView(hasLikes: true)
             } else if hidesEnded, !appState.schedule.isEmpty {
                 ContentUnavailableView(
                     "All Done!",
@@ -255,7 +243,7 @@ struct ScheduleView: View {
 
 // MARK: - Row
 
-private struct ScheduleRowView: View {
+struct ScheduleRowView: View {
     let item: ScheduleItem
     let showLocation: Bool
     let now: Date
@@ -348,7 +336,7 @@ private struct ScheduleItemPeekModifier: ViewModifier {
             Button {
                 appState.toggleHeart(target)
             } label: {
-                Label(hearted ? "Unlike" : "Like", systemImage: hearted ? "heart.slash" : "heart")
+                Label(hearted ? MyScheduleText.remove : "Add to My Schedule", systemImage: hearted ? "minus.circle" : "plus.circle")
             }
             if let location, location.coordinate != nil, appState.shows(.map) {
                 Button {
@@ -436,17 +424,7 @@ struct ScheduleItemDetailView: View {
                 Countdown(item: item)
             }
         case "place_link": placeLink(section)
-        case "ask_about":
-            Section {
-                // Assistant spec §8: the plan page's assistant (only with the on-device model).
-                if appState.hasAssistant {
-                    Button {
-                        appState.askAbout(.scheduleItem(item.id))
-                    } label: {
-                        Label("Ask About This", systemImage: "sparkles")
-                    }
-                }
-            }
+        // "ask_about": removed Nov 21, 2026 (no Ask About This); older layouts draw nothing.
         default:
             EmptyView()
         }
@@ -514,4 +492,130 @@ struct ScheduleItemDetailView: View {
 #Preview {
     ScheduleTab()
         .environment(AppState())
+}
+
+// MARK: - My schedule section
+
+/// The Schedule tab's first section: My schedule's timed entries (items and places at a time),
+/// upcoming first and the ended ones dimmed at the end, then saved places. Hidden while empty.
+private struct MyScheduleSection: View {
+    let now: Date
+    let open: (ScheduleItem) -> Void
+
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        if let bundle = appState.currentBundle {
+            let rows = appState.mySchedule.sectionRows(bundle, now: now)
+            let saved = appState.mySchedule.savedPlaceIds.compactMap { bundle.location($0) }
+            let changes = appState.scheduleOrganizerChanges
+            if !rows.isEmpty || !saved.isEmpty || !changes.isEmpty {
+                Section {
+                    ForEach(changes) { change in
+                        OrganizerChangeRow(change: change)
+                    }
+                    ForEach(rows) { row in
+                        rowView(row, bundle)
+                            .opacity(row.ended ? 0.5 : 1)
+                    }
+                    ForEach(saved) { location in
+                        Button {
+                            appState.navigate(to: .location(location.id))
+                        } label: {
+                            HStack {
+                                Label(location.name, systemImage: "mappin.and.ellipse")
+                                    .foregroundStyle(.primary)
+                                Spacer()
+                                Text("Saved").font(.caption).foregroundStyle(.secondary)
+                                HeartButton(target: .location(location.id), font: .subheadline)
+                            }
+                        }
+                    }
+                } header: {
+                    Text(MyScheduleText.title)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func rowView(_ row: MyScheduleRow, _ bundle: EventBundle) -> some View {
+        switch row.entry.kind {
+        case .item:
+            if let item = bundle.scheduleItem(row.entry.id) {
+                NavigationLink(value: item) {
+                    ScheduleRowView(item: item, showLocation: true, now: now, timeZone: appState.timeZone)
+                }
+                .scheduleItemPeek(item, now: now) { open(item) }
+            }
+        case .place:
+            Button {
+                appState.navigate(to: .location(row.entry.id))
+            } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(EventTimeFormat.range(start: row.start, end: row.end, in: appState.timeZone, now: now))
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                    HStack(alignment: .firstTextBaseline) {
+                        Label(row.name, systemImage: "mappin.and.ellipse")
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        HeartButton(target: row.target, font: .subheadline)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        }
+    }
+}
+
+/// "Moved to 8:00 PM · Keep / Remove / Find Another" for an item in My schedule the organizer
+/// changed (iOS: a live hint with a fix).
+private struct OrganizerChangeRow: View {
+    let change: MySchedule.OrganizerChange
+
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label {
+                Text(text).font(.subheadline)
+            } icon: {
+                Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
+            }
+            HStack(spacing: 8) {
+                if change.kind != .cancelled {
+                    Button("Keep") { appState.keepOrganizerChange(change.itemId) }
+                }
+                Button("Remove", role: .destructive) {
+                    if change.kind == .cancelled {
+                        appState.keepOrganizerChange(change.itemId)
+                    } else {
+                        appState.removeFromSchedule(.scheduleItem(change.itemId))
+                    }
+                }
+                Button("Find Another") {
+                    appState.searchText = change.name
+                    appState.openSearch()
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var text: String {
+        switch change.kind {
+        case .moved(let start):
+            return "\(change.name) moved to \(EventTimeFormat.time(start, in: appState.timeZone))."
+        case .changed:
+            return "\(change.name) changed."
+        case .cancelled:
+            return "\(change.name) was cancelled."
+        }
+    }
 }

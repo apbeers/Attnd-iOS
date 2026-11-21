@@ -174,7 +174,7 @@ struct EventSearchView: View {
             Section {
                 if appState.hasHearts {
                     NavigationLink(value: HeartedListRoute()) {
-                        Label("Liked", systemImage: "heart.fill")
+                        Label(MyScheduleText.title, systemImage: "calendar")
                     }
                 }
                 ForEach(items) { suggestion in

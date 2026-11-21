@@ -82,79 +82,21 @@ struct SectionType: Hashable, Sendable {
     var defaultShow: [String] = []
 }
 
-/// The section types this build draws, per screen.
+/// The section types this build draws, per screen: the layout side of the one component
+/// catalogue (`ComponentCatalogue`, Component.swift).
 enum SectionCatalogue {
     /// Sent as `X-Attnd-Sections`; the server only sends sections of this version or older.
-    static let version = 1
+    /// 2 (Nov 21, 2026): `my_schedule` on Home (`plan_today` / `liked` map to it).
+    static let version = 2
 
-    static let itemHeaderParts = ["time", "status", "tags"]
-    static let placeHeaderParts = ["image", "category", "tags", "address", "distance", "now_next"]
+    static let itemHeaderParts = ComponentCatalogue.itemHeaderParts
+    static let placeHeaderParts = ComponentCatalogue.placeHeaderParts
 
-    static let types: [LayoutScreen: [String: SectionType]] = [
-        .itemDetail: [
-            "header": SectionType(parts: itemHeaderParts, defaultShow: itemHeaderParts),
-            "about": SectionType(needs: ["description", "context.about"]),
-            "performers": SectionType(needs: ["context.performers"]),
-            "good_to_know": SectionType(needs: ["context.price", "context.age_limit", "context.accessibility"]),
-            "links": SectionType(needs: ["context.links"]),
-            "place_link": SectionType(),
-            "countdown": SectionType(needs: ["upcoming"]),
-            "ask_about": SectionType(needs: ["model_available"]),
-        ],
-        .placeDetail: [
-            "header": SectionType(parts: placeHeaderParts, defaultShow: placeHeaderParts),
-            "walk_map": SectionType(needs: ["coordinate"]),
-            "directions": SectionType(needs: ["coordinate"]),
-            "ask_about": SectionType(needs: ["model_available"]),
-            "about": SectionType(needs: ["description", "context.about"]),
-            "hours": SectionType(needs: ["context.hours"]),
-            "good_to_know": SectionType(needs: ["context.age_limit", "context.accessibility"]),
-            "menu": SectionType(needs: ["context.menu"]),
-            "links": SectionType(needs: ["context.links", "website"]),
-            "now_next": SectionType(needs: ["items_here"]),
-            "at_this_location": SectionType(needs: ["items_here"]),
-        ],
-        .eventInfo: [
-            "header": SectionType(parts: ["website"], defaultShow: ["website"]),
-            "about": SectionType(needs: ["description", "context.about"]),
-            "faq": SectionType(needs: ["context.faq"]),
-            "amenities": SectionType(needs: ["context.amenities"]),
-            "getting_there": SectionType(needs: ["context.getting_there"]),
-            "accessibility": SectionType(needs: ["context.accessibility"]),
-            "policies": SectionType(needs: ["context.policies"]),
-            "weather_plan": SectionType(needs: ["context.weather_plan"]),
-            "links": SectionType(needs: ["context.links"]),
-        ],
-        .optionsEvent: [
-            "header": SectionType(),
-            "website": SectionType(needs: ["website"]),
-            "event_info_link": SectionType(needs: ["context"]),
-        ],
-        .mapOverlay: [
-            "now_playing": SectionType(needs: ["now_playing"]),
-            "selected_place": SectionType(),
-        ],
-        .home: [
-            "header": SectionType(),
-            "urgent": SectionType(needs: ["urgent"]),
-            "countdown": SectionType(needs: ["before_start"]),
-            "now_next": SectionType(needs: ["schedule"]),
-            "plan_today": SectionType(needs: ["plan"]),
-            "liked": SectionType(needs: ["likes"]),
-            "whats_on": SectionType(needs: ["schedule"]),
-            "map": SectionType(needs: ["pins"]),
-            "places": SectionType(needs: ["locations"]),
-            "updates": SectionType(needs: ["updates"]),
-            "faq": SectionType(needs: ["context.faq"]),
-            "getting_there": SectionType(needs: ["context.getting_there"]),
-            "about": SectionType(needs: ["description", "context.about"]),
-            "links": SectionType(needs: ["context.links"]),
-            "flyer": SectionType(needs: ["flyer"]),
-            "website": SectionType(needs: ["website"]),
-        ],
-    ]
+    static var types: [LayoutScreen: [String: SectionType]] { ComponentCatalogue.screenTypes }
 
-    static func type(_ name: String, on screen: LayoutScreen) -> SectionType? { types[screen]?[name] }
+    static func type(_ name: String, on screen: LayoutScreen) -> SectionType? {
+        ComponentCatalogue.screenTypes[screen]?[ComponentCatalogue.canonical(name)]
+    }
 
     /// Every fact name a `has:` condition may use.
     static let facts: Set<String> = [
@@ -182,11 +124,11 @@ enum ScreenLayout {
         .itemDetail: [
             LayoutSection("header", show: SectionCatalogue.itemHeaderParts), LayoutSection("about"),
             LayoutSection("performers"), LayoutSection("good_to_know"), LayoutSection("links"),
-            LayoutSection("place_link"), LayoutSection("ask_about"),
+            LayoutSection("place_link"),
         ],
         .placeDetail: [
             LayoutSection("header", show: SectionCatalogue.placeHeaderParts), LayoutSection("walk_map"),
-            LayoutSection("ask_about"), LayoutSection("about"), LayoutSection("hours"), LayoutSection("good_to_know"),
+            LayoutSection("about"), LayoutSection("hours"), LayoutSection("good_to_know"),
             LayoutSection("menu"), LayoutSection("links"), LayoutSection("at_this_location"),
         ],
         .eventInfo: [
@@ -198,7 +140,7 @@ enum ScreenLayout {
         .mapOverlay: [LayoutSection("now_playing"), LayoutSection("selected_place")],
         .home: [
             LayoutSection("header"), LayoutSection("urgent"), LayoutSection("countdown"),
-            LayoutSection("now_next", when: ["not:after_end"]), LayoutSection("plan_today"), LayoutSection("liked"),
+            LayoutSection("now_next", when: ["not:after_end"]), LayoutSection("my_schedule"),
             LayoutSection("map"), LayoutSection("updates", limit: 3), LayoutSection("faq", limit: 3),
             LayoutSection("getting_there"), LayoutSection("about"),
         ],
@@ -217,7 +159,7 @@ enum ScreenLayout {
         var seen = Set<String>()
         var out: [LayoutSection] = []
         for raw in sections {
-            let name = raw.type.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let name = ComponentCatalogue.canonical(raw.type)
             guard let type = SectionCatalogue.type(name, on: screen), seen.insert(name).inserted else { continue }
             var section = LayoutSection(name)
             var parts = Set<String>()

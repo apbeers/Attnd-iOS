@@ -754,24 +754,24 @@ final class Planner {
 
     func reason(_ item: ScheduleItem) -> String {
         let group = constraints.groupLikes[item.id] ?? 0
-        if group >= 2 { return "Liked by \(group) of you" }
-        if heartedItems.contains(item.id) { return "You liked this" }
+        if group >= 2 { return "Picked by \(group) of you" }
+        if heartedItems.contains(item.id) { return MySchedule.inScheduleReason }
         if constraints.pinned.contains(item.id) { return "You added this" }
         if let best = bestSimilar(item, heartedLiked), best.similarity >= Self.similarReason {
-            return "Because you liked \(best.item.name)"
+            return "Because \(best.item.name) is in your schedule"
         }
         if let tag = item.tags.first(where: { likedTags.contains($0.lowercased()) }) {
-            return "Because you like \(tag.lowercased())"
+            return "Because you asked for \(tag.lowercased())"
         }
         if let category = category(item), likedCategories.contains(category.lowercased()) {
-            return "Because you like \(category.lowercased())"
+            return "Because you asked for \(category.lowercased())"
         }
         if let location = location(item.locationId), heartedLocations.contains(location.id) {
-            return "At \(location.name), which you liked"
+            return "At \(location.name), in your schedule"
         }
         if kid(item) == 1 { return "Kid-friendly" }
         if let best = bestSimilar(item, namedLiked), best.similarity >= Self.similarReason {
-            return "Like \(best.item.name)"
+            return "Similar to \(best.item.name)"
         }
         return "Fits your day"
     }

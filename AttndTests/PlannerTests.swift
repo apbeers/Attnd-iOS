@@ -86,7 +86,7 @@ final class PlannerTests: XCTestCase {
         let prairie = planned(plan, 101)
         XCTAssertEqual(prairie.orInstead, [114])
         XCTAssertEqual(prairie.alternatives, [114])
-        XCTAssertEqual(prairie.reason, "You liked this")
+        XCTAssertEqual(prairie.reason, "In your schedule")
         XCTAssertEqual(prairie.walkMinutes, 4)
         // The lunch break suggests the food location nearest to where the attendee was.
         XCTAssertEqual(day.meals.count, 1)
@@ -95,8 +95,8 @@ final class PlannerTests: XCTestCase {
         XCTAssertEqual(lunch.locationId, 6)
         XCTAssertEqual(minutes(lunch.start, lunch.end), 45)
         // Reasons and walks.
-        XCTAssertEqual(planned(plan, 103).reason, "Because you liked The Prairie Lights")
-        XCTAssertEqual(planned(plan, 104).reason, "Because you like live music")
+        XCTAssertEqual(planned(plan, 103).reason, "Because The Prairie Lights is in your schedule")
+        XCTAssertEqual(planned(plan, 104).reason, "Because you asked for live music")
         XCTAssertNil(plan.items[0].walkMinutes) // first item of the day
         XCTAssertNil(plan.items[1].walkMinutes) // Gates open has no location
         XCTAssertEqual(planned(plan, 103).walkMinutes, 0) // same stage as Ana Morales Trio
@@ -157,7 +157,7 @@ final class PlannerTests: XCTestCase {
             preferences: PlanPreferences(dislikedTags: ["dj"], similarTo: [103], earliest: PlanClock(hour: 17, minute: 0))
         ).plan(from: now, request: "")
         XCTAssertEqual(clock(plan), ["17:00 105", "18:15 113", "20:00 114"])
-        XCTAssertEqual(planned(plan, 114).reason, "Like Big Sky Radio")
+        XCTAssertEqual(planned(plan, 114).reason, "Similar to Big Sky Radio")
         XCTAssertFalse(plan.itemIds.contains(104))
     }
 

@@ -42,14 +42,31 @@ struct RouterContext: Sendable {
     var history = PlanHistory()
     var units: DistanceUnits = .imperial
     var locale = Locale(identifier: "en_US")
+    /// My schedule (iOS): timed places, reminders, clashes. `likes` mirrors its membership.
+    var schedule = MySchedule()
+    /// What the conversation showed ("add it", "the second one").
+    var memory = ConversationContext()
 
     var blockContext: BlockContext { BlockContext(bundle: bundle, plan: plan, now: now) }
+
+    /// My schedule as the router sees it: the entries, plus likes and planned items it doesn't
+    /// list yet (they are in My schedule in the app; tests may pass only likes and a plan).
+    var mine: MySchedule {
+        var merged = schedule
+        for id in likes.scheduleItems.union(plan?.itemIds ?? []).sorted() where !merged.contains(.scheduleItem(id)) {
+            merged.add(.scheduleItem(id))
+        }
+        for id in likes.locations.sorted() where !merged.contains(.location(id)) { merged.add(.location(id)) }
+        return merged
+    }
 }
 
 enum AssistantIntent: Hashable, Sendable {
     case empty, search, question, noMatch, pick, whatsOn, nearMe, like, unlike, liked
     case planEdit, planUndo, planVersion, planCompare, planMake, planShow, planNext, walking, recap, noPlan
     case whyNot, toggle, open, share, calendar
+    /// My schedule commands (add / remove / move / remind / what's on my schedule / clashes).
+    case schedule
 }
 
 /// A routed turn: what the router understood, the turn (validated blocks + actions) and any plan preview.
@@ -74,7 +91,7 @@ enum AssistantRouter {
     static let askUnavailable = "Ask needs on-device AI, which isn't available on this phone. Here's what matches."
     static let noMatchText = "Nothing matches that. Try one of these:"
     static let noPlanText = "You don't have a plan yet."
-    private static let filler: Set<String> = ["the", "a", "an", "thing", "one", "that", "this"]
+    private static let filler: Set<String> = ["the", "a", "an", "thing", "one", "that", "this", "it", "please"]
     private static let minBasePerToken = 3.0
     private static let questionWords: Set<String> = ["what", "when", "where", "who", "which", "how", "is", "are", "does", "do", "can", "will", "whats"]
 
@@ -102,10 +119,12 @@ enum AssistantRouter {
             return done(.calendar, blocks, ctx)
         }
 
+        if let turn = scheduleCommand(cmd, ctx) { return turn }
+
         if let turn = planCommand(cmd, ctx) { return turn }
 
         if let m = Rx.find(#"^(?:unlike|unheart|un like)\s+(.+)$"#, cmd) { return like(m[1], liked: false, ctx) }
-        if let m = Rx.find(#"^(?:like|heart|love|save|i like|i love)\s+(.+)$"#, cmd) { return like(m[1], liked: true, ctx) }
+        if let m = Rx.find(#"^(?:like|heart|love|i like|i love)\s+(.+)$"#, cmd) { return like(m[1], liked: true, ctx) }
 
         if let action = toggle(cmd) {
             return done(.toggle, [.confirm(action: action, prompt: ActionRegistry.confirmPrompt(action))], ctx)
@@ -141,7 +160,7 @@ enum AssistantRouter {
         }
 
         if Rx.matches(#"(?:(?:show|open|see)\s+)?(?:me\s+)?(?:my\s+)?plan"#, cmd) || cmd == "my plan" {
-            guard plan != nil else { return noPlan(ctx) }
+            guard plan != nil else { return done(.schedule, myScheduleBlocks(nil, ctx), ctx) }
             return done(.planShow, planBlocks(ctx), ctx)
         }
         if Rx.contains(#"\b(how far|how much walking|walking)\b"#, cmd) && !cmd.contains("short") {
@@ -156,7 +175,7 @@ enum AssistantRouter {
             return done(.recap, [.text(recap.text), .summary("recap"), chips(recap.chips)], ctx)
         }
 
-        if Rx.matches(#"liked|likes|my likes|what (?:have|did) i liked?|show (?:me )?(?:my )?likes|what i liked|things i liked"#, cmd) {
+        if Rx.matches(#"liked|likes|my likes|what (?:have|did) i liked?|show (?:me )?(?:my )?likes|what i liked|things i liked|saved|saved places|my saved places"#, cmd) {
             return done(.liked, likedBlocks(ctx), ctx)
         }
 
@@ -187,6 +206,299 @@ enum AssistantRouter {
     static func command(_ input: String) -> String {
         let spaced = Rx.replace(#"[^\p{L}\p{N}:]+"#, AssistantSearch.fold(input), with: " ")
         return Rx.replace(#"\s+"#, spaced.trimmingCharacters(in: .whitespacesAndNewlines), with: " ")
+    }
+
+    // MARK: My schedule (iOS, Nov 21, 2026)
+
+    /// "my schedule", "my plan", "my itinerary", "my agenda", "my day".
+    private static let scheduleNoun = #"(?:my\s+)?(?:schedule|plan|itinerary|agenda|day)"#
+    private static let clockPattern = #"(\d{1,2})(?::(\d{2}))?\s*(am|pm|a m|p m)?"#
+    private static let mealWords: Set<String> = ["dinner", "lunch", "breakfast", "brunch", "food", "eat", "something to eat", "a bite", "snack", "snacks", "drinks"]
+
+    /// The My schedule grammar (before the plan rules): add / put / save / book <x> (to my
+    /// schedule) (at <time>); remove / drop / cancel / skip <x> (from my schedule); move <x> to
+    /// <time>; remind me <n> min before <x> / remind me about <x> <n> min before / don't remind me
+    /// about <x>; what's on my schedule (<day>); show <x> on the map; directions (to) <x>; find <x>.
+    /// Names resolve through the conversation memory first ("it", "the second one").
+    static func scheduleCommand(_ cmd: String, _ ctx: RouterContext) -> RoutedTurn? {
+        let kinds: Set<RefKind> = [.schedule, .location]
+        if let m = Rx.find(#"^(?:find|search for|look for|looking for|i want|i need|get me)\s+(.+)$"#, cmd) {
+            let phrase = m[1].trimmingCharacters(in: .whitespaces)
+            let query = mealWords.contains(Rx.replace(#"^(?:some|a|an|the)\s+"#, phrase, with: "")) ? "food" : AssistantSearch.keywords(phrase)
+            let results = AssistantSearch.search(ctx.bundle, query, now: ctx.now)
+            if results.isEmpty { return done(.noMatch, [.text(noMatchText), .chips(suggestionChips(ctx))], ctx) }
+            return done(.search, searchBlocks(results, ctx), ctx)
+        }
+        if let m = Rx.find(#"^(?:add|put|save|book|schedule)\s+(.+?)(?:\s+(?:to|in|on|into)\s+"# + scheduleNoun + #")?(?:\s+(?:at|for)\s+"# + clockPattern + #")?$"#, cmd) {
+            let time = m[2].isEmpty ? nil : clock([m[0], m[2], m[3], m[4]], ctx)
+            if m[1].hasSuffix(" calendar") { return nil }
+            return withScheduleEntity(m[1], kinds, ctx) { refs in
+                refs.count == 1 ? add(refs[0], time: time, ctx) : addMany(refs, ctx)
+            }
+        }
+        if let m = Rx.find(#"^(?:remove|drop|cancel|skip|delete|take off|take out)\s+(.+?)(?:\s+(?:from|off|out of)\s+"# + scheduleNoun + ")?$", cmd) {
+            return withScheduleEntity(m[1], kinds, ctx, preferScheduled: true) { refs in remove(refs, ctx) }
+        }
+        if let m = Rx.find(#"^(?:move|change|reschedule|push|switch)\s+(.+?)\s+to\s+"# + clockPattern + "$", cmd) {
+            guard let time = clock([m[0], m[2], m[3], m[4]], ctx) else { return nil }
+            return withScheduleEntity(m[1], kinds, ctx, preferScheduled: true) { refs in move(refs[0], time, ctx) }
+        }
+        if let m = Rx.find(#"^remind me\s+(\d{1,3})\s*(min|mins|minutes|m|hour|hours|h)?\s+before\s+(.+)$"#, cmd) {
+            let minutes = (Int(m[1]) ?? 15) * (m[2].hasPrefix("h") ? 60 : 1)
+            return withScheduleEntity(m[3], kinds, ctx, preferScheduled: true) { refs in remind(refs[0], minutes, ctx) }
+        }
+        if let m = Rx.find(#"^remind me\s+(?:about|of|before)\s+(.+?)(?:\s+(\d{1,3})\s*(min|mins|minutes|m|hour|hours|h)?\s+before)?$"#, cmd) {
+            let minutes = m[2].isEmpty ? MySchedule.defaultReminder : (Int(m[2]) ?? 15) * (m[3].hasPrefix("h") ? 60 : 1)
+            return withScheduleEntity(m[1], kinds, ctx, preferScheduled: true) { refs in remind(refs[0], minutes, ctx) }
+        }
+        if let m = Rx.find(#"^(?:don t|do not|dont|stop|no)\s+remind(?:ing)?\s+me\s+(?:about|of)\s+(.+)$"#, cmd) {
+            return withScheduleEntity(m[1], kinds, ctx, preferScheduled: true) { refs in remind(refs[0], 0, ctx) }
+        }
+        if let m = Rx.find(#"^(?:what s|whats|what is|what do i have|show|show me|see)?\s*(?:on|in)?\s*my\s+(?:schedule|itinerary|agenda)(?:\s+(?:for\s+|on\s+)?(today|tonight|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun))?$"#, cmd) {
+            return done(.schedule, myScheduleBlocks(m[1].isEmpty ? nil : day(m[1], ctx), ctx), ctx)
+        }
+        if let m = Rx.find(#"^(?:show|see|put|find)\s+(.+?)\s+on\s+(?:the\s+)?map$"#, cmd) {
+            return withScheduleEntity(m[1], kinds, ctx) { refs in
+                guard let place = placeOf(refs[0], ctx) else {
+                    return done(.open, [.text("\(name(refs[0], ctx)) has no place on the map.")], ctx)
+                }
+                return done(.open, [.text("Showing \(ctx.bundle.location(place)?.name ?? "it") on the map.")], ctx,
+                            actions: [.open("map", EntityRef(kind: .location, id: place))])
+            }
+        }
+        if let m = Rx.find(#"^(?:directions|get directions|walking directions|walk me|take me|how do i get)(?:\s+(?:to|there|here))?\s*(.*)$"#, cmd) {
+            let phrase = m[1].isEmpty ? "there" : m[1]
+            return withScheduleEntity(phrase, kinds, ctx) { refs in
+                guard let place = placeOf(refs[0], ctx), ctx.bundle.location(place)?.coordinate != nil else {
+                    return done(.open, [.text("There's no map point for \(name(refs[0], ctx)).")], ctx)
+                }
+                return done(.open, [.text("Directions to \(ctx.bundle.location(place)?.name ?? "it").")], ctx, actions: [.directions(place)])
+            }
+        }
+        return nil
+    }
+
+    /// The place of an entity: a place itself, an item's location.
+    private static func placeOf(_ ref: EntityRef, _ ctx: RouterContext) -> Int? {
+        switch ref.kind {
+        case .location: return ref.id
+        case .schedule: return ctx.bundle.scheduleItem(ref.id)?.locationId.flatMap { ctx.bundle.location($0)?.id }
+        case .update: return nil
+        }
+    }
+
+    /// Resolves for My schedule: memory first; with `preferScheduled`, entries win when any match.
+    private static func withScheduleEntity(_ phrase: String, _ kinds: Set<RefKind>, _ ctx: RouterContext, preferScheduled: Bool = false,
+                                           found: ([EntityRef]) -> RoutedTurn) -> RoutedTurn {
+        if let refs = ctx.memory.resolve(phrase, kinds: kinds, ctx.bundle), !refs.isEmpty {
+            let text = command(phrase)
+            if refs.count == 1 || ["them", "both", "both of them", "those", "these", "all of them", "all of those", "all three", "all"].contains(text) {
+                return found(refs)
+            }
+            return pick(refs, ctx, .schedule) { ref in AssistantChip(label: name(ref, ctx), action: .scheduleAdd(ref)) }
+        }
+        switch resolve(phrase, kinds, ctx) {
+        case .found(let ref): return found([ref])
+        case .ambiguous(let refs):
+            if preferScheduled {
+                let scheduled = refs.filter { ctx.mine.contains(target($0)) }
+                if scheduled.count == 1 { return found(scheduled) }
+            }
+            return pick(refs, ctx, .schedule) { ref in AssistantChip(label: name(ref, ctx), action: .scheduleAdd(ref)) }
+        case .notFound:
+            // Small typos ("prairie lihgts"): the search's best result when it is the only one on top.
+            let words = command(phrase).split(separator: " ").map(String.init).filter { !filler.contains($0) }
+            let results = AssistantSearch.search(ctx.bundle, words.joined(separator: " "), now: ctx.now)
+                .filter { r in RefKind.of(r.kind).map { kinds.contains($0) } ?? false }
+            if let first = results.first, let ref = EntityRef.of(first), !words.isEmpty,
+               results.dropFirst().first.map({ base($0) < base(first) }) ?? true {
+                return found([ref])
+            }
+            return notFound(phrase, ctx)
+        }
+    }
+
+    static func target(_ ref: EntityRef) -> SearchTarget {
+        switch ref.kind {
+        case .schedule: return .scheduleItem(ref.id)
+        case .location: return .location(ref.id)
+        case .update: return .notification(ref.id)
+        }
+    }
+
+    private static func clockOf(_ date: Date, _ ctx: RouterContext) -> PlanClock {
+        let calendar = PlanCalendar.calendar(ctx.bundle.event.timeZone)
+        return PlanClock(hour: calendar.component(.hour, from: date), minute: calendar.component(.minute, from: date))
+    }
+
+    private static func time(_ date: Date, _ ctx: RouterContext) -> String {
+        AssistantText.format(date, "h:mm a", ctx.bundle.event.timeZone, ctx.locale)
+    }
+
+    /// "Added X" / the clash question / "When?" for a place without a time.
+    private static func add(_ ref: EntityRef, time clock: PlanClock?, _ ctx: RouterContext) -> RoutedTurn {
+        let bundle = ctx.bundle
+        let entry = ctx.mine.entry(for: target(ref))
+        let card = BlockValidator.card(ref)
+        switch ref.kind {
+        case .schedule:
+            if entry != nil {
+                return done(.schedule, [.text("**\(name(ref, ctx))** is already in your schedule."), card, chips(entityChips(ref, ctx))], ctx)
+            }
+            if let span = ctx.mine.span(of: target(ref), bundle),
+               let clash = ctx.mine.clashes(start: span.start, end: span.end, excluding: target(ref), bundle, now: ctx.now).first {
+                return clashTurn(ref, clash, time: nil, ctx)
+            }
+            return done(.schedule, [.text("Added **\(name(ref, ctx))** to your schedule."), card, chips(addedChips(ref, ctx))], ctx,
+                        actions: [.scheduleAdd(ref)])
+        case .location:
+            guard let clock else {
+                if entry != nil {
+                    let at = entry?.at.map { " at " + time($0, ctx) } ?? ""
+                    return done(.schedule, [.text("**\(name(ref, ctx))** is already in your schedule\(at)."), card, chips(entityChips(ref, ctx))], ctx)
+                }
+                let options = ctx.mine.suggestedTimes(for: ref.id, bundle, now: ctx.now, walkMinutes: walkMinutes(ref.id, ctx))
+                var list = Array(options.times.prefix(3)).map { at in
+                    AssistantChip(label: time(at, ctx), action: .scheduleAdd(ref, time: clockOf(at, ctx).description))
+                }
+                if let suggested = options.suggested, !options.times.prefix(3).contains(suggested) {
+                    list.insert(AssistantChip(label: time(suggested, ctx), action: .scheduleAdd(ref, time: clockOf(suggested, ctx).description)), at: 0)
+                }
+                list.append(AssistantChip(label: "Just save it", action: .scheduleAdd(ref)))
+                return done(.schedule, [.text("When do you want to go to **\(name(ref, ctx))**?"), card, chips(list)], ctx)
+            }
+            let at = MySchedule.date(clock, near: nil, now: ctx.now, timeZone: bundle.event.timeZone)
+            if let span = ctx.mine.span(of: target(ref), at: at, bundle),
+               let clash = ctx.mine.clashes(start: span.start, end: span.end, excluding: target(ref), bundle, now: ctx.now).first {
+                return clashTurn(ref, clash, time: clock, ctx)
+            }
+            let verb = entry == nil ? "Added" : "Moved"
+            return done(.schedule, [.text("\(verb) **\(name(ref, ctx))** \(entry == nil ? "to your schedule at" : "to") \(time(at, ctx))."), card,
+                                    chips(addedChips(ref, ctx))], ctx, actions: [.scheduleAdd(ref, time: clock.description)])
+        case .update:
+            return done(.schedule, [.text("Updates can't go in your schedule.")], ctx)
+        }
+    }
+
+    /// "That overlaps X at 7:00 PM. Replace it or keep both?"
+    private static func clashTurn(_ ref: EntityRef, _ clash: MyScheduleRow, time clock: PlanClock?, _ ctx: RouterContext) -> RoutedTurn {
+        let other = EntityRef(kind: clash.entry.kind == .item ? .schedule : .location, id: clash.entry.id)
+        let timeText = clock?.description
+        return done(.schedule, [
+            .text("That overlaps **\(clash.name)** at \(time(clash.start, ctx)). Replace it or keep both?"),
+            BlockValidator.card(ref),
+            chips([
+                AssistantChip(label: ChipText.fit("Replace ", clash.name), action: .scheduleAdd(ref, time: timeText, replace: other)),
+                AssistantChip(label: "Keep both", action: .scheduleAdd(ref, time: timeText)),
+            ]),
+        ], ctx)
+    }
+
+    private static func addMany(_ refs: [EntityRef], _ ctx: RouterContext) -> RoutedTurn {
+        let new = refs.filter { $0.kind == .schedule && !ctx.mine.contains(target($0)) }
+        guard !new.isEmpty else {
+            if refs.contains(where: { $0.kind == .location }) {
+                return done(.schedule, [.text("Which place? Places need a time."), chips(refs.map { AssistantChip(label: name($0, ctx), action: .scheduleAdd($0)) })], ctx)
+            }
+            return done(.schedule, [.text("They're already in your schedule.")], ctx)
+        }
+        return done(.schedule, [.text("Added \(names(new.map { "**\(name($0, ctx))**" })) to your schedule."), .list(ids: new, title: MyScheduleTitle.title)],
+                    ctx, actions: new.map { .scheduleAdd($0) })
+    }
+
+    private static func remove(_ refs: [EntityRef], _ ctx: RouterContext) -> RoutedTurn {
+        let inSchedule = refs.filter { ctx.mine.contains(target($0)) }
+        guard !inSchedule.isEmpty else {
+            return done(.schedule, [.text("**\(name(refs[0], ctx))** isn't in your schedule.")], ctx)
+        }
+        return done(.schedule, [.text("Removed \(names(inSchedule.map { "**\(name($0, ctx))**" })) from your schedule.")], ctx,
+                    actions: inSchedule.map { .scheduleRemove($0) })
+    }
+
+    private static func move(_ ref: EntityRef, _ clock: PlanClock, _ ctx: RouterContext) -> RoutedTurn {
+        let bundle = ctx.bundle
+        switch ref.kind {
+        case .location:
+            let entry = ctx.mine.entry(for: target(ref))
+            guard entry != nil else { return add(ref, time: clock, ctx) }
+            let at = MySchedule.date(clock, near: entry?.at, now: ctx.now, timeZone: bundle.event.timeZone)
+            return done(.schedule, [.text("Moved **\(name(ref, ctx))** to \(time(at, ctx))."), BlockValidator.card(ref)], ctx,
+                        actions: [.scheduleMove(ref, time: clock.description)])
+        case .schedule:
+            let start = bundle.scheduleItem(ref.id)?.startTime.map { " (\(time($0, ctx)))" } ?? ""
+            var list: [AssistantChip] = []
+            if ctx.mine.contains(target(ref)) { list.append(AssistantChip(label: "Remove it", action: .scheduleRemove(ref))) }
+            return done(.schedule, [.text("**\(name(ref, ctx))** is at a set time\(start); the organizer decides when it is."),
+                                    BlockValidator.card(ref), chips(list)], ctx)
+        case .update:
+            return done(.schedule, [.text("Updates can't go in your schedule.")], ctx)
+        }
+    }
+
+    private static func remind(_ ref: EntityRef, _ minutes: Int, _ ctx: RouterContext) -> RoutedTurn {
+        let value = MySchedule.nearestReminder(minutes)
+        let inSchedule = ctx.mine.contains(target(ref))
+        let text = value == 0
+            ? "No reminder for **\(name(ref, ctx))**."
+            : "I'll remind you \(MyScheduleTitle.reminder(value)) **\(name(ref, ctx))**."
+        if inSchedule {
+            return done(.schedule, [.text(text)], ctx, actions: [.scheduleReminder(ref, minutes: value)])
+        }
+        guard ref.kind == .schedule else {
+            return add(ref, time: nil, ctx)
+        }
+        return done(.schedule, [.text("Added **\(name(ref, ctx))** to your schedule. " + text), BlockValidator.card(ref)], ctx,
+                    actions: [.scheduleAdd(ref), .scheduleReminder(ref, minutes: value)])
+    }
+
+    private static func addedChips(_ ref: EntityRef, _ ctx: RouterContext) -> [AssistantChip] {
+        var list = [AssistantChip(label: "Remind me 30 min before", action: .scheduleReminder(ref, minutes: 30))]
+        list.append(AssistantChip(label: "Show my schedule", action: AssistantAction(name: .mySchedule)))
+        if let place = placeOf(ref, ctx), ctx.bundle.location(place)?.coordinate != nil {
+            list.append(AssistantChip(label: "Show on map", action: .open("map", EntityRef(kind: .location, id: place))))
+        }
+        return list
+    }
+
+    private static func walkMinutes(_ locationId: Int, _ ctx: RouterContext) -> Int? {
+        guard let user = ctx.user, let point = ctx.bundle.location(locationId)?.coordinate else { return nil }
+        let meters = Planner.distance(user, point)
+        return WalkTime.isWithinWalkingRange(meters) ? WalkTime.minutes(WalkTime.estimatedSeconds(straightMeters: meters)) : nil
+    }
+
+    /// today / tonight / tomorrow / a weekday → the event day (the next one on or after today).
+    private static func day(_ word: String, _ ctx: RouterContext) -> PlanDate? {
+        let calendar = PlanCalendar.calendar(ctx.bundle.event.timeZone)
+        let today = PlanDate(ctx.now, in: calendar)
+        switch word {
+        case "today", "tonight": return today
+        case "tomorrow": return today.adding(days: 1)
+        default:
+            let names = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
+            guard let index = names.firstIndex(of: String(word.prefix(3))) else { return nil }
+            return (0..<7).map { today.adding(days: $0) }.first { $0.weekday == index + 1 }
+        }
+    }
+
+    /// "What's on my schedule (Saturday)": the timed entries (that day, else from now) and saved places.
+    static func myScheduleBlocks(_ day: PlanDate?, _ ctx: RouterContext) -> [AssistantBlock] {
+        let bundle = ctx.bundle
+        let rows = day.map { ctx.mine.rows(on: $0, bundle, now: ctx.now) } ?? ctx.mine.rows(bundle, now: ctx.now).filter { !$0.ended }
+        let refs = rows.map { EntityRef(kind: $0.entry.kind == .item ? .schedule : .location, id: $0.entry.id) }
+        let saved = day == nil ? ctx.mine.savedPlaceIds.filter { bundle.location($0) != nil }.map { EntityRef(kind: .location, id: $0) } : []
+        guard !refs.isEmpty || !saved.isEmpty else {
+            var list: [AssistantChip] = []
+            if ctx.canPlan { list.append(AssistantChip(label: "Plan my day", action: .planMake("Plan my day"))) }
+            list += suggestionChips(ctx)
+            return [.text(day == nil ? "Your schedule is empty. Add things with + or ask me." : "Nothing in your schedule that day."), chips(list)]
+        }
+        let when = day.map { " on \($0.weekdayName)" } ?? ""
+        var blocks: [AssistantBlock] = [.text(refs.count == 1 ? "1 thing in your schedule\(when)." : "\(refs.count) things in your schedule\(when).")]
+        if !refs.isEmpty { blocks.append(.list(ids: refs, title: MyScheduleTitle.title)) }
+        if !saved.isEmpty { blocks.append(.list(ids: saved, title: "Saved Places")) }
+        var list: [AssistantChip] = []
+        if ctx.canPlan { list.append(AssistantChip(label: "Plan my day", action: .planMake("Plan my day"))) }
+        return blocks + [chips(list)]
     }
 
     // MARK: Plan commands (4–16)
@@ -235,15 +547,7 @@ enum AssistantRouter {
             }
             return item(m[1], replacement)
         }
-        if let m = Rx.find(#"^(?:remove|drop|skip|cancel)\s+(.+?)(?:\s+from\s+(?:my\s+)?plan)?$"#, cmd) {
-            return item(m[1]) { [.remove(item: $0)] }
-        }
-        if let m = Rx.find(#"^add\s+(.+?)(?:\s+to\s+(?:my\s+)?plan)?$"#, cmd) {
-            guard ctx.plan != nil else { return noPlan(ctx) }
-            return withEntity(m[1], [.schedule], ctx, .planEdit, chip: { ref in
-                AssistantChip(label: name(ref, ctx), action: .planEdit([.add(item: ref.id)], bundle))
-            }) { ref in op([.add(item: ref.id)]) }
-        }
+        // "remove X" / "add X" are My schedule commands (scheduleCommand), which the plan follows.
         if let m = Rx.find(#"^move\s+(.+?)\s+(later|earlier)$"#, cmd) {
             let later = m[2] == "later"
             return item(m[1]) { [.move(item: $0, later: later)] }
@@ -387,6 +691,10 @@ enum AssistantRouter {
     /// number of text tokens and no other result has the same base; Ambiguous = ≤ 5 results tied
     /// at the top; otherwise NotFound.
     static func resolve(_ phrase: String, _ kinds: Set<RefKind>, _ ctx: RouterContext, preferPlanned: Bool = false) -> Resolution {
+        // References to what the conversation showed come first ("it", "the second one").
+        if let refs = ctx.memory.resolve(phrase, kinds: kinds, ctx.bundle) {
+            return refs.count == 1 ? .found(refs[0]) : .ambiguous(Array(refs.prefix(5)))
+        }
         let words = command(phrase).split(separator: " ").map(String.init).filter { !$0.isEmpty && !filler.contains($0) }
         if words.isEmpty { return .notFound }
         let text = words.joined(separator: " ")
@@ -470,32 +778,16 @@ enum AssistantRouter {
 
     // MARK: Likes
 
+    /// "like X" / "unlike X" (older words): add to / remove from My schedule.
     private static func like(_ phrase: String, liked: Bool, _ ctx: RouterContext) -> RoutedTurn {
-        let intent: AssistantIntent = liked ? .like : .unlike
-        return withEntity(phrase, [.schedule, .location], ctx, intent, chip: { ref in
-            AssistantChip(label: name(ref, ctx), action: .like(ref.kind.searchKind, ref.id, liked: liked))
-        }) { ref in
-            let kind = ref.kind.searchKind
-            let already = ctx.likes.has(kind, ref.id) == liked
-            var after = ctx
-            after.likes = ctx.likes.with(kind, ref.id, liked: liked)
-            let text: String
-            if already && liked { text = "You already like \(name(ref, ctx))." }
-            else if already { text = "You don't like \(name(ref, ctx)) yet." }
-            else if liked { text = "Liked \(name(ref, ctx))." }
-            else { text = "Unliked \(name(ref, ctx))." }
-            let clash = liked && ref.kind == .schedule ? ctx.plan.flatMap { LiveAssist.likeClash(ref.id, $0, ctx.bundle) } : nil
-            let blocks: [AssistantBlock] = [.text(text), BlockValidator.card(ref), chips((clash.map { [$0] } ?? []) + entityChips(ref, after))]
-            return RoutedTurn(intent: intent, turn: AssistantTurn(
-                blocks: BlockValidator.validate(blocks, ctx.blockContext),
-                actions: already ? [] : [.like(kind, ref.id, liked: liked)]
-            ))
+        withScheduleEntity(phrase, [.schedule, .location], ctx, preferScheduled: !liked) { refs in
+            liked ? add(refs[0], time: nil, ctx) : remove(refs, ctx)
         }
     }
 
     private static func likedBlocks(_ ctx: RouterContext) -> [AssistantBlock] {
         let refs = AssistantSearch.liked(ctx.bundle, ctx.likes, now: ctx.now).compactMap { EntityRef.of($0) }
-        if refs.isEmpty { return [.text("You haven't liked anything yet."), .chips(suggestionChips(ctx))] }
+        if refs.isEmpty { return [.text("Your schedule is empty."), .chips(suggestionChips(ctx))] }
         return [.list(ids: refs, title: AssistantSearch.likedTitle)]
     }
 
@@ -543,9 +835,6 @@ enum AssistantRouter {
         case .schedule:
             guard let item = bundle.scheduleItem(ref.id) else { return [] }
             var result = [likeChip(ref, ctx)]
-            if let plan = ctx.plan, !plan.itemIds.contains(item.id), let start = item.startTime, start > ctx.now {
-                result.append(AssistantChip(label: "Add to my plan", action: .planEdit([.add(item: item.id)], bundle)))
-            }
             if let location = bundle.location(item.locationId), location.coordinate != nil {
                 result.append(AssistantChip(label: "Show on map", action: .open("map", EntityRef(kind: .location, id: location.id))))
             }
@@ -563,9 +852,12 @@ enum AssistantRouter {
         }
     }
 
+    /// "Add to my schedule" / "Remove from my schedule" (was Like / Unlike).
     private static func likeChip(_ ref: EntityRef, _ ctx: RouterContext) -> AssistantChip {
-        let liked = ctx.likes.has(ref.kind.searchKind, ref.id)
-        return AssistantChip(label: liked ? "Unlike" : "Like", action: .like(ref.kind.searchKind, ref.id, liked: !liked))
+        let added = ctx.mine.contains(target(ref))
+        return added
+            ? AssistantChip(label: "Remove from my schedule", action: .scheduleRemove(ref))
+            : AssistantChip(label: "Add to my schedule", action: .scheduleAdd(ref))
     }
 
     /// The empty-state chips, ≤ 5: "Happening now", "Up next" (when something is), "Liked" (when
@@ -715,6 +1007,8 @@ enum AssistantRouter {
             blocks = [.timeline(source: "whats_on")]
         case .liked:
             blocks = likedBlocks(ctx)
+        case .mySchedule:
+            blocks = myScheduleBlocks(action.string("day").flatMap(PlanDate.parse), ctx)
         case .plan:
             blocks = ctx.plan != nil ? planBlocks(ctx) : [.text(noPlanText)]
         case .nearMe:

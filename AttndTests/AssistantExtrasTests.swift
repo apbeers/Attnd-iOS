@@ -75,8 +75,8 @@ final class AssistantExtrasTests: XCTestCase {
         XCTAssertEqual(merged.counts, [101: 1, 103: 1, 110: 1, 114: 3])
         let group = GroupPlan.plan([[103, 114], [114, 110]], likes, bundle, AssistantFixture.musicAndBbq, now: now)
         XCTAssertEqual(AssistantFixture.clock(group), ["10:00 111", "12:00 106", "13:00 102", "15:00 103", "16:15 110", "18:15 113", "18:45 dinner", "20:00 114"])
-        XCTAssertEqual(group.items.first { $0.itemId == 114 }?.reason, "Liked by 3 of you")
-        XCTAssertEqual(group.items.first { $0.itemId == 103 }?.reason, "You liked this")
+        XCTAssertEqual(group.items.first { $0.itemId == 114 }?.reason, "Picked by 3 of you")
+        XCTAssertEqual(group.items.first { $0.itemId == 103 }?.reason, "In your schedule")
     }
 
     // MARK: Why not
@@ -86,7 +86,7 @@ final class AssistantExtrasTests: XCTestCase {
             let chosen: Plan? = p ?? plan
             return WhyNot.explain(id, chosen, bundle, likes, now: at ?? now, locale: enUS)?.text
         }
-        XCTAssertEqual(why(114), "Neon Armadillo clashes with The Prairie Lights (liked).")
+        XCTAssertEqual(why(114), "Neon Armadillo clashes with The Prairie Lights (in your schedule).")
         XCTAssertEqual(why(106), "There isn't time to walk between Brisket 101 and Juniper Lane.")
         XCTAssertEqual(why(201), "Los Hermanos Flores is on Sunday, and your plan covers Saturday.")
         XCTAssertEqual(why(111), "Gates open is already in your plan.")
@@ -210,7 +210,7 @@ final class AssistantExtrasTests: XCTestCase {
         var checked = plan
         checked.checkedOff = [109, 102, 103]
         let recap = LiveAssist.recap(checked, bundle, likes, date: saturday, now: at(420), units: .imperial, locale: enUS)
-        XCTAssertEqual(recap.text, "You saw 3 things, liked 2 and walked 0.2 mi.")
+        XCTAssertEqual(recap.text, "You saw 3 things, added 2 and walked 0.2 mi.")
         XCTAssertEqual(recap.checkedOff, [109, 102, 103])
         XCTAssertEqual(recap.chips.map(\.label), ["Plan tomorrow"])
         XCTAssertEqual(recap.chips.first?.action, .planMake("Plan my Sunday"))

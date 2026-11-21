@@ -44,6 +44,9 @@ enum AssistantBlock: Hashable, Sendable {
     case share(String)
     case chips([AssistantChip])
     case confirm(action: AssistantAction, prompt: String)
+    /// A screen component in a chat answer (one catalogue, Component.swift): a place's menu, an
+    /// item's performers, the FAQ, getting there, My schedule… Its JSON type is the component's.
+    indirect case component(Component)
 
     static let itemShow = ["time", "place", "distance", "like", "actions"]
     static let placeShow = ["image", "distance", "now_next", "like", "actions"]
@@ -77,6 +80,7 @@ enum AssistantBlock: Hashable, Sendable {
         case .share: return "share"
         case .chips: return "chips"
         case .confirm: return "confirm"
+        case .component(let component): return component.type
         }
     }
 
@@ -111,6 +115,7 @@ enum BlockJSON {
     private static func strings(_ values: [String]) -> JSONValue { .array(values.map(JSONValue.string)) }
 
     static func encode(_ block: AssistantBlock) -> JSONObject {
+        if case .component(let component) = block { return ComponentCatalogue.encode(component) }
         var o: JSONObject = ["type": .string(block.type)]
         switch block {
         case .text(let text): o["text"] = .string(text)
@@ -150,6 +155,8 @@ enum BlockJSON {
             o["action"] = .string(action.name.key)
             o["params"] = .object(action.params)
             o["prompt"] = .string(prompt)
+        case .component:
+            break
         }
         return o
     }
@@ -172,7 +179,10 @@ enum BlockJSON {
         guard let obj = element?.objectValue,
               let type = obj["type"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         else { return .malformed("?") }
-        guard AssistantBlock.types.contains(type) else { return .unknown }
+        guard AssistantBlock.types.contains(type) else {
+            // A screen component a chat may show (`menu`, `faq`, `my_schedule`…), else unknown.
+            return ComponentCatalogue.decode(obj).map { .ok(.component($0)) } ?? .unknown
+        }
         let malformed = Decoded.malformed(type)
         func str(_ key: String) -> String? { obj[key]?.stringValue }
         func arr(_ key: String) -> [JSONValue]? { obj[key]?.arrayValue }
@@ -470,6 +480,8 @@ enum BlockValidator {
                   action.name.mutates else { return nil }
             let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
             return .confirm(action: checked, prompt: text.isEmpty ? ActionRegistry.confirmPrompt(checked) : text)
+        case .component(let component):
+            return ComponentCatalogue.valid(component, bundle) ? block : nil
         }
     }
 

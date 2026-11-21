@@ -36,9 +36,31 @@ enum AssistantFlow {
     static func path(_ intent: AssistantIntent, _ input: String, modelAvailable: Bool, forced: TurnPath? = nil) -> TurnPath {
         if forced == .ask { return modelAvailable ? .ask : .search }
         if let forced { return forced }
+        // The router is English: questions in other languages go to the model (iOS).
+        if modelAvailable && intent != .schedule && looksForeign(input) { return .ask }
         if planIntents.contains(intent) { return .plan }
         if modelAvailable && (asked.contains(intent) || (intent == .search && AssistantSearch.words(input).count >= 4)) { return .ask }
         return .search
+    }
+
+    private static let englishWords: Set<String> = [
+        "the", "a", "an", "is", "are", "what", "where", "when", "who", "how", "my", "me", "i", "to", "of", "in", "on", "at",
+        "and", "or", "for", "with", "it", "that", "this", "show", "find", "add", "remove", "plan", "schedule", "near", "next",
+        "now", "tonight", "today", "tomorrow", "can", "do", "does", "there", "food", "music", "stage", "you", "please",
+    ]
+    private static let foreignWords: Set<String> = [
+        "que", "donde", "cuando", "como", "hay", "esta", "comida", "baño", "banos", "où", "quand", "est", "les", "des",
+        "manger", "wo", "wann", "ist", "gibt", "essen", "bühne", "dove", "quando", "cosa", "onde", "quero", "comer", "musica",
+    ]
+
+    /// Two or more words, none of them common English and a word or letter that isn't English
+    /// (accents, ¿¡, common Spanish / French / German / Italian / Portuguese words).
+    static func looksForeign(_ input: String) -> Bool {
+        let lower = input.lowercased()
+        let words = lower.split { !$0.isLetter }.map(String.init)
+        guard words.count >= 2, !words.contains(where: englishWords.contains) else { return false }
+        if words.contains(where: foreignWords.contains) || lower.contains("¿") || lower.contains("¡") { return true }
+        return lower.unicodeScalars.contains { $0.value > 0x7F && CharacterSet.letters.contains($0) }
     }
 
     /// A plain `search` turn for a forced search.
@@ -171,7 +193,7 @@ enum BlockData {
     }
 
     static func likedCounts(_ likes: LikeSet) -> String {
-        func n(_ count: Int, _ one: String) -> String { "\(count) liked \(count == 1 ? one : one + "s")" }
+        func n(_ count: Int, _ one: String) -> String { "\(count) \(count == 1 ? one : one + "s")" }
         return "\(n(likes.scheduleItems.count, "item")) and \(n(likes.locations.count, "place"))"
     }
 }
@@ -260,5 +282,56 @@ enum SharedPlans {
 
     static func decode(_ text: String?) -> [[Int]] {
         (text ?? "").split(separator: "\n").map { line in line.split(separator: ",").compactMap { Int($0) } }.filter { !$0.isEmpty }
+    }
+}
+
+// MARK: - The chat's stored transcript (iOS, Nov 21, 2026)
+
+/// The My plan chat's history per event (≤ 40 turns, on the device only, kept after leaving like
+/// the conversation): each turn's typed text, its blocks as block JSON and its done line. Blocks
+/// that no longer decode or validate are dropped when shown.
+struct ChatTranscript: Hashable, Sendable {
+    static let maxTurns = 40
+
+    struct Entry: Hashable, Sendable {
+        var id: Int
+        var input: String?
+        var blocks: [AssistantBlock]
+        var fromModel: Bool
+        var status: String?
+    }
+
+    var entries: [Entry] = []
+
+    func encode() -> String {
+        let list: [JSONValue] = entries.suffix(Self.maxTurns).map { entry in
+            var o: JSONObject = ["id": .int(entry.id), "blocks": .array(entry.blocks.map { .object(BlockJSON.encode($0)) })]
+            if let input = entry.input { o["input"] = .string(input) }
+            if entry.fromModel { o["model"] = .bool(true) }
+            if let status = entry.status { o["status"] = .string(status) }
+            return .object(o)
+        }
+        return JSONValue.array(list).encoded
+    }
+
+    static func decode(_ text: String?) -> ChatTranscript {
+        guard let text, let list = JSONValue.parse(text)?.arrayValue else { return ChatTranscript() }
+        let entries = list.compactMap { value -> Entry? in
+            guard let o = value.objectValue, let id = o["id"]?.intValue else { return nil }
+            let blocks = (o["blocks"]?.arrayValue ?? []).compactMap { element -> AssistantBlock? in
+                if case .ok(let block) = BlockJSON.decode(element) { return block }
+                return nil
+            }
+            return Entry(id: id, input: o["input"]?.stringValue, blocks: blocks, fromModel: o["model"]?.boolValue == true,
+                         status: o["status"]?.stringValue)
+        }
+        return ChatTranscript(entries: Array(entries.suffix(maxTurns)))
+    }
+
+    /// The follow-up chips above the composer: the last turn's chips (shown there, not in the turn).
+    static func followUps(_ entries: [Entry]) -> [AssistantChip] {
+        guard let last = entries.last else { return [] }
+        for case .chips(let chips) in last.blocks.reversed() { return chips }
+        return []
     }
 }

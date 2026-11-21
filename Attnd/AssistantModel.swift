@@ -24,9 +24,18 @@ struct AssistantConversation: Hashable, Sendable {
     static let maxStored = 40
 
     var turns: [ConversationTurn] = []
+    /// What the answers showed and acted on (iOS: "add it", "the second one").
+    var memory = ConversationContext()
 
     func with(_ turn: ConversationTurn) -> AssistantConversation {
-        AssistantConversation(turns: Array((turns + [turn]).suffix(Self.maxStored)))
+        AssistantConversation(turns: Array((turns + [turn]).suffix(Self.maxStored)), memory: memory)
+    }
+
+    /// The answer's entities and action recorded in the memory.
+    func remembering(_ turn: AssistantTurn) -> AssistantConversation {
+        var copy = self
+        copy.memory.record(turn)
+        return copy
     }
 
     func promptLines() -> [String] {
@@ -51,15 +60,21 @@ struct AssistantConversation: Hashable, Sendable {
         return lines
     }
 
+    /// `{"turns":[…],"memory":{…}}`; older builds stored the turns array alone (still read).
     func encode() -> String {
-        (try? JSONEncoder().encode(turns)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        let list: [JSONValue] = turns.map { .object(["fromUser": .bool($0.fromUser), "text": .string($0.text)]) }
+        let obj: JSONObject = ["turns": .array(list), "memory": .object(memory.encode())]
+        return obj.encoded
     }
 
     static func decode(_ text: String?) -> AssistantConversation {
-        guard let data = text?.data(using: .utf8), let turns = try? JSONDecoder().decode([ConversationTurn].self, from: data) else {
-            return AssistantConversation()
+        guard let text, let value = JSONValue.parse(text) else { return AssistantConversation() }
+        let list = value.arrayValue ?? value.objectValue?["turns"]?.arrayValue ?? []
+        let turns = list.compactMap { element -> ConversationTurn? in
+            guard let o = element.objectValue, let fromUser = o["fromUser"]?.boolValue, let text = o["text"]?.stringValue else { return nil }
+            return ConversationTurn(fromUser: fromUser, text: text)
         }
-        return AssistantConversation(turns: Array(turns.suffix(maxStored)))
+        return AssistantConversation(turns: Array(turns.suffix(maxStored)), memory: ConversationContext.decode(value.objectValue?["memory"]))
     }
 }
 
@@ -309,4 +324,178 @@ enum AssistantModel {
         let lastIsChips = found.last?.isChips == true
         return BlockValidator.validate(found, ctx.blockContext).filter { !$0.isChips || lastIsChips }
     }
+}
+
+// MARK: - Tool-calling turns (iOS, Nov 21, 2026)
+
+/// The on-device model's 4096-token window, budgeted explicitly: the session's instructions and
+/// tool schemas, the reply, the session's earlier turns and the next prompt must fit. Estimates
+/// are characters ÷ 3.5 (rounded up), conservative for English and the ids in prompts.
+enum TokenBudget {
+    static let window = 4096
+    /// Instructions + the 10 tool schemas.
+    static let fixed = 1_300
+    /// Room kept for the reply (text + tool calls).
+    static let reply = 600
+    /// The most a prompt may use in a fresh session.
+    static var freshPrompt: Int { window - fixed - reply }
+
+    static func estimate(_ text: String) -> Int { Int((Double(text.utf8.count) / 3.5).rounded(.up)) }
+
+    /// A session with `used` tokens of earlier turns takes another prompt of `prompt` tokens.
+    static func fits(used: Int, prompt: Int) -> Bool { fixed + used + prompt + reply <= window }
+}
+
+/// A prompt cut to its budget, with what was dropped (logged; never silent).
+struct BudgetedPrompt: Hashable, Sendable {
+    var text: String
+    var tokens: Int
+    /// "history:3", "items:4", "facts" — what was trimmed, in order.
+    var trimmed: [String]
+}
+
+extension AssistantModel {
+    /// The parts of a tool-calling turn's prompt. `history` only for a fresh session (a kept one
+    /// has the turns in its transcript).
+    struct PromptParts: Hashable, Sendable {
+        var header: [String]
+        var facts: [String]
+        var schedule: [String]
+        var memory: [String]
+        var history: [String]
+        var items: [String]
+        var input: String
+    }
+
+    /// Fits the parts into `limit` tokens: the oldest history lines go first, then retrieved
+    /// items (from the end), then the facts. The header, My schedule, the memory and the input stay.
+    static func budget(_ parts: PromptParts, limit: Int) -> BudgetedPrompt {
+        var p = parts
+        var trimmed: [String] = []
+        func render() -> String {
+            var lines = p.header + p.facts + p.schedule + p.memory
+            if !p.history.isEmpty { lines += ["CONVERSATION:"] + p.history }
+            lines += ["ITEMS:"] + (p.items.isEmpty ? ["(none; use find)"] : p.items)
+            lines.append("INPUT: " + p.input)
+            return lines.joined(separator: "\n")
+        }
+        var text = render()
+        var droppedHistory = 0, droppedItems = 0
+        while TokenBudget.estimate(text) > limit, !p.history.isEmpty {
+            p.history.removeFirst()
+            droppedHistory += 1
+            text = render()
+        }
+        while TokenBudget.estimate(text) > limit, !p.items.isEmpty {
+            p.items.removeLast()
+            droppedItems += 1
+            text = render()
+        }
+        var droppedFacts = false
+        if TokenBudget.estimate(text) > limit, !p.facts.isEmpty {
+            p.facts = []
+            droppedFacts = true
+            text = render()
+        }
+        if droppedHistory > 0 { trimmed.append("history:\(droppedHistory)") }
+        if droppedItems > 0 { trimmed.append("items:\(droppedItems)") }
+        if droppedFacts { trimmed.append("facts") }
+        return BudgetedPrompt(text: text, tokens: TokenBudget.estimate(text), trimmed: trimmed)
+    }
+
+    /// The prompt of one tool-calling turn: NOW, the event (and its facts in a fresh session),
+    /// My schedule, what "it" / "the second one" mean (the memory), the conversation (fresh
+    /// session only), ≤ 12 items and the input, cut to `limit` tokens.
+    static func toolPrompt(_ input: String, _ ctx: RouterContext, _ conversation: AssistantConversation,
+                           _ retrieved: [AssistantSearch.Result], freshSession: Bool, limit: Int) -> BudgetedPrompt {
+        let bundle = ctx.bundle
+        let zone = bundle.event.timeZone
+        var header = ["NOW: " + AssistantText.format(ctx.now, "EEEE, MMMM d, h:mm a", zone, ctx.locale) + " (event time, \(zone.identifier))"]
+        header.append("EVENT: \(clean(bundle.event.name)) — \(AssistantSearch.eventDetail(bundle.event, locale: ctx.locale))")
+        let facts = freshSession ? (eventInfo(bundle).map { ["EVENT INFO: " + $0] } ?? []) : []
+        let rows = ctx.schedule.rows(bundle, now: ctx.now).filter { !$0.ended }.prefix(12).map { row in
+            "[\(row.entry.kind == .item ? "s" : "l")\(row.entry.id)] \(clean(row.name)) \(AssistantText.format(row.start, "EEE h:mm a", zone, ctx.locale))"
+        }
+        let saved = ctx.schedule.savedPlaceIds.prefix(6).compactMap { id in bundle.location(id).map { "[l\(id)] \(clean($0.name)) (saved, no time)" } }
+        let scheduleLine = "MY SCHEDULE: " + ((rows + saved).isEmpty ? "empty" : (rows + saved).joined(separator: "; "))
+        var memory: [String] = []
+        let shown = ctx.memory.shown.prefix(8).enumerated().compactMap { index, ref -> String? in
+            guard let name = ref.name(bundle) else { return nil }
+            return "\(index + 1). [\(ref.code)] \(clean(name))" + (ref == ctx.memory.focus ? " (it)" : "")
+        }
+        if !shown.isEmpty { memory.append("SHOWN (\"it\", \"that\", \"the second one\" refer to these): " + shown.joined(separator: "; ")) }
+        let history = freshSession ? conversation.promptLines() : []
+        let items = retrieved.prefix(maxItems).compactMap { line($0, ctx) }
+        let parts = PromptParts(header: header, facts: facts, schedule: [scheduleLine], memory: memory,
+                                history: history, items: items, input: clean(input, max: 300))
+        return budget(parts, limit: limit)
+    }
+
+    /// A tool-calling turn's answer: the model's text, then what it `show`ed, then confirmations for
+    /// chip-confirmed writes; direct writes run through the dispatcher. Validated like every turn.
+    static func assemble(text: String, shown: [AssistantBlock], actions: [AssistantAction], _ ctx: RouterContext) -> AssistantTurn {
+        let answer = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        var blocks: [AssistantBlock] = answer.isEmpty ? [] : [.text(answer)]
+        blocks += shown.filter { !$0.isChips }
+        let confirms = actions.filter { $0.name.confirm == .chip }.map { AssistantBlock.confirm(action: $0, prompt: ActionRegistry.confirmPrompt($0)) }
+        let direct = actions.filter { $0.name.confirm != .chip }
+        blocks += confirms
+        blocks += shown.filter(\.isChips)
+        return AssistantTurn(blocks: BlockValidator.validate(blocks, ctx.blockContext), actions: direct)
+    }
+
+    /// The `show` tool's component as a block: a screen component (`menu`, `faq`, `my_schedule`…)
+    /// or a chat block built from ids (`card`, `carousel`, `list`, `map`, `timeline`, `now_next`,
+    /// `countdown`, `gallery`). nil = unknown type or no usable ids (the tool answers an error).
+    static func showBlock(_ rawType: String, ids rawIds: [String], title: String?, _ ctx: RouterContext) -> AssistantBlock? {
+        let type = ComponentCatalogue.canonical(rawType)
+        let refs = rawIds.compactMap(EntityRef.parse).filter { $0.exists(ctx.bundle) }
+        let titleText = title?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        if let component = ComponentCatalogue.chat(type, ids: refs, title: titleText), ComponentCatalogue.valid(component, ctx.bundle) {
+            return .component(component)
+        }
+        let items = refs.filter { $0.kind == .schedule }.map(\.id)
+        let places = refs.filter { $0.kind == .location }.map(\.id)
+        switch type {
+        case "card", "item_card", "place_card", "update_card":
+            return refs.first.map(BlockValidator.card)
+        case "carousel":
+            return refs.count == 1 ? BlockValidator.card(refs[0]) : refs.isEmpty ? nil : .carousel(ids: refs, title: titleText)
+        case "list":
+            return refs.isEmpty ? nil : .list(ids: refs, title: titleText)
+        case "map":
+            return places.isEmpty ? nil : .map(pins: places)
+        case "timeline":
+            return items.isEmpty ? nil : .timeline(ids: items, title: titleText)
+        case "now_next":
+            return .nowNext(location: places.first)
+        case "countdown":
+            return items.first.map { .countdown(id: $0) }
+        case "gallery":
+            return places.isEmpty ? nil : .gallery(ids: places)
+        default:
+            return nil
+        }
+    }
+
+    /// The type names `show` accepts, for its description.
+    static var showTypes: String {
+        (["card", "carousel", "list", "map", "timeline", "now_next", "countdown", "gallery"] + ComponentCatalogue.chatScreenTypes.sorted())
+            .joined(separator: ", ")
+    }
+
+    /// A write tool's call: the action, or the error the model gets back (it may retry once).
+    static func toolAction(_ name: ActionName, _ params: JSONObject, _ ctx: RouterContext) -> Result<AssistantAction, ToolError> {
+        switch ActionRegistry.check(name.key, params, ctx.bundle, now: ctx.now) {
+        case .valid(let action): return .success(action)
+        case .invalid(let reason):
+            return .failure(ToolError(message: "Error: \(reason). Use an id like \"s12\" or \"l3\" from ITEMS, SHOWN or MY SCHEDULE (or call find), and times as HH:MM."))
+        }
+    }
+
+    struct ToolError: Error, Hashable, Sendable { var message: String }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

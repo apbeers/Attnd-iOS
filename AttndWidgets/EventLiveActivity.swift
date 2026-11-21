@@ -183,7 +183,7 @@ private struct ActivityButtons: View {
         HStack(spacing: 8) {
             if let target = ActivityStyle.heartTarget(state), let id = target.id {
                 Button(intent: HeartActivityItemIntent(eventId: eventId, itemId: id)) {
-                    Label(target.hearted == true ? "Liked" : "Like", systemImage: target.hearted == true ? "heart.fill" : "heart")
+                    Label(target.hearted == true ? "In My Schedule" : "Add", systemImage: target.hearted == true ? "checkmark.circle.fill" : "plus.circle")
                 }
             }
             if let next = state.next, let id = next.id {
@@ -459,6 +459,11 @@ private struct CompactTrailingView: View {
             Countdown(date: opens)
                 .frame(maxWidth: 52)
                 .font(.caption.weight(.semibold))
+        } else {
+            // Never an empty region: on iOS 27–27.2 an empty compact trailing view breaks the
+            // layout where `isDynamicIslandLimitedInWidth` is true (iPhone Duo).
+            Image(systemName: state.followSymbol)
+                .foregroundStyle(ActivityStyle.accent(context.attributes))
         }
     }
 }
@@ -494,6 +499,10 @@ private struct MinimalProgress: View {
             }
             .progressViewStyle(.circular)
             .tint(tint)
+        } else {
+            // Always content (the compact trailing / minimal regions must never be empty).
+            Image(systemName: "circle.dotted")
+                .foregroundStyle(tint)
         }
     }
 }

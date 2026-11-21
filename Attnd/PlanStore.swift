@@ -32,6 +32,9 @@ final class PlanStore {
     fileprivate(set) var history = PlanHistory()
 
     @ObservationIgnored private(set) var eventId: Int?
+    /// My schedule follows every applied plan and undo (AppState.applyPlanToSchedule): the plan
+    /// fills My schedule; it is kept only as the planner's arrangement of the day.
+    @ObservationIgnored var onApply: (@MainActor (_ plan: Plan?, _ previous: Plan?) -> Void)?
 
     var hasPlan: Bool { plan?.isEmpty == false }
     var canUndo: Bool { history.canUndo }
@@ -59,18 +62,22 @@ final class PlanStore {
     /// Stores `plan` as a new version: the plan it replaces goes onto the undo stack (assistant
     /// spec §4; every plan change: edits, versions, new plans, swaps, re-plans, shared plans).
     func apply(_ plan: Plan?) {
-        if let previous = self.plan, !previous.isEmpty, previous != plan {
+        let previous = self.plan
+        if let previous, !previous.isEmpty, previous != plan {
             setHistory(history.push(previous))
         }
         store(plan)
+        onApply?(plan, previous)
     }
 
     /// `plan_undo`: the previous version back (nil when there is nothing to undo).
     @discardableResult
     func undo() -> Plan? {
         guard let popped = history.pop() else { return nil }
+        let previous = plan
         setHistory(popped.rest)
         store(popped.plan)
+        onApply?(popped.plan, previous)
         return popped.plan
     }
 
@@ -132,8 +139,12 @@ extension AppState {
     /// The plan's items (the Live Activity follows them; reminders include them).
     var plannedItemIds: Set<Int> { Set(planner.plan?.itemIds ?? []) }
 
+    /// My schedule's items are the planner's must-includes (hearted, rule 7); a timed food place
+    /// in My schedule covers that day's lunch or dinner break.
     private func makePlanner(_ bundle: EventBundle, _ preferences: PlanPreferences, constraints: PlanConstraints = .none) -> Planner {
-        Planner(
+        var constraints = constraints
+        constraints.mealsDone.formUnion(mySchedule.mealsCovered(bundle))
+        return Planner(
             bundle: bundle,
             preferences: preferences,
             heartedItems: personal.heartedScheduleItems,

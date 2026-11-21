@@ -184,6 +184,10 @@
         { "path": "DayRouteProvider.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
         { "path": "PlanProposal.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
         { "path": "PlanDock.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
+        { "path": "MySchedule.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
+        { "path": "Component.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
+        { "path": "ConversationContext.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
+        { "path": "ThemeColors.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
         { "path": "PlanPage.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
         { "path": "PlanSummaryStore.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
         {
@@ -309,6 +313,9 @@
         { "path": "ContextDecodingTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "TabLayoutTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "ScreenLayoutTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
+        { "path": "MyScheduleTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
+        { "path": "ConversationContextTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
+        { "path": "ComponentTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
       ],
     }, {
       "kind": "group",

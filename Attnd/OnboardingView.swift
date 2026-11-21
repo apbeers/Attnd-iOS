@@ -105,7 +105,7 @@ struct OnboardingView: View {
                 FeatureRow(systemImage: "calendar", text: "See what's on now and next, with live countdowns.")
                 FeatureRow(systemImage: "bell", text: "Get the organizers' updates the moment they're sent.")
                 FeatureRow(systemImage: "magnifyingglass", text: "Search everything with the button in the corner.")
-                FeatureRow(systemImage: "heart", text: "Like what you don't want to miss and follow it on your Lock Screen.")
+                FeatureRow(systemImage: "plus.circle", text: "Add what you don't want to miss to your schedule and follow it on your Lock Screen.")
             }
         case .location:
             CardLayout(systemImage: "location.north.line", title: "Find your way") {
@@ -131,7 +131,7 @@ struct OnboardingView: View {
             }
         case .notifications:
             CardLayout(systemImage: "bell.badge", title: "Don't miss a change") {
-                Text("Get set-time changes and urgent news from the organizers, and a reminder 15 minutes before anything you've liked.")
+                Text("Get set-time changes and urgent news from the organizers, and a reminder 15 minutes before anything in your schedule.")
                     .foregroundStyle(.secondary)
                 if appState.notificationsEnabled {
                     Label("Notifications are on", systemImage: "checkmark.circle.fill")
@@ -158,7 +158,7 @@ struct OnboardingView: View {
     @ViewBuilder
     private var planCard: some View {
         CardLayout(systemImage: "wand.and.stars", title: "Plan your day") {
-            Text("Say what you'd like in your own words. Apple Intelligence builds a plan on your iPhone from the event's schedule, your likes and walking times.")
+            Text("Say what you'd like in your own words. Apple Intelligence builds a plan on your iPhone from the event's schedule, what's in your schedule and walking times.")
                 .foregroundStyle(.secondary)
             ForEach(examples) { example in
                 Button {

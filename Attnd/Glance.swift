@@ -568,12 +568,15 @@ struct EventPersonalState: Codable, Hashable, Sendable {
     var followOnLockScreen: Bool? = nil
     /// Schedule items skipped in the Live Activity ("Skip").
     var skippedItems: Set<Int> = []
+    /// My schedule (iOS, Nov 21, 2026): nil until the event's likes and plan were migrated
+    /// (`AppState.loadPersonalState`). The hearted sets above mirror its entries.
+    var mySchedule: MySchedule? = nil
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
         case heartedLocations, heartedScheduleItems, updatesSeenAt, dismissedUpdateBannerId
-        case dismissedUrgentIds, followOnLockScreen, skippedItems
+        case dismissedUrgentIds, followOnLockScreen, skippedItems, mySchedule
     }
 
     init(from decoder: Decoder) throws {
@@ -585,6 +588,28 @@ struct EventPersonalState: Codable, Hashable, Sendable {
         dismissedUrgentIds = c.lenient(Set<Int>.self, .dismissedUrgentIds) ?? []
         followOnLockScreen = c.lenient(Bool.self, .followOnLockScreen)
         skippedItems = c.lenient(Set<Int>.self, .skippedItems) ?? []
+        mySchedule = c.lenient(MySchedule.self, .mySchedule)
+    }
+
+    /// My schedule (empty before the migration).
+    var schedule: MySchedule { mySchedule ?? MySchedule() }
+
+    /// Runs `change` on My schedule and mirrors its entries into the hearted sets.
+    mutating func updateSchedule<T>(_ change: (inout MySchedule) -> T) -> T {
+        var schedule = self.schedule
+        let result = change(&schedule)
+        mySchedule = schedule
+        heartedScheduleItems = schedule.itemIds
+        heartedLocations = schedule.placeIds
+        return result
+    }
+
+    /// Migrates the likes (and the plan of an older build) once; true when it ran.
+    mutating func migrateSchedule(plan: Plan?) -> Bool {
+        guard mySchedule == nil else { return false }
+        let migrated = MySchedule.migrate(heartedItems: heartedScheduleItems, heartedLocations: heartedLocations, plan: plan)
+        updateSchedule { $0 = migrated }
+        return true
     }
 
     /// Whether the Live Activity follows this event: the user's choice, else on once
@@ -601,19 +626,13 @@ struct EventPersonalState: Codable, Hashable, Sendable {
         }
     }
 
-    /// Hearts or unhearts a location or schedule item. Returns the usage metric to count
-    /// (API-009), nil when nothing changed or the target can't be hearted.
+    /// Adds a location or schedule item to My schedule (a place saved without a time) or removes
+    /// it. Returns the usage metric to count (API-009), nil when nothing changed or the target
+    /// can't be in My schedule.
     @discardableResult
     mutating func setHeart(_ hearted: Bool, for target: SearchTarget) -> UsageMetric? {
-        switch target {
-        case .location(let id):
-            let changed = hearted ? heartedLocations.insert(id).inserted : heartedLocations.remove(id) != nil
-            return changed ? (hearted ? .locationHeart : .locationUnheart) : nil
-        case .scheduleItem(let id):
-            let changed = hearted ? heartedScheduleItems.insert(id).inserted : heartedScheduleItems.remove(id) != nil
-            return changed ? (hearted ? .scheduleItemHeart : .scheduleItemUnheart) : nil
-        case .notification, .event:
-            return nil
+        updateSchedule { schedule in
+            (hearted ? schedule.add(target) : schedule.remove(target))?.metric
         }
     }
 

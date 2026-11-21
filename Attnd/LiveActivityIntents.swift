@@ -33,8 +33,8 @@ enum LiveActivityActionRelay {
 
 /// "Like" (heart) on the item in progress (or the next one before anything has started).
 struct HeartActivityItemIntent: LiveActivityIntent {
-    static let title: LocalizedStringResource = "Like Item"
-    static let description = IntentDescription("Likes the schedule item shown in your Live Activity.")
+    static let title: LocalizedStringResource = "Add to My Schedule"
+    static let description = IntentDescription("Adds the schedule item shown in your Live Activity to your schedule.")
     static let isDiscoverable = false
 
     @Parameter(title: "Event")

@@ -203,8 +203,11 @@ struct ContentView: View {
                 .badge(tab == .notifications ? appState.unreadUpdatesCount : 0)
             }
         }
+        // Rebuilt when the tab set changes (the Home tab arriving with a bundle), so each tab
+        // keeps its own icon (TestFlight 161 showed the Map tab with the Places list icon).
+        .id(appState.tabs.map(\.rawValue).joined(separator: ","))
         // The tab bar stays visible (no minimize on scroll).
-        .tint(accentColor ?? Color.accentColor)
+        .eventTheme(appState)
         .sheet(item: $state.presentedSheet) { sheet in
             Group {
                 switch sheet {
@@ -220,7 +223,7 @@ struct ContentView: View {
                 }
             }
             .environment(appState)
-            .tint(accentColor ?? Color.accentColor)
+            .eventTheme(appState)
         }
         // Foreground: refetch (cheap — the ETag makes it a 304 when nothing changed).
         .onChange(of: scenePhase) { _, phase in
@@ -239,7 +242,7 @@ struct ContentView: View {
         .fullScreenCover(isPresented: planPageBinding) {
             PlanPageHost()
                 .environment(appState)
-                .tint(accentColor ?? Color.accentColor)
+                .eventTheme(appState)
         }
         // A shared plan link (API-015), once its event's content is shown: a proposal on the
         // plan page ("Use This Plan" / "Merge with Mine").
@@ -284,11 +287,6 @@ struct ContentView: View {
         let phase: ScenePhase
         let eventId: Int?
         let interval: Duration
-    }
-
-    /// The event's own accent; nil → the asset AccentColor (brand purple #431F86).
-    private var accentColor: Color? {
-        HexColor.components(appState.accentHex).map { Color(red: $0.red, green: $0.green, blue: $0.blue) }
     }
 }
 
@@ -573,33 +571,16 @@ struct EventStatusBadgeKind: Equatable {
         CGFloat(all(appState).count) * Self.reservedHeight
     }
 
-    /// The event's demo / ended state.
+    /// The event's ended state. No demo badge (owner, Nov 21, 2026: the free limit of unpaid
+    /// events is the server's, API-025; iOS diverges from API_V2.md's Demo Event banner).
     @MainActor
     static func current(_ appState: AppState) -> EventStatusBadgeKind? {
-        // App Store screenshots show the demo event's content without the badge.
-        guard !ScreenshotMode.isActive, let event = appState.currentEvent else { return nil }
-        switch (event.isDemo, event.isArchived) {
-        case (true, true):
-            return EventStatusBadgeKind(
-                title: "Demo event · Ended",
-                systemImage: "exclamationmark.triangle.fill",
-                accessibilityText: "Demo event. This is a preview, not a live event. The event has ended."
-            )
-        case (true, false):
-            return EventStatusBadgeKind(
-                title: "Demo event",
-                systemImage: "exclamationmark.triangle.fill",
-                accessibilityText: "Demo event. This is a preview, not a live event."
-            )
-        case (false, true):
-            return EventStatusBadgeKind(
-                title: "Event ended",
-                systemImage: "flag.checkered",
-                accessibilityText: "This event has ended. You can still browse everything."
-            )
-        case (false, false):
-            return nil
-        }
+        guard !ScreenshotMode.isActive, let event = appState.currentEvent, event.isArchived else { return nil }
+        return EventStatusBadgeKind(
+            title: "Event ended",
+            systemImage: "flag.checkered",
+            accessibilityText: "This event has ended. You can still browse everything."
+        )
     }
 
     /// "Offline · Updated 3:41 PM" (device time zone) while the last refresh failed.

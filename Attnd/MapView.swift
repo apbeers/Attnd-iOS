@@ -46,7 +46,8 @@ struct MapView: View {
 
     private var visibleLocations: [Location] {
         LocationGrouping.filter(appState.locations, category: selectedCategory)
-            .filter { !heartedOnly || appState.isHearted(.location($0.id)) }
+            // My schedule's places, including the places of its items.
+            .filter { !heartedOnly || appState.myScheduleLocationIds.contains($0.id) }
     }
 
     /// Screenshot mode keeps the App Store map clean.
@@ -216,7 +217,7 @@ struct MapView: View {
             Spacer(minLength: 0)
             if heartedOnly, visibleLocations.isEmpty {
                 // The Liked chip with nothing liked (or no liked place with a pin).
-                NothingLikedView(hasLikes: appState.locations.contains { appState.isHearted(.location($0.id)) })
+                NothingLikedView(hasLikes: !appState.myScheduleLocationIds.isEmpty)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.vertical, 8)
                     .glassEffect(.regular, in: .rect(cornerRadius: 24))

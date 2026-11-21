@@ -184,6 +184,7 @@
         { "path": "PlanProposal.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
         { "path": "PlanDock.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
         { "path": "MySchedule.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
+        { "path": "AppHandover.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
         { "path": "Component.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
         { "path": "ConversationContext.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
         { "path": "ThemeColors.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },

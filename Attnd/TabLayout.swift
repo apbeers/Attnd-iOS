@@ -8,12 +8,12 @@
 //     so never a More tab. No My plan tab and no Explore tab: the plan is the plan page, a
 //     full-screen cover opened by the floating "My plan" button on every tab (AssistantView.swift).
 //   - The tab selected after joining: `default_tab` when listed, else Map, else the first.
-//   - Home (API-024, when `display.tabs` lists it): the event's `home` layout sections
-//     (`HomeTab` in ScreenLayoutViews.swift); never in screenshot mode.
+//   - Home (API-024): always on, first and the default tab (owner, Nov 21, 2026; `withHome`), the
+//     event's `home` layout sections (`HomeTab` in ScreenLayoutViews.swift); never in screenshot mode.
 //   - The Locations tab is titled "Places" (the app's word for locations); screenshot mode keeps
 //     "Locations" so the store screenshots stay exactly as they were.
-//   - Options (the gear) is on one tab's root screen only: Updates, or the first tab when the
-//     event hides Updates (`optionsTab`), so it is always reachable.
+//   - Options (the gear) is on one tab's root screen only: Home's header row (so Updates is
+//     optional), else Updates, else the first tab (`optionsTab`), so it is always reachable.
 //   - `MapNavigation`: the Map tab's stack of pushed place details and its pending pin focus
 //     ("Show on Map" pops back to the map and selects the pin).
 
@@ -31,7 +31,28 @@ struct TabLayout: Hashable, Sendable {
             display.tabs = tabs.filter { $0 != .home }
             if display.defaultTab == .home { display.defaultTab = nil }
         }
-        return TabLayout(tabs: display.resolvedTabs(hasFlyer: hasFlyer), defaultTab: display.resolvedDefaultTab(hasFlyer: hasFlyer))
+        let layout = TabLayout(tabs: display.resolvedTabs(hasFlyer: hasFlyer), defaultTab: display.resolvedDefaultTab(hasFlyer: hasFlyer))
+        return screenshotMode ? layout : layout.withHome()
+    }
+
+    /// Home is always on, first and the default tab (owner, Nov 21, 2026), whatever the bundle
+    /// lists, so a cached or older bundle without it can't make it come and go. Over five tabs
+    /// the server's rule drops Flyer first, then Places when the Map is there, then the last tab
+    /// that isn't Updates.
+    func withHome() -> TabLayout {
+        var tabs = [EventTab.home] + self.tabs.filter { $0 != .home }
+        while tabs.count > DisplayConfig.maxTabs {
+            if let i = tabs.firstIndex(of: .flyer) {
+                tabs.remove(at: i)
+            } else if tabs.contains(.map), let i = tabs.firstIndex(of: .locations) {
+                tabs.remove(at: i)
+            } else if let i = tabs.lastIndex(where: { $0 != .notifications && $0 != .home }) {
+                tabs.remove(at: i)
+            } else {
+                break
+            }
+        }
+        return TabLayout(tabs: tabs, defaultTab: .home)
     }
 
     /// The tab bar's (and the tab's navigation) title.
@@ -42,9 +63,11 @@ struct TabLayout: Hashable, Sendable {
 
     func contains(_ tab: EventTab) -> Bool { tabs.contains(tab) }
 
-    /// The tab whose root screen has the Options button: Updates, else the first tab.
+    /// The tab whose root screen has the Options button: Home (its header row's gear), else
+    /// Updates, else the first tab.
     var optionsTab: EventTab? {
-        tabs.contains(.notifications) ? .notifications : tabs.first
+        if tabs.contains(.home) { return .home }
+        return tabs.contains(.notifications) ? .notifications : tabs.first
     }
 }
 

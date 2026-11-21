@@ -106,6 +106,16 @@ struct MySchedule: Hashable, Sendable {
     static let reminderChoices = [5, 10, 15, 30, 60, 0]
     static let maxEntries = 300
 
+    /// The places of My schedule on the map and in Places' My Schedule chip: saved and timed
+    /// places plus the places of its schedule items (build 169: hearting an item showed nothing).
+    static func placeIds(heartedLocations: Set<Int>, heartedItems: Set<Int>, schedule: [ScheduleItem]) -> Set<Int> {
+        var ids = heartedLocations
+        for item in schedule where heartedItems.contains(item.id) {
+            if let location = item.locationId { ids.insert(location) }
+        }
+        return ids
+    }
+
     var entries: [ScheduleEntry] = []
 
     init(entries: [ScheduleEntry] = []) {

@@ -77,6 +77,8 @@ struct AppRootView: View {
             if phase == .background {
                 appState.flushUsage()
                 AppLog.flush()
+                // App Clip → full app: settings changed since the last save go into the handover too.
+                AppHandover.exportFromClip()
             }
         }
     }

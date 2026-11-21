@@ -379,7 +379,7 @@ private struct SummaryBlock: View {
     private func recapStats(_ recap: Recap) -> [SummaryStat] {
         [
             SummaryStat(value: String(recap.checkedOff.count), label: "seen", systemImage: "checkmark.circle"),
-            SummaryStat(value: String(recap.likedCount), label: "added", systemImage: "plus.circle"),
+            SummaryStat(value: String(recap.likedCount), label: "added", systemImage: "heart"),
             SummaryStat(value: AssistantText.distance(recap.walkedMeters, units, locale: .current), label: "walked", systemImage: "figure.walk"),
         ]
     }
@@ -426,8 +426,8 @@ private struct ChipsBlock: View {
 
     static func symbol(_ name: ActionName) -> String? {
         switch name {
-        case .like, .scheduleAdd: return "plus.circle"
-        case .unlike, .scheduleRemove: return "minus.circle"
+        case .like, .scheduleAdd: return "heart"
+        case .unlike, .scheduleRemove: return "heart.slash"
         case .scheduleReminder: return "bell"
         case .scheduleMove: return "clock"
         case .mySchedule: return "calendar"

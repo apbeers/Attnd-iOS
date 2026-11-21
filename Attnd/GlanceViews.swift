@@ -700,7 +700,7 @@ struct NothingLikedView: View {
             ContentUnavailableView {
                 Label("Nothing in Your Schedule Yet", systemImage: "calendar.badge.plus")
             } description: {
-                Text("Tap \(Image(systemName: "plus.circle")) on places and events to add them to your schedule.")
+                Text("Tap \(Image(systemName: "heart")) on places and events to add them to your schedule.")
             }
         }
     }
@@ -817,7 +817,7 @@ struct LocationPeek: View {
                 HStack(alignment: .firstTextBaseline) {
                     Text(location.name).font(.headline)
                     Spacer()
-                    if hearted { Image(systemName: "checkmark.circle.fill").foregroundStyle(.tint) }
+                    if hearted { Image(systemName: "heart.fill").foregroundStyle(.tint) }
                 }
                 if let category = location.category {
                     Text(category).font(.subheadline.weight(.medium)).foregroundStyle(.tint)
@@ -852,7 +852,7 @@ struct ScheduleItemPeek: View {
             HStack(alignment: .firstTextBaseline) {
                 Text(item.name).font(.headline)
                 Spacer()
-                if hearted { Image(systemName: "checkmark.circle.fill").foregroundStyle(.tint) }
+                if hearted { Image(systemName: "heart.fill").foregroundStyle(.tint) }
             }
             Text(timeText).font(.subheadline).foregroundStyle(.secondary).monospacedDigit()
             if let relativeText {

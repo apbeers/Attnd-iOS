@@ -111,7 +111,8 @@ struct LocationsView: View {
 
     private var filtered: [Location] {
         LocationGrouping.filter(appState.locations, category: selectedCategory)
-            .filter { !heartedOnly || appState.isHearted(.location($0.id)) }
+            // My schedule's places, including the places of its items.
+            .filter { !heartedOnly || appState.myScheduleLocationIds.contains($0.id) }
             .filter { SearchMatching.matches($0, query: searchText) }
     }
 
@@ -162,7 +163,7 @@ struct LocationsView: View {
                 if !searchText.isEmpty {
                     ContentUnavailableView.search(text: searchText)
                 } else if heartedOnly {
-                    NothingLikedView(hasLikes: appState.locations.contains { appState.isHearted(.location($0.id)) })
+                    NothingLikedView(hasLikes: !appState.myScheduleLocationIds.isEmpty)
                 } else if appState.isLoading {
                     ProgressView()
                 } else {
@@ -467,7 +468,7 @@ struct CategoryChips: View {
         HStack(spacing: 8) {
             if let heartedOnly {
                 let isOn = heartedOnly.wrappedValue
-                chip(MyScheduleText.title, systemImage: isOn ? "checkmark.circle.fill" : "checkmark.circle", isSelected: isOn) {
+                chip(MyScheduleText.title, systemImage: isOn ? "heart.fill" : "heart", isSelected: isOn) {
                     heartedOnly.wrappedValue.toggle()
                 }
             }

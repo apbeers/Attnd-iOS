@@ -336,6 +336,8 @@ final class AppState {
     // MARK: - Init
 
     init() {
+        // App Clip → full app: the clip's event, My schedule, chat and settings, once (AppHandover.swift).
+        let handedOver = AppHandover.importAtLaunch()
         usage = UsageReporter()
         usage.attachPerfMetrics()
         let defaults = UserDefaults.standard
@@ -359,6 +361,9 @@ final class AppState {
         }
         assistant.appState = self
         refreshOnDeviceModel()
+        if handedOver {
+            AppLog.notice(.lifecycle, "lifecycle.event.joined", "Opened the App Clip's event", ["via": "app_clip"])
+        }
     }
 
     /// Re-checks the on-device model (launch, scene activation). When it goes away the plan page
@@ -532,7 +537,7 @@ final class AppState {
         }
         // A deep link may have joined another event while we read the file.
         guard currentEvent == nil else { return }
-        etag = saved.etag
+        etag = saved.usableETag
         lastRefreshed = saved.lastRefreshed
         lastSavedRefresh = saved.lastRefreshed
         bundleData = saved.bundleJSON
@@ -547,11 +552,16 @@ final class AppState {
             eventCode: event.eventCode,
             etag: etag,
             lastRefreshed: lastRefreshed,
-            bundleJSON: data
+            bundleJSON: data,
+            sections: SectionCatalogue.version
         )
         lastSavedRefresh = lastRefreshed
         let version = contentVersion ?? event.contentVersion
-        enqueueDisk { await EventStore.shared.save(saved, contentVersion: version) }
+        enqueueDisk {
+            await EventStore.shared.save(saved, contentVersion: version)
+            // The App Clip keeps its handover for the full app current (AppHandover.swift).
+            AppHandover.exportFromClip()
+        }
     }
 
     /// Deletes the saved event and its cached images (leave, switch, 404).
@@ -1327,6 +1337,13 @@ final class AppState {
 
     func isHearted(_ target: SearchTarget) -> Bool {
         personal.isHearted(target)
+    }
+
+    /// Places shown by the My Schedule chip (Map, Places): saved / timed places and the places of
+    /// the schedule's items.
+    var myScheduleLocationIds: Set<Int> {
+        MySchedule.placeIds(heartedLocations: personal.heartedLocations,
+                            heartedItems: personal.heartedScheduleItems, schedule: schedule)
     }
 
     /// Hearts or unhearts a location or schedule item of the current event, counted as
@@ -2107,3 +2124,37 @@ private extension String {
     var nilIfEmptyAudit: String? { isEmpty ? nil : self }
 }
 #endif
+
+// MARK: - App Clip → full app (AppHandover.swift holds the pure part)
+
+extension AppHandover {
+    static var sharedDefaults: UserDefaults? { UserDefaults(suiteName: groupId) }
+
+    static var sharedDirectory: URL? {
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupId)
+    }
+
+    /// `Application Support/attnd-event/event.json` (EventStore's file).
+    static var eventFile: URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("attnd-event", isDirectory: true)
+            .appendingPathComponent("event.json")
+    }
+
+    static var isAppClip: Bool { Bundle.main.bundleIdentifier?.hasSuffix(".clip") ?? false }
+
+    /// The app at launch (before AppState reads its preferences).
+    static func importAtLaunch() -> Bool {
+        guard !isAppClip, let shared = sharedDefaults else { return false }
+        return importIfNeeded(into: .standard, from: shared, eventFile: eventFile, sharedDirectory: sharedDirectory)
+    }
+
+    /// The clip, after saving and when it goes to the background.
+    static func exportFromClip() {
+        guard isAppClip, let shared = sharedDefaults else { return }
+        export(from: .standard, to: shared, eventFile: eventFile, sharedDirectory: sharedDirectory)
+    }
+
+    /// The clip, before running its Live Activity and reminders.
+    static var clipSuperseded: Bool { isAppClip && appTookOver(sharedDefaults) }
+}

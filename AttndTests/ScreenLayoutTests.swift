@@ -442,4 +442,59 @@ final class ScreenLayoutTests: XCTestCase {
         XCTAssertLessThanOrEqual(ContentUpdatePolicy.jitter(maxMilliseconds: 1000), .milliseconds(1000))
         XCTAssertLessThanOrEqual(ContentUpdatePolicy.jitter(), .seconds(10))
     }
+
+    func testSavedCopy_ETagPerCatalogueAndHomeKept() throws {
+        let body = Data(#"{"event": {"id": 4, "name": "Fair", "event_code": "FAIR"}, "display": {"tabs": ["map", "schedule"]}}"#.utf8)
+        let old = SavedEvent(eventId: 4, eventCode: "FAIR", etag: "\"e4-v3-s1\"", lastRefreshed: nil, bundleJSON: body)
+        XCTAssertNil(old.usableETag, "a file from before (no catalogue) refetches the whole bundle")
+        let saved = SavedEvent(eventId: 4, eventCode: "FAIR", etag: "\"e4-v3-s2\"", lastRefreshed: nil, bundleJSON: body,
+                               sections: SectionCatalogue.version)
+        let restored = try SavedEvent.decode(SavedEvent.encode(saved))
+        XCTAssertEqual(restored.usableETag, "\"e4-v3-s2\"")
+        XCTAssertNil(SavedEvent(eventId: 4, eventCode: "FAIR", etag: "x", lastRefreshed: nil, bundleJSON: body, sections: 1).usableETag)
+        // Offline restore (and a 304 that keeps this body): Home is still the first tab.
+        let bundle = try restored.decodedBundle()
+        let tabs = TabLayout.resolve(bundle.display, hasFlyer: false)
+        XCTAssertEqual(tabs.tabs, [.home, .map, .schedule])
+        XCTAssertEqual(tabs.defaultTab, .home)
+    }
+
+    func testAppHandover_ClipToApp() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("handover-\(UUID().uuidString)")
+        let shared = try XCTUnwrap(UserDefaults(suiteName: "test.shared.\(UUID().uuidString)"))
+        let clip = try XCTUnwrap(UserDefaults(suiteName: "test.clip.\(UUID().uuidString)"))
+        let app = try XCTUnwrap(UserDefaults(suiteName: "test.app.\(UUID().uuidString)"))
+        let group = base.appendingPathComponent("group", isDirectory: true)
+        try FileManager.default.createDirectory(at: group, withIntermediateDirectories: true)
+        let clipFile = base.appendingPathComponent("clip/attnd-event/event.json")
+        try FileManager.default.createDirectory(at: clipFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("saved".utf8).write(to: clipFile)
+        clip.set("DEMO", forKey: "pref.savedEventCode")
+        clip.set(Data("{}".utf8), forKey: "pref.event.7")
+        clip.set("abc", forKey: AppHandover.deviceIdKey)
+        clip.set("token", forKey: "pref.pushToken")
+        clip.set("other", forKey: "unrelated.key")
+
+        AppHandover.export(from: clip, to: shared, eventFile: clipFile, sharedDirectory: group)
+        XCTAssertFalse(AppHandover.appTookOver(shared))
+
+        let appFile = base.appendingPathComponent("app/attnd-event/event.json")
+        XCTAssertTrue(AppHandover.importIfNeeded(into: app, from: shared, eventFile: appFile, sharedDirectory: group))
+        XCTAssertEqual(app.string(forKey: "pref.savedEventCode"), "DEMO")
+        XCTAssertEqual(app.data(forKey: "pref.event.7"), Data("{}".utf8))
+        XCTAssertEqual(app.string(forKey: AppHandover.deviceIdKey), "abc", "one device on the server")
+        XCTAssertNil(app.string(forKey: "pref.pushToken"), "the app's push topic is its own")
+        XCTAssertNil(app.string(forKey: "unrelated.key"))
+        XCTAssertEqual(try Data(contentsOf: appFile), Data("saved".utf8))
+        XCTAssertTrue(AppHandover.appTookOver(shared), "the clip stops its Live Activity")
+        // Once only, and never over the app's own event.
+        app.set("MINE", forKey: "pref.savedEventCode")
+        XCTAssertFalse(AppHandover.importIfNeeded(into: app, from: shared, eventFile: appFile, sharedDirectory: group))
+        XCTAssertEqual(app.string(forKey: "pref.savedEventCode"), "MINE")
+        let fresh = try XCTUnwrap(UserDefaults(suiteName: "test.app2.\(UUID().uuidString)"))
+        fresh.set("MINE", forKey: "pref.savedEventCode")
+        XCTAssertFalse(AppHandover.importIfNeeded(into: fresh, from: shared, eventFile: nil, sharedDirectory: group))
+        XCTAssertEqual(fresh.string(forKey: "pref.savedEventCode"), "MINE")
+        try? FileManager.default.removeItem(at: base)
+    }
 }

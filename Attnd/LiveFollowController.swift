@@ -155,7 +155,9 @@ final class LiveFollowController {
         for activity in activities {
             observe(activity)
         }
-        guard let bundle = appState.currentBundle else {
+        // The full app is installed and took over (App Clip → app, AppHandover): the clip ends its
+        // activities and reminders so only the app's own run.
+        guard let bundle = appState.currentBundle, !AppHandover.clipSuperseded else {
             // Outside an event: nothing to follow.
             for activity in activities where Self.isRunning(activity) {
                 await activity.end(nil, dismissalPolicy: .immediate)

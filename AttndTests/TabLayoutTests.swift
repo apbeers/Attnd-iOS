@@ -8,11 +8,27 @@ import XCTest
 
 final class TabLayoutTests: XCTestCase {
 
-    private func layout(_ tabs: [EventTab]?, default tab: EventTab? = nil, flyer: Bool = false) -> TabLayout {
+    /// The event's own tabs (screenshot mode: no Home) unless `home`.
+    private func layout(_ tabs: [EventTab]?, default tab: EventTab? = nil, flyer: Bool = false, home: Bool = false) -> TabLayout {
         var display = DisplayConfig()
         display.tabs = tabs
         display.defaultTab = tab
-        return TabLayout.resolve(display, hasFlyer: flyer)
+        return TabLayout.resolve(display, hasFlyer: flyer, screenshotMode: !home)
+    }
+
+    func testHomeAlwaysFirstAndDefault() {
+        // A bundle without Home (older catalogue, organizer's list) still gets it: Home doesn't come and go.
+        let l = layout([.map, .locations, .schedule, .notifications], default: .schedule, home: true)
+        XCTAssertEqual(l.tabs, [.home, .map, .locations, .schedule, .notifications])
+        XCTAssertEqual(l.defaultTab, .home)
+        XCTAssertEqual(l.optionsTab, .home, "the gear is on Home, so Updates is optional")
+        XCTAssertEqual(layout([.schedule, .home, .map], home: true).tabs, [.home, .schedule, .map])
+        // Five at most: Flyer goes first, then Places when the Map is there.
+        XCTAssertEqual(layout([.map, .locations, .schedule, .flyer, .notifications], home: true).tabs,
+                       [.home, .map, .locations, .schedule, .notifications])
+        XCTAssertEqual(layout(nil, home: true).tabs, [.home, .map, .locations, .schedule, .notifications])
+        // Screenshot mode keeps today's tabs.
+        XCTAssertFalse(layout([.home, .map]).tabs.contains(.home))
     }
 
     func testListedTabsInOrder() {

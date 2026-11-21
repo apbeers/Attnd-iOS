@@ -520,6 +520,12 @@ struct SavedEvent: Codable, Hashable, Sendable {
     var lastRefreshed: Date?
     /// The bundle response body (base64 in the file).
     var bundleJSON: Data
+    /// The screens catalogue (`X-Attnd-Sections`) this body was fetched with; nil in older files.
+    var sections: Int? = nil
+
+    /// The ETag to send with the next `bundle/` request: only for a body of this build's
+    /// catalogue, so a 304 never keeps a body made for another one (the Home tab came and went).
+    var usableETag: String? { sections == SectionCatalogue.version ? etag : nil }
 
     /// Decodes the saved bundle with the normal lenient decoder. Fails when the file is
     /// from an unknown format or belongs to a different event than its metadata says.

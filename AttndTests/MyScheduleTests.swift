@@ -164,4 +164,14 @@ final class MyScheduleTests: XCTestCase {
         s.keepChange(105, moved)
         XCTAssertTrue(s.organizerChanges(moved).isEmpty)
     }
+
+    func testMapPlaces_IncludeTheItemsPlaces() {
+        let schedule = [
+            ScheduleItem(id: 1, name: "Set", locationId: 10),
+            ScheduleItem(id: 2, name: "Talk", locationId: 20),
+            ScheduleItem(id: 3, name: "General"),
+        ]
+        XCTAssertEqual(MySchedule.placeIds(heartedLocations: [30], heartedItems: [1, 3], schedule: schedule), [10, 30])
+        XCTAssertEqual(MySchedule.placeIds(heartedLocations: [], heartedItems: [], schedule: schedule), [])
+    }
 }

@@ -234,11 +234,11 @@ private struct HomeSection: View {
 
     @ViewBuilder
     private var links: some View {
-        let links = appState.currentEvent?.context?.links ?? []
-        if !links.isEmpty {
+        let entries = appState.currentEvent?.context?.links ?? []
+        if !entries.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 BlockTitle(title: section.title ?? "Links")
-                ForEach(links, id: \.url) { link in
+                ForEach(entries, id: \.url) { link in
                     Link(destination: link.url) {
                         Label(link.title, systemImage: "safari")
                     }

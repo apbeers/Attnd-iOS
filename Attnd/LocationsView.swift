@@ -757,9 +757,9 @@ struct LocationDetailView: View {
     private func detailContent(now: Date) -> some View {
         let within = location.coordinate.flatMap { appState.userLocation.direction(to: $0)?.meters }.map { $0 <= 8_000 } ?? false
         let sections = appState.screenSections(.placeDetail, now: now, subject: ScreenFacts.subject(location)) { bundle, state in
-            var state = state
-            state.withinWalk = within
-            return ScreenFacts.place(location, bundle, state)
+            var walking = state
+            walking.withinWalk = within
+            return ScreenFacts.place(location, bundle, walking)
         }
         let header = sections.first { $0.type == "header" }
         return ScrollView {

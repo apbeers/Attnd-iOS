@@ -242,10 +242,18 @@ final class APIClient: Sendable {
 
     /// POST events/<id>/join/
     @discardableResult
-    func joinEvent(eventId: Int, deviceId: String, pushToken: String?) async throws -> StatusResponse {
+    func joinEvent(eventId: Int, deviceId: String, pushToken: String?, previewToken: String? = nil) async throws -> StatusResponse {
         let body = JoinRequest(deviceId: deviceId, pushToken: Self.nonEmpty(pushToken), appVersion: appVersion,
-                               appClip: isAppClip)
+                               appClip: isAppClip, previewToken: Self.nonEmpty(previewToken))
         return try await post("events/\(eventId)/join/", body: body)
+    }
+
+    /// GET events/<id>/changes/?since= (API-026, preview phones only): answered at once on a change,
+    /// else after about 25 s (inside the 30 s request timeout).
+    func changes(eventId: Int, since: Int?, deviceId: String) async throws -> ChangesResponse {
+        let path = "events/\(eventId)/changes/" + (since.map { "?since=\($0)" } ?? "")
+        let (data, _) = try await send(path, headers: ["X-Device-Id": deviceId])
+        return try decode(data)
     }
 
     /// POST events/<id>/leave/

@@ -67,7 +67,10 @@ struct ScheduleView: View {
     @State private var selectedLocationId: Int?
     @State private var showEnded = false
 
-    private var resolvedStyle: ScheduleStyle { style ?? appState.display.scheduleStyle }
+    /// The tab's own layout (API-027 `schedule_tab`) picks the list; else `display.schedule_style`.
+    private var resolvedStyle: ScheduleStyle {
+        style ?? appState.scheduleTabLayout?.style.flatMap(ScheduleStyle.init(rawValue:)) ?? appState.display.scheduleStyle
+    }
 
     /// Ended items are hidden by default, except for archived events and when nothing is left to come (then the
     /// ended items are listed greyed instead of an empty tab; the server keeps the Schedule tab for them).
@@ -136,8 +139,25 @@ struct ScheduleView: View {
     /// then the event's whole schedule in its style. No Liked chip any more.
     @ViewBuilder
     private func listContent(sections: [ScheduleSection], now: Date) -> some View {
+        let layout = appState.scheduleTabLayout
         if searchText.isEmpty, selectedLocationId == nil {
-            MyScheduleSection(now: now, open: open)
+            if layout?.showsMySchedule ?? true {
+                MyScheduleSection(now: now, open: open)
+            }
+            // API-027: the organizer's featured items.
+            let featured = (layout?.featured ?? []).compactMap { id in appState.schedule.first { $0.id == id } }
+            if !featured.isEmpty {
+                Section {
+                    ForEach(featured) { item in
+                        NavigationLink(value: item) {
+                            ScheduleRowView(item: item, showLocation: true, now: now, timeZone: appState.timeZone)
+                        }
+                        .scheduleItemPeek(item, now: now) { open(item) }
+                    }
+                } header: {
+                    Text(layout?.featuredTitle ?? "Featured")
+                }
+            }
         }
         scheduleSections(sections, now: now)
     }

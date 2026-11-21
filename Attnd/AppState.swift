@@ -81,6 +81,11 @@ final class AppState {
             // Logs carry the joined event's id; perf counts go with its usage batch.
             AppLog.setEventId(currentEvent?.id)
             usage.eventId = currentEvent?.id
+            // Another event (or none) ends being a preview phone (API-026).
+            if let preview = previewEventId, preview != currentEvent?.id {
+                previewEventId = nil
+            }
+            updatePreviewPolling()
         }
     }
     private(set) var display: DisplayConfig = .default
@@ -279,6 +284,17 @@ final class AppState {
     @ObservationIgnored private var etag: String?
     /// `content_version` of the applied bundle; compared with `content_updated` pushes.
     @ObservationIgnored private var contentVersion: Int?
+    /// API-026: a preview token from a "Preview on my phone" link, sent once with the next join.
+    @ObservationIgnored private var pendingPreviewToken: String?
+    /// API-026: this device is the organizer's preview phone for this event (kept across launches;
+    /// `changes/` answering `preview: false`, leaving or switching ends it).
+    private var previewEventId: Int? {
+        get { UserDefaults.standard.object(forKey: Self.previewKey) as? Int }
+        set { UserDefaults.standard.set(newValue, forKey: Self.previewKey) }
+    }
+    private static let previewKey = "pref.previewEventId"
+    @ObservationIgnored private var previewTask: Task<Void, Never>?
+    @ObservationIgnored private var inForeground = true
     /// The raw JSON of the applied bundle, re-saved with a new `lastRefreshed` after a 304.
     @ObservationIgnored private var bundleData: Data?
     /// `lastRefreshed` as last written to disk (304s re-save at most every few minutes).
@@ -692,9 +708,18 @@ final class AppState {
         guard let event = currentEvent, joinedEventId != event.id, joiningEventId != event.id else { return }
         joiningEventId = event.id
         defer { if joiningEventId == event.id { joiningEventId = nil } }
+        let token = pendingPreviewToken
         do {
-            _ = try await APIClient.shared.joinEvent(eventId: event.id, deviceId: deviceId, pushToken: pushToken)
+            let answer = try await APIClient.shared.joinEvent(eventId: event.id, deviceId: deviceId, pushToken: pushToken,
+                                                               previewToken: token)
             if currentEvent?.id == event.id { joinedEventId = event.id }
+            if token != nil { pendingPreviewToken = nil }
+            if answer.preview == true, currentEvent?.id == event.id {
+                AppLog.notice(.lifecycle, "lifecycle.event.joined", "Joined as the organizer's preview phone",
+                              ["event_id": .int(event.id), "via": "preview"])
+                previewEventId = event.id
+                updatePreviewPolling()
+            }
         } catch {
             // Retried later; the bundle works without it.
             AppLog.caught(error, .net, "join")
@@ -702,6 +727,8 @@ final class AppState {
     }
 
     func leaveEvent() async {
+        previewEventId = nil
+        updatePreviewPolling()
         AppLog.notice(.lifecycle, "lifecycle.event.left", "Left the event", ["event_id": .int(currentEvent?.id ?? 0), "reason": "user"])
         usage.flush()
         savedEventCode = nil
@@ -1061,14 +1088,20 @@ final class AppState {
         }
         guard let code = DeepLink.eventCode(from: url) else { return }
         AppLog.info(.lifecycle, "lifecycle.deep_link", "Opened by a join link", ["kind": "join", "target": "/join/{id}/"])
-        await join(code: code, via: "link")
+        await join(code: code, via: "link", previewToken: DeepLink.previewToken(from: url))
     }
 
     /// Looks up an event by code (QR codes, deep links) and joins it, leaving any
     /// current event first. Returns false if no live event matches.
     @discardableResult
-    func join(code: String, via: String = "search") async -> Bool {
+    func join(code: String, via: String = "search", previewToken: String? = nil) async -> Bool {
+        if let previewToken { pendingPreviewToken = previewToken }
         if let current = currentEvent, current.eventCode.caseInsensitiveCompare(code) == .orderedSame {
+            // Already in it: a preview link still joins again once, with its token.
+            if pendingPreviewToken != nil {
+                joinedEventId = nil
+                await ensureJoined()
+            }
             return true
         }
         let event: Event
@@ -1226,7 +1259,7 @@ final class AppState {
                 ])
                 return false
             }
-            let delay = ContentUpdatePolicy.jitter()
+            let delay = ContentUpdatePolicy.jitter(maxMilliseconds: payload.jitterMilliseconds)
             try? await Task.sleep(for: delay)
             guard currentEvent?.id == eventId else { return false }
             await refreshBundle(silent: true, source: .push)
@@ -1507,6 +1540,63 @@ final class AppState {
         // Position samples for auto check-off and running late (only while already tracked).
         assistant.onLocation(userLocation.isAuthorized ? userLocation.location : nil)
         liveFollowNeedsUpdate()
+    }
+
+    // MARK: - Preview phone (API-026)
+
+    /// The scene came to the foreground or left it: the preview long-poll runs only in the foreground.
+    func setForeground(_ active: Bool) {
+        inForeground = active
+        updatePreviewPolling()
+    }
+
+    /// Holds `changes/` while this is the event's preview phone and the app is on screen.
+    private func updatePreviewPolling() {
+        let wanted = inForeground && previewEventId != nil && previewEventId == currentEvent?.id && !ScreenshotMode.isActive
+        if !wanted {
+            previewTask?.cancel()
+            previewTask = nil
+            return
+        }
+        guard previewTask == nil else { return }
+        let task = Task { [weak self] in
+            await self?.previewLoop()
+        }
+        previewTask = task
+        Task { [weak self] in
+            await task.value
+            if self?.previewTask == task { self?.previewTask = nil }
+        }
+    }
+
+    private func previewLoop() async {
+        while !Task.isCancelled {
+            guard let event = currentEvent, previewEventId == event.id, inForeground else { return }
+            do {
+                let since = contentVersion
+                let answer = try await APIClient.shared.changes(eventId: event.id, since: since, deviceId: deviceId)
+                guard !Task.isCancelled, currentEvent?.id == event.id else { return }
+                switch PreviewPoll.next(answer, since: since) {
+                case .refresh:
+                    // At once, no random wait (a preview phone). A refresh that didn't move the
+                    // version (offline, an error) waits before asking again.
+                    await refreshBundle(silent: true, source: .push)
+                    if contentVersion == since { try await Task.sleep(for: .seconds(15)) }
+                case .wait(let seconds):
+                    if seconds > 0 { try await Task.sleep(for: .seconds(seconds)) }
+                case .stop:
+                    AppLog.notice(.lifecycle, "lifecycle.event.joined", "No longer the preview phone",
+                                  ["event_id": .int(event.id), "via": "preview_ended"])
+                    previewEventId = nil
+                    return
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                AppLog.caught(error, .net, "preview_changes")
+                try? await Task.sleep(for: .seconds(15))
+            }
+        }
     }
 
     /// The scene became active: the Live Activity can start now (foreground only).

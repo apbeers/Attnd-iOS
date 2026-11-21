@@ -475,11 +475,14 @@ struct EventBundle: Hashable, Sendable {
     var notifications: [AppNotification] = []
     /// API-024: the screens' sections (nil when the server sent none: the built-in layouts).
     var layout: ScreenLayouts? = nil
+    /// API-027: the Live Activity's content choices (nil from older servers: today's behaviour).
+    var liveActivity: LiveActivitySettings? = nil
 }
 
 extension EventBundle: Decodable {
     private enum CodingKeys: String, CodingKey {
         case event, display, categories, locations, schedule, notifications, layout
+        case liveActivity = "live_activity"
         case schemaVersion = "schema_version"
         case contentVersion = "content_version"
         case updatedAt = "updated_at"
@@ -497,6 +500,7 @@ extension EventBundle: Decodable {
         schedule = c.lossyArray(ScheduleItem.self, .schedule)
         notifications = c.lossyArray(AppNotification.self, .notifications)
         layout = c.lenient(ScreenLayouts.self, .layout)
+        liveActivity = c.lenient(LiveActivitySettings.self, .liveActivity)
     }
 }
 
@@ -555,6 +559,8 @@ struct JoinRequest: Encodable, Sendable {
     var appVersion: String?
     /// API-019: `true` from the App Clip (its pushes use the clip's APNs topic), `false` from the app.
     var appClip = false
+    /// API-026: the organizer's preview token from a "Preview on my phone" link (sent once, never shown).
+    var previewToken: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case platform
@@ -562,6 +568,61 @@ struct JoinRequest: Encodable, Sendable {
         case pushToken = "push_token"
         case appVersion = "app_version"
         case appClip = "app_clip"
+        case previewToken = "preview_token"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(deviceId, forKey: .deviceId)
+        try c.encode(platform, forKey: .platform)
+        try c.encodeIfPresent(pushToken, forKey: .pushToken)
+        try c.encodeIfPresent(appVersion, forKey: .appVersion)
+        try c.encode(appClip, forKey: .appClip)
+        try c.encodeIfPresent(previewToken, forKey: .previewToken)
+    }
+}
+
+/// `GET events/<id>/changes/?since=` (API-026, preview phones only).
+struct ChangesResponse: Hashable, Sendable {
+    var contentVersion: Int? = nil
+    var changed = false
+    /// false: not (or no longer) a preview phone — stop.
+    var preview = true
+    /// Seconds to wait before the next call (0 = at once).
+    var retryAfter = 0
+}
+
+extension ChangesResponse: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case changed, preview
+        case contentVersion = "content_version"
+        case retryAfter = "retry_after"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        contentVersion = c.lenient(Int.self, .contentVersion)
+        changed = c.lenient(Bool.self, .changed) ?? false
+        preview = c.lenient(Bool.self, .preview) ?? true
+        retryAfter = max(0, min(c.lenient(Int.self, .retryAfter) ?? 0, 3600))
+    }
+}
+
+/// The preview long-poll's next step (pure; BusinessLogicTests-style rules in ScreenLayoutTests).
+enum PreviewPoll {
+    enum Next: Hashable, Sendable {
+        /// Refetch the bundle now, then poll again from the new version.
+        case refresh
+        /// Call again after this many seconds (0 = at once).
+        case wait(Int)
+        /// Not a preview phone (any more): back to the normal polling.
+        case stop
+    }
+
+    static func next(_ answer: ChangesResponse, since: Int?) -> Next {
+        if !answer.preview { return .stop }
+        if answer.changed || (answer.contentVersion.map { v in since.map { v > $0 } ?? true } ?? false) { return .refresh }
+        return .wait(answer.retryAfter)
     }
 }
 
@@ -774,11 +835,13 @@ struct StatusResponse: Hashable, Sendable {
     var contentVersion: Int? = nil
     var subscribed: Bool? = nil
     var eventId: Int? = nil
+    /// API-026: the join made this device the event's preview phone.
+    var preview: Bool? = nil
 }
 
 extension StatusResponse: Decodable {
     private enum CodingKeys: String, CodingKey {
-        case status, subscribed
+        case status, subscribed, preview
         case contentVersion = "content_version"
         case eventId = "event_id"
     }
@@ -789,6 +852,7 @@ extension StatusResponse: Decodable {
         contentVersion = c.lenient(Int.self, .contentVersion)
         subscribed = c.lenient(Bool.self, .subscribed)
         eventId = c.lenient(Int.self, .eventId)
+        preview = c.lenient(Bool.self, .preview)
     }
 }
 
@@ -806,12 +870,15 @@ struct PushPayload: Hashable, Sendable {
     var eventId: Int?
     var notificationId: Int?
     var contentVersion: Int?
+    /// API-026: the longest random wait before refetching, in ms (0 on a preview phone).
+    var jitterMilliseconds: Int?
 
-    init(kind: Kind?, eventId: Int?, notificationId: Int? = nil, contentVersion: Int? = nil) {
+    init(kind: Kind?, eventId: Int?, notificationId: Int? = nil, contentVersion: Int? = nil, jitterMilliseconds: Int? = nil) {
         self.kind = kind
         self.eventId = eventId
         self.notificationId = notificationId
         self.contentVersion = contentVersion
+        self.jitterMilliseconds = jitterMilliseconds
     }
 
     init(userInfo: [AnyHashable: Any]) {
@@ -824,6 +891,7 @@ struct PushPayload: Hashable, Sendable {
         eventId = Self.int(userInfo["event_id"])
         notificationId = Self.int(userInfo["notification_id"])
         contentVersion = Self.int(userInfo["content_version"])
+        jitterMilliseconds = Self.int(userInfo["jitter_ms"]).map { min(max($0, 0), 60_000) }
     }
 
     /// The push's `type` for logs ("notification", "content_updated", …, "none").

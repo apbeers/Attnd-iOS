@@ -56,14 +56,17 @@ enum ComponentCatalogue {
 
     static let itemHeaderParts = ["time", "status", "tags"]
     static let placeHeaderParts = ["image", "category", "tags", "address", "distance", "now_next"]
+    /// Catalogue 2's list row parts (schedule items, places).
+    static let listItemParts = ["time", "place", "tags", "walk", "progress", "add"]
+    static let listPlaceParts = ["image", "category", "now_next", "distance", "events"]
 
     /// Every type. Block types that are chat-only have no screens.
     static let specs: [String: ComponentSpec] = [
         // Chat blocks (assistant spec §2)
         "text": ComponentSpec(chat: true), "item_card": ComponentSpec(chat: true), "place_card": ComponentSpec(chat: true),
         "update_card": ComponentSpec(chat: true), "list": ComponentSpec(chat: true), "carousel": ComponentSpec(chat: true),
-        "timeline": ComponentSpec(chat: true), "gallery": ComponentSpec(chat: true), "compare": ComponentSpec(chat: true),
-        "plan_diff": ComponentSpec(chat: true), "plan": ComponentSpec(chat: true), "setting": ComponentSpec(chat: true),
+        "timeline": ComponentSpec(screens: [.scheduleTab: s(["schedule"], parts: listItemParts)], chat: true), "gallery": ComponentSpec(chat: true), "compare": ComponentSpec(chat: true),
+        "plan_diff": ComponentSpec(chat: true), "plan": ComponentSpec(screens: [.onboarding: s()], chat: true), "setting": ComponentSpec(chat: true),
         "summary": ComponentSpec(chat: true), "share": ComponentSpec(chat: true), "chips": ComponentSpec(chat: true),
         "confirm": ComponentSpec(chat: true),
         "map": ComponentSpec(screens: [.home: s(["pins"])], chat: true),
@@ -95,9 +98,10 @@ enum ComponentCatalogue {
         "hours": ComponentSpec(screens: [.placeDetail: s(["context.hours"])], chat: true, subject: .location),
         "menu": ComponentSpec(screens: [.placeDetail: s(["context.menu"])], chat: true, subject: .location),
         "at_this_location": ComponentSpec(screens: [.placeDetail: s(["items_here"])]),
-        "faq": ComponentSpec(screens: [.eventInfo: s(["context.faq"]), .home: s(["context.faq"])], chat: true),
+        "faq": ComponentSpec(screens: [.eventInfo: s(["context.faq"]), .home: s(["context.faq"]), .updatesTab: s(["context.faq"])], chat: true),
         "amenities": ComponentSpec(screens: [.eventInfo: s(["context.amenities"])], chat: true),
-        "getting_there": ComponentSpec(screens: [.eventInfo: s(["context.getting_there"]), .home: s(["context.getting_there"])], chat: true),
+        "getting_there": ComponentSpec(screens: [.eventInfo: s(["context.getting_there"]), .home: s(["context.getting_there"]),
+                                                 .updatesTab: s(["context.getting_there"])], chat: true),
         "accessibility": ComponentSpec(screens: [.eventInfo: s(["context.accessibility"])], chat: true),
         "policies": ComponentSpec(screens: [.eventInfo: s(["context.policies"])], chat: true),
         "weather_plan": ComponentSpec(screens: [.eventInfo: s(["context.weather_plan"])], chat: true),
@@ -105,9 +109,29 @@ enum ComponentCatalogue {
         "event_info_link": ComponentSpec(screens: [.optionsEvent: s(["context"])]),
         "now_playing": ComponentSpec(screens: [.mapOverlay: s(["now_playing"])], chat: true),
         "selected_place": ComponentSpec(screens: [.mapOverlay: s()]),
-        "urgent": ComponentSpec(screens: [.home: s(["urgent"])], chat: true),
+        "urgent": ComponentSpec(screens: [.home: s(["urgent"]), .updatesTab: s()], chat: true),
         // My schedule (catalogue version 2): Home's "Up next in my schedule"; empty state when empty.
-        "my_schedule": ComponentSpec(screens: [.home: s()], chat: true),
+        "my_schedule": ComponentSpec(screens: [.home: s(), .scheduleTab: s(parts: listItemParts)], chat: true),
+        // Catalogue 2 (API-027): banners as sections, the tabs' lists, Updates, the first-join cards.
+        "status": ComponentSpec(screens: [.home: s(), .mapOverlay: s(), .scheduleTab: s(), .placesTab: s(), .updatesTab: s()]),
+        "update_banner": ComponentSpec(screens: [.home: s(["updates"]), .mapOverlay: s(["updates"]), .scheduleTab: s(["updates"]),
+                                                 .placesTab: s(["updates"])]),
+        "happening_now": ComponentSpec(screens: [.scheduleTab: s(["schedule"], parts: listItemParts)]),
+        "up_next": ComponentSpec(screens: [.scheduleTab: s(["schedule"], parts: listItemParts)]),
+        "featured": ComponentSpec(screens: [.scheduleTab: s(parts: listItemParts), .placesTab: s(parts: listPlaceParts)]),
+        "by_day": ComponentSpec(screens: [.scheduleTab: s(["schedule"], parts: listItemParts)]),
+        "by_place": ComponentSpec(screens: [.scheduleTab: s(["schedule"], parts: listItemParts)]),
+        "nearby": ComponentSpec(screens: [.placesTab: s(["pins"], parts: listPlaceParts)]),
+        "by_category": ComponentSpec(screens: [.placesTab: s(["locations"], parts: listPlaceParts)]),
+        "all_places": ComponentSpec(screens: [.placesTab: s(["locations"], parts: listPlaceParts)]),
+        "pinned": ComponentSpec(screens: [.updatesTab: s(["updates"])]),
+        "latest": ComponentSpec(screens: [.updatesTab: s(["updates"])]),
+        "earlier": ComponentSpec(screens: [.updatesTab: s(["updates"])]),
+        "intro": ComponentSpec(screens: [.onboarding: s()]),
+        "welcome": ComponentSpec(screens: [.onboarding: s()]),
+        "location": ComponentSpec(screens: [.onboarding: s()]),
+        "notifications": ComponentSpec(screens: [.onboarding: s()]),
+        "lock_screen": ComponentSpec(screens: [.onboarding: s()]),
         // The chat's "Here's your day": My schedule's day as a timeline (the plan's, with walks).
         "my_day": ComponentSpec(chat: true),
         "whats_on": ComponentSpec(screens: [.home: s(["schedule"])], chat: true),

@@ -126,6 +126,30 @@ enum LiveActivityPlanner {
         return nil
     }
 
+    /// What `followDay` gets under the organizer's choice (API-027 `live_activity.follows`):
+    /// `my_schedule` today's rule; `everything` every item of the day (no hearts, plan or places);
+    /// `location` only the items at that place (an unknown place → My schedule's rule).
+    struct FollowInputs: Hashable, Sendable {
+        var schedule: [ScheduleItem]
+        var hearted: Set<Int>
+        var planned: Set<Int>
+        var places: [FollowPlace]
+    }
+
+    static func inputs(
+        _ settings: LiveActivitySettings?, bundle: EventBundle,
+        hearted: Set<Int>, planned: Set<Int>, places: [FollowPlace]
+    ) -> FollowInputs {
+        let settings = settings ?? .defaults
+        if let location = settings.followedLocation(in: bundle) {
+            return FollowInputs(schedule: bundle.schedule.filter { $0.locationId == location }, hearted: [], planned: [], places: [])
+        }
+        if settings.follows == .everything {
+            return FollowInputs(schedule: bundle.schedule, hearted: [], planned: [], places: [])
+        }
+        return FollowInputs(schedule: bundle.schedule, hearted: hearted, planned: planned, places: places)
+    }
+
     enum Decision: Hashable, Sendable {
         /// Nothing to follow (or too far ahead to schedule).
         case nothing

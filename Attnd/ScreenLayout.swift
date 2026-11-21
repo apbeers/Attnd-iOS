@@ -34,6 +34,11 @@ enum LayoutScreen: String, CaseIterable, Hashable, Sendable {
     case placeDetail = "place_detail"
     case mapOverlay = "map_overlay"
     case optionsEvent = "options_event"
+    // Catalogue 2 (API-027): the tabs' lists, Updates and the first-join cards.
+    case scheduleTab = "schedule_tab"
+    case placesTab = "places_tab"
+    case updatesTab = "updates_tab"
+    case onboarding
 }
 
 /// One section of a screen, as sent (before validation) or resolved.
@@ -43,13 +48,22 @@ struct LayoutSection: Hashable, Sendable {
     var title: String? = nil
     var limit: Int? = nil
     var when: [String] = []
+    /// Catalogue 2: `featured` / `pinned` ids in the organizer's order (≤ 20).
+    var ids: [Int] = []
+    /// Catalogue 2: the `welcome` card's text (≤ 300) and image (absolute https, ≤ 500).
+    var text: String? = nil
+    var image: URL? = nil
 
-    init(_ type: String, show: [String] = [], title: String? = nil, limit: Int? = nil, when: [String] = []) {
+    init(_ type: String, show: [String] = [], title: String? = nil, limit: Int? = nil, when: [String] = [],
+         ids: [Int] = [], text: String? = nil, image: URL? = nil) {
         self.type = type
         self.show = show
         self.title = title
         self.limit = limit
         self.when = when
+        self.ids = ids
+        self.text = text
+        self.image = image
     }
 
     func shows(_ part: String) -> Bool { show.contains(part) }
@@ -118,6 +132,8 @@ enum ScreenLayout {
     static let maxOverrides = 8
     static let maxTitle = 60
     static let maxLimit = 20
+    static let maxText = 300
+    static let maxImageURL = 500
 
     /// Today's fixed screens, as layouts (also the fallback for anything missing or invalid).
     static let defaults: [LayoutScreen: [LayoutSection]] = [
@@ -172,6 +188,15 @@ enum ScreenLayout {
             }
             section.limit = raw.limit.map { min(max($0, 1), maxLimit) }
             section.when = raw.when.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            var seenIds = Set<Int>()
+            section.ids = Array(raw.ids.filter { seenIds.insert($0).inserted }.prefix(maxLimit))
+            if let text = raw.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                section.text = text.count > maxText ? String(text.prefix(maxText - 1)) + "…" : text
+            }
+            if let image = raw.image, image.scheme?.lowercased() == "https", image.host() != nil,
+               image.absoluteString.count <= maxImageURL {
+                section.image = image
+            }
             out.append(section)
             if out.count == maxSections { break }
         }
@@ -370,7 +395,7 @@ enum ScreenFacts {
 // MARK: - Decoding (lenient: unknown keys ignored, bad entries dropped)
 
 extension LayoutSection: Decodable {
-    private enum CodingKeys: String, CodingKey { case type, show, title, limit, when }
+    private enum CodingKeys: String, CodingKey { case type, show, title, limit, when, ids, text, image }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -386,6 +411,9 @@ extension LayoutSection: Decodable {
         } else {
             when = c.lossyArray(String.self, .when)
         }
+        ids = c.lossyArray(Int.self, .ids)
+        text = c.nonEmptyString(.text)
+        image = c.nonEmptyString(.image).flatMap(URL.init(string:))
     }
 }
 
@@ -503,5 +531,176 @@ enum AboutText {
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { !$0.isEmpty }
             .joined(separator: " ")
+    }
+}
+
+// MARK: - Catalogue 2 screens (API-027)
+
+/// What the Schedule and Places tabs draw from their layouts (`schedule_tab`, `places_tab`): which
+/// list (the existing styles), whether My Schedule shows, and the organizer's featured ids. nil =
+/// no layout for the tab (today's screen, from `display`). Row parts (`show`) aren't drawn yet.
+struct TabListLayout: Hashable, Sendable {
+    /// `display.schedule_style` / `locations_style` values: `timeline`, `by_day`, `by_location`,
+    /// `now_next` (Schedule); `cards`, `list`, `grouped` (Places).
+    var style: String?
+    var showsMySchedule = true
+    var featured: [Int] = []
+    var featuredTitle: String?
+
+    static func schedule(_ sections: [LayoutSection]) -> TabListLayout? {
+        guard !sections.isEmpty else { return nil }
+        var out = TabListLayout(showsMySchedule: sections.contains { $0.type == "my_schedule" })
+        for section in sections {
+            switch section.type {
+            case "timeline": out.style = out.style ?? "timeline"
+            case "by_day": out.style = out.style ?? "by_day"
+            case "by_place": out.style = out.style ?? "by_location"
+            case "happening_now", "up_next": out.style = out.style ?? "now_next"
+            case "featured":
+                out.featured = section.ids
+                out.featuredTitle = section.title
+            default: break
+            }
+        }
+        return out
+    }
+
+    static func places(_ sections: [LayoutSection]) -> TabListLayout? {
+        guard !sections.isEmpty else { return nil }
+        var out = TabListLayout(showsMySchedule: false)
+        for section in sections {
+            switch section.type {
+            case "by_category": out.style = out.style ?? "grouped"
+            case "all_places", "nearby": out.style = out.style ?? (section.shows("image") ? "cards" : "list")
+            case "featured":
+                out.featured = section.ids
+                out.featuredTitle = section.title
+            default: break
+            }
+        }
+        return out
+    }
+}
+
+/// The Updates tab from `updates_tab` (urgent first, the organizer's pinned ones, the latest day,
+/// earlier): each notification once, in the first section that takes it, newest first.
+enum UpdatesLayout {
+    struct Group: Hashable, Sendable {
+        var type: String
+        var title: String
+        var ids: [Int]
+    }
+
+    static func groups(_ sections: [LayoutSection], notifications: [AppNotification], now: Date) -> [Group] {
+        let newestFirst = notifications.sorted { ($0.sendTime ?? .distantPast, $0.id) > ($1.sendTime ?? .distantPast, $1.id) }
+        let byId = Dictionary(newestFirst.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        var used = Set<Int>()
+        var out: [Group] = []
+        func take(_ list: [AppNotification]) -> [Int] { list.map(\.id).filter { used.insert($0).inserted } }
+        for section in sections {
+            let ids: [Int]
+            let title: String
+            switch section.type {
+            case "urgent":
+                ids = take(newestFirst.filter { n in
+                    n.isUrgent && (n.sendTime.map { now.timeIntervalSince($0) < UpdatesInbox.urgentWindow } ?? false)
+                })
+                title = "Urgent"
+            case "pinned":
+                ids = take(section.ids.compactMap { byId[$0] })
+                title = "Pinned"
+            case "latest":
+                ids = take(newestFirst.filter { n in n.sendTime.map { now.timeIntervalSince($0) < 24 * 3600 } ?? true })
+                title = "Latest"
+            case "earlier":
+                ids = take(newestFirst)
+                title = "Earlier"
+            case "faq", "getting_there":
+                out.append(Group(type: section.type, title: section.title ?? (section.type == "faq" ? "FAQ" : "Getting There"), ids: []))
+                continue
+            default:
+                continue
+            }
+            let limited = section.limit.map { Array(ids.prefix($0)) } ?? ids
+            if !limited.isEmpty { out.append(Group(type: section.type, title: section.title ?? title, ids: limited)) }
+        }
+        // Nothing may get lost: anything no section took goes last.
+        let rest = take(newestFirst)
+        if !rest.isEmpty, sections.contains(where: { ["urgent", "pinned", "latest", "earlier"].contains($0.type) }) {
+            out.append(Group(type: "earlier", title: "Earlier", ids: rest))
+        }
+        return out
+    }
+}
+
+/// The first-join cards from `onboarding` (nil = the built-in cards): their order, which ones, and
+/// the organizer's welcome card.
+struct OnboardingLayout: Hashable, Sendable {
+    enum Card: String, Hashable, Sendable { case intro, welcome, location, notifications, lockScreen = "lock_screen", plan }
+    var cards: [Card]
+    var welcomeTitle: String?
+    var welcomeText: String?
+    var welcomeImage: URL?
+
+    static func of(_ sections: [LayoutSection]) -> OnboardingLayout? {
+        let cards = sections.compactMap { Card(rawValue: $0.type) }
+        guard !cards.isEmpty else { return nil }
+        let welcome = sections.first { $0.type == "welcome" }
+        // A welcome card with nothing to say is skipped.
+        let usable = cards.filter { $0 != .welcome || welcome?.title != nil || welcome?.text != nil }
+        return OnboardingLayout(cards: usable, welcomeTitle: welcome?.title, welcomeText: welcome?.text, welcomeImage: welcome?.image)
+    }
+}
+
+// MARK: - Live Activity settings (API-027 `live_activity`)
+
+/// `bundle.live_activity`: what the Live Activity follows, its buttons and stale text. Lenient:
+/// missing or unknown values keep today's behaviour.
+struct LiveActivitySettings: Hashable, Sendable, Decodable {
+    enum Follows: String, Hashable, Sendable { case mySchedule = "my_schedule", everything, location }
+
+    var follows: Follows = .mySchedule
+    var locationId: Int? = nil
+    /// In order, from `add`, `skip`, `map`; nil = the defaults.
+    var buttons: [String]? = nil
+    var staleText: String? = nil
+
+    static let defaults = LiveActivitySettings()
+
+    init(follows: Follows = .mySchedule, locationId: Int? = nil, buttons: [String]? = nil, staleText: String? = nil) {
+        self.follows = follows
+        self.locationId = locationId
+        self.buttons = buttons
+        self.staleText = staleText
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case follows, buttons
+        case locationId = "location_id"
+        case staleText = "stale_text"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        follows = c.lenient(String.self, .follows).flatMap { Follows(rawValue: $0.lowercased()) } ?? .mySchedule
+        locationId = c.lenient(Int.self, .locationId)
+        if c.contains(.buttons) {
+            let known = ["add", "skip", "map"]
+            var seen = Set<String>()
+            buttons = c.lossyArray(String.self, .buttons).map { $0.lowercased() }.filter { known.contains($0) && seen.insert($0).inserted }
+        }
+        staleText = c.nonEmptyString(.staleText).map { String($0.prefix(60)) }
+    }
+
+    /// The location to follow, when it exists in the bundle (else My schedule's rule).
+    func followedLocation(in bundle: EventBundle) -> Int? {
+        guard follows == .location, let id = locationId, bundle.location(id) != nil else { return nil }
+        return id
+    }
+
+    /// The activity's buttons this app draws: Skip and Map (the owner removed Add / the heart from
+    /// the Live Activity on Nov 21, 2026, so `add` is accepted and not drawn).
+    var activityButtons: [String] {
+        (buttons ?? ["skip", "map"]).filter { $0 == "skip" || $0 == "map" }
     }
 }

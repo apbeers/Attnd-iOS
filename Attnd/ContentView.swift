@@ -198,7 +198,8 @@ struct ContentView: View {
             ForEach(appState.tabs) { tab in
                 Tab(appState.title(of: tab), systemImage: tab.systemImage, value: tab) {
                     EventTabContent(tab: tab)
-                        .latestUpdateBanner(enabled: tab != .notifications)
+                        // Not where the organizer placed the banner as a section (API-027).
+                        .latestUpdateBanner(enabled: tab != .notifications && !(tab == .home && appState.placesUpdateBanner(on: .home)))
                         .floatingActionButton(enabled: tab != .map)
                 }
                 // Updates sent since the tab was last seen (0 hides the badge).
@@ -230,6 +231,8 @@ struct ContentView: View {
         }
         // Foreground: refetch (cheap — the ETag makes it a 304 when nothing changed).
         .onChange(of: scenePhase) { _, phase in
+            // API-026: the preview phone's long-poll only while on screen.
+            appState.setForeground(phase == .active)
             if phase == .active {
                 appState.track(.appOpen)
                 // The Live Activity can only start while the app is in the foreground.

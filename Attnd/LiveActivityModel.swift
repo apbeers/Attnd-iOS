@@ -141,6 +141,12 @@ struct EventActivityAttributes: ActivityAttributes {
         var nextDistance: String?
         /// VoiceOver: "Northeast, 0.4 miles".
         var nextDirectionLabel: String?
+        /// API-027 `live_activity.buttons` this app draws ("skip", "map"), nil = both.
+        var buttons: [String]?
+        /// API-027 `live_activity.stale_text`, nil = "Open Attnd to update".
+        var staleText: String?
+
+        func showsButton(_ name: String) -> Bool { buttons?.contains(name) ?? true }
 
         /// The next item's "Leave now" / "Running late" line, nil when on time.
         var lateText: String? {
@@ -166,7 +172,9 @@ struct EventActivityAttributes: ActivityAttributes {
             freeUntil: Date? = nil,
             nextPoint: Int? = nil,
             nextDistance: String? = nil,
-            nextDirectionLabel: String? = nil
+            nextDirectionLabel: String? = nil,
+            buttons: [String]? = nil,
+            staleText: String? = nil
         ) {
             self.current = current
             self.next = next
@@ -186,6 +194,8 @@ struct EventActivityAttributes: ActivityAttributes {
             self.nextPoint = nextPoint
             self.nextDistance = nextDistance
             self.nextDirectionLabel = nextDirectionLabel
+            self.buttons = buttons
+            self.staleText = staleText
         }
 
         private enum CodingKeys: String, CodingKey {
@@ -204,6 +214,8 @@ struct EventActivityAttributes: ActivityAttributes {
             case nextPoint = "next_point"
             case nextDistance = "next_distance"
             case nextDirectionLabel = "next_direction_label"
+            case buttons
+            case staleText = "stale_text"
         }
 
         /// Lenient: a missing, null or mistyped field is nil, never a decoding failure.
@@ -227,6 +239,8 @@ struct EventActivityAttributes: ActivityAttributes {
             nextPoint = (try? c.decodeIfPresent(Int.self, forKey: .nextPoint)).flatMap { (0..<8).contains($0) ? $0 : nil }
             nextDistance = try? c.decodeIfPresent(String.self, forKey: .nextDistance)
             nextDirectionLabel = try? c.decodeIfPresent(String.self, forKey: .nextDirectionLabel)
+            buttons = try? c.decodeIfPresent([String].self, forKey: .buttons)
+            staleText = try? c.decodeIfPresent(String.self, forKey: .staleText)
         }
 
         /// Now isn't from My schedule: label it "At the event".

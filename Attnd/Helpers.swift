@@ -182,7 +182,28 @@ enum DeepLink {
            rest[1].allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }) {
             return URL(string: "https://attnd.app/p/\(code)/\(rest[1])")
         }
+        // API-026: a "Preview on my phone" link keeps its `?preview=` token.
+        if let token = previewToken(from: url) {
+            return URL(string: "https://attnd.app/join/\(code)/?preview=\(token)")
+        }
         return URL(string: "https://attnd.app/join/\(code)/")
+    }
+
+    /// API-026: the organizer's preview token of a join link (`?preview=<token>`), only plain
+    /// token characters (letters, digits, `-_.:`), ≤ 512; nil otherwise.
+    static func previewToken(from url: URL) -> String? {
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        guard let raw = items.first(where: { $0.name == "preview" })?.value?.trimmingCharacters(in: .whitespaces),
+              !raw.isEmpty, raw.count <= 512,
+              raw.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "-_.:".contains($0)) }) else { return nil }
+        return raw
+    }
+
+    /// A scanned QR string's preview token (a join link with `?preview=`), nil otherwise.
+    static func previewToken(fromScanned raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed), url.scheme != nil else { return nil }
+        return previewToken(from: url)
     }
 }
 
@@ -229,8 +250,11 @@ enum ContentUpdatePolicy {
         return pushedVersion > currentVersion
     }
 
-    static func jitter() -> Duration {
-        .milliseconds(Int.random(in: 0...maxJitterMilliseconds))
+    /// 0…`jitter_ms` when the push says (API-026: smaller events wait less, a preview phone 0),
+    /// else 0–10 s.
+    static func jitter(maxMilliseconds: Int? = nil) -> Duration {
+        let limit = maxMilliseconds.map { min(max($0, 0), 60_000) } ?? maxJitterMilliseconds
+        return .milliseconds(limit == 0 ? 0 : Int.random(in: 0...limit))
     }
 }
 

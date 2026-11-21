@@ -277,12 +277,12 @@ private struct ActivityButtons: View {
         let state = context.state
         let eventId = context.attributes.eventId
         HStack(spacing: 8) {
-            if let next = state.next, !next.isPlace, let id = next.id {
+            if state.showsButton("skip"), let next = state.next, !next.isPlace, let id = next.id {
                 Button(intent: SkipActivityItemIntent(eventId: eventId, itemId: id)) {
                     Label("Skip", systemImage: "forward")
                 }
             }
-            if let locationId = (state.next ?? state.current)?.locationId {
+            if state.showsButton("map"), let locationId = (state.next ?? state.current)?.locationId {
                 Link(destination: LiveActivityLink.map(locationId: locationId).url(eventId: eventId)) {
                     Label("Map", systemImage: "map")
                 }
@@ -412,7 +412,7 @@ private struct FullActivityView: View {
                 .lineLimit(1)
             Spacer(minLength: 4)
             if context.isStale {
-                Text("Open Attnd to update")
+                Text(state.staleText ?? "Open Attnd to update")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

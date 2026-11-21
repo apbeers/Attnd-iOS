@@ -39,6 +39,24 @@ extension AppState {
     }
 }
 
+extension AppState {
+    /// A screen's sections before the facts decide visibility (catalogue 2's tab screens have no
+    /// built-in default: empty = today's screen).
+    func layoutSections(_ screen: LayoutScreen) -> [LayoutSection] {
+        ScreenLayout.sections(for: screen, layouts: screenLayouts)
+    }
+
+    /// The Schedule / Places tabs' layout (API-027), nil = today's screen.
+    var scheduleTabLayout: TabListLayout? { TabListLayout.schedule(layoutSections(.scheduleTab)) }
+    var placesTabLayout: TabListLayout? { TabListLayout.places(layoutSections(.placesTab)) }
+
+    /// The organizer placed the update banner as a section on this screen: the fixed banner
+    /// above the tab stays away (catalogue 2).
+    func placesUpdateBanner(on screen: LayoutScreen) -> Bool {
+        layoutSections(screen).contains { $0.type == "update_banner" }
+    }
+}
+
 // MARK: - Home tab
 
 struct HomeTab: View {
@@ -218,6 +236,14 @@ struct ScreenComponentView: View {
             countdown
         case "now_next":
             NowNextStrip(locationId: section.subject.flatMap { $0.kind == .location ? $0.id : nil })
+        case "update_banner":
+            // Catalogue 2: the newest unread update of the last day, where the organizer put it.
+            if let notification = appState.latestUpdateBanner() {
+                LatestUpdateBanner(notification: notification)
+            }
+        case "status":
+            // The Demo / Event ended badges stay the fixed ones (`eventStatusBanners`).
+            EmptyView()
         default:
             // Unknown, or a detail-screen-only part (`ask_about` draws nothing since Nov 21, 2026).
             EmptyView()

@@ -34,9 +34,12 @@ final class ScreenLayoutTests: XCTestCase {
     }
 
     func testEveryDefaultSectionIsInTheCatalogue() {
+        // Catalogue 2's tab and onboarding screens have no built-in layout: without one the app
+        // draws today's tab (display styles) and its own onboarding cards.
+        let ownScreens: Set<LayoutScreen> = [.scheduleTab, .placesTab, .updatesTab, .onboarding]
         for screen in LayoutScreen.allCases {
             let defaults = ScreenLayout.defaults[screen] ?? []
-            XCTAssertFalse(defaults.isEmpty, "\(screen) has a default")
+            XCTAssertEqual(defaults.isEmpty, ownScreens.contains(screen), "\(screen) has a default")
             XCTAssertEqual(ScreenLayout.validate(defaults, on: screen), defaults, "\(screen) defaults are valid as they are")
         }
     }
@@ -316,5 +319,127 @@ final class ScreenLayoutTests: XCTestCase {
         XCTAssertEqual(AboutText.merged(description: "", about: line), line)
         XCTAssertEqual(AboutText.merged(description: line, about: nil), line)
         XCTAssertEqual(AboutText.merged(description: "Rain or shine.", about: line), line + "\n\nRain or shine.")
+    }
+
+    // MARK: Catalogue 2 (API-027)
+
+    func testCatalogue2_NewScreensDecodeAndValidate() throws {
+        let decoded = try layouts("""
+        {"screens": {
+          "schedule_tab": {"sections": [{"type": "my_schedule"}, {"type": "featured", "ids": [101, 101, 114], "title": "Don't miss"}, {"type": "by_day"}, {"type": "hologram"}]},
+          "places_tab": {"sections": [{"type": "by_category"}]},
+          "updates_tab": {"sections": [{"type": "urgent"}, {"type": "latest"}, {"type": "earlier"}]},
+          "onboarding": {"sections": [{"type": "welcome", "title": "Hi", "text": "  Welcome to the fair  ", "image": "http://x.test/a.png"}, {"type": "intro"}, {"type": "lock_screen"}]}
+        }}
+        """)
+        let schedule = ScreenLayout.sections(for: .scheduleTab, layouts: decoded)
+        XCTAssertEqual(types(schedule), ["my_schedule", "featured", "by_day"])
+        XCTAssertEqual(schedule[1].ids, [101, 114])
+        let onboarding = ScreenLayout.sections(for: .onboarding, layouts: decoded)
+        XCTAssertEqual(types(onboarding), ["welcome", "intro", "lock_screen"])
+        XCTAssertEqual(onboarding[0].text, "Welcome to the fair")
+        XCTAssertNil(onboarding[0].image, "https only")
+        // Untouched screens have no built-in layout: today's tabs.
+        XCTAssertTrue(ScreenLayout.sections(for: .scheduleTab, layouts: nil).isEmpty)
+        XCTAssertNil(TabListLayout.schedule([]))
+        XCTAssertNil(OnboardingLayout.of([]))
+    }
+
+    func testTabListLayout() {
+        let schedule = TabListLayout.schedule([LayoutSection("featured", title: "Picks", ids: [3]), LayoutSection("by_place")])
+        XCTAssertEqual(schedule?.style, "by_location")
+        XCTAssertEqual(schedule?.showsMySchedule, false)
+        XCTAssertEqual(schedule?.featured, [3])
+        XCTAssertEqual(schedule?.featuredTitle, "Picks")
+        XCTAssertEqual(TabListLayout.schedule([LayoutSection("my_schedule"), LayoutSection("up_next")])?.style, "now_next")
+        XCTAssertEqual(TabListLayout.places([LayoutSection("all_places", show: ["image"])])?.style, "cards")
+        XCTAssertEqual(TabListLayout.places([LayoutSection("nearby")])?.style, "list")
+        XCTAssertEqual(TabListLayout.places([LayoutSection("by_category")])?.style, "grouped")
+    }
+
+    func testUpdatesLayout_EachOnceNewestFirst() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let notifications = [
+            AppNotification(id: 1, title: "Old", sendTime: now.addingTimeInterval(-3 * 86400)),
+            AppNotification(id: 2, title: "Storm", sendTime: now.addingTimeInterval(-600), priority: .urgent),
+            AppNotification(id: 3, title: "Gates", sendTime: now.addingTimeInterval(-3600)),
+            AppNotification(id: 4, title: "Pinned", sendTime: now.addingTimeInterval(-2 * 86400)),
+        ]
+        let groups = UpdatesLayout.groups([LayoutSection("urgent"), LayoutSection("pinned", ids: [4]), LayoutSection("latest")],
+                                          notifications: notifications, now: now)
+        XCTAssertEqual(groups.map(\.type), ["urgent", "pinned", "latest", "earlier"])
+        XCTAssertEqual(groups.map(\.ids), [[2], [4], [3], [1]])
+        XCTAssertTrue(UpdatesLayout.groups([LayoutSection("faq")], notifications: notifications, now: now).allSatisfy { $0.ids.isEmpty })
+    }
+
+    func testOnboardingLayout() {
+        let layout = OnboardingLayout.of([LayoutSection("welcome"), LayoutSection("location"), LayoutSection("plan")])
+        XCTAssertEqual(layout?.cards, [.location, .plan], "a welcome card with nothing to say is skipped")
+        let welcome = OnboardingLayout.of([LayoutSection("welcome", text: "Hello"), LayoutSection("notifications")])
+        XCTAssertEqual(welcome?.cards, [.welcome, .notifications])
+        XCTAssertEqual(welcome?.welcomeText, "Hello")
+    }
+
+    func testLiveActivitySettings_Lenient() throws {
+        func decode(_ json: String) throws -> LiveActivitySettings {
+            try JSONDecoder().decode(LiveActivitySettings.self, from: Data(json.utf8))
+        }
+        XCTAssertEqual(try decode("{}"), .defaults)
+        XCTAssertEqual(try decode("{}").activityButtons, ["skip", "map"])
+        let set = try decode(#"{"follows": "LOCATION", "location_id": 3, "buttons": ["map", "add", "dance", "map"], "stale_text": "Open the app", "urgent": true}"#)
+        XCTAssertEqual(set.follows, .location)
+        XCTAssertEqual(set.buttons, ["map", "add"])
+        XCTAssertEqual(set.activityButtons, ["map"])
+        XCTAssertEqual(set.staleText, "Open the app")
+        XCTAssertEqual(try decode(#"{"follows": "nonsense", "buttons": []}"#).follows, .mySchedule)
+        XCTAssertEqual(try decode(#"{"buttons": []}"#).activityButtons, [])
+        let bundle = try JSONDecoder().decode(EventBundle.self, from: Data(#"{"event": {"id": 1, "name": "E", "event_code": "E"}, "live_activity": {"follows": "everything"}, "locations": [{"id": 3, "name": "Barn"}]}"#.utf8))
+        XCTAssertEqual(bundle.liveActivity?.follows, .everything)
+        XCTAssertEqual(LiveActivitySettings(follows: .location, locationId: 3).followedLocation(in: bundle), 3)
+        XCTAssertNil(LiveActivitySettings(follows: .location, locationId: 99).followedLocation(in: bundle))
+    }
+
+    // MARK: Preview phones (API-026)
+
+    func testPreviewPoll() throws {
+        func answer(_ json: String) throws -> ChangesResponse {
+            try JSONDecoder().decode(ChangesResponse.self, from: Data(json.utf8))
+        }
+        XCTAssertEqual(PreviewPoll.next(try answer(#"{"content_version": 8, "changed": false}"#), since: 8), .wait(0))
+        XCTAssertEqual(PreviewPoll.next(try answer(#"{"content_version": 9}"#), since: 8), .refresh)
+        XCTAssertEqual(PreviewPoll.next(try answer(#"{"changed": true}"#), since: 8), .refresh)
+        XCTAssertEqual(PreviewPoll.next(try answer(#"{"retry_after": 15}"#), since: 8), .wait(15))
+        XCTAssertEqual(PreviewPoll.next(try answer(#"{"retry_after": 99999}"#), since: 8), .wait(3600))
+        XCTAssertEqual(PreviewPoll.next(try answer(#"{"preview": false, "changed": true}"#), since: 8), .stop)
+    }
+
+    func testPreviewToken_LinksAndJoinBody() throws {
+        let link = try XCTUnwrap(URL(string: "attnd://join/DEMO?preview=abc.DEF-1_2:z"))
+        XCTAssertEqual(DeepLink.httpsURL(fromAppScheme: link)?.absoluteString, "https://attnd.app/join/DEMO/?preview=abc.DEF-1_2:z")
+        XCTAssertEqual(DeepLink.httpsURL(fromAppScheme: URL(string: "attnd://join/DEMO")!)?.absoluteString, "https://attnd.app/join/DEMO/")
+        XCTAssertEqual(DeepLink.previewToken(from: URL(string: "https://attnd.app/join/DEMO/?preview=tok")!), "tok")
+        XCTAssertNil(DeepLink.previewToken(from: URL(string: "https://attnd.app/join/DEMO/?preview=%3Cb%3E")!))
+        XCTAssertNil(DeepLink.previewToken(from: URL(string: "https://attnd.app/join/DEMO/")!))
+        XCTAssertEqual(DeepLink.previewToken(fromScanned: " https://attnd.app/join/DEMO/?preview=tok \n"), "tok")
+        XCTAssertNil(DeepLink.previewToken(fromScanned: "DEMO"))
+
+        func body(_ request: JoinRequest) throws -> [String: Any] {
+            try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
+        }
+        XCTAssertEqual(try body(JoinRequest(deviceId: "d", pushToken: nil, appVersion: "1", previewToken: "tok"))["preview_token"] as? String, "tok")
+        let plain = try body(JoinRequest(deviceId: "d", pushToken: nil, appVersion: "1"))
+        XCTAssertNil(plain["preview_token"])
+        XCTAssertNil(plain["push_token"], "never sent as empty")
+        XCTAssertEqual(plain["app_clip"] as? Bool, false)
+    }
+
+    func testContentUpdatedJitter() {
+        XCTAssertEqual(PushPayload(userInfo: ["type": "content_updated", "jitter_ms": 1000]).jitterMilliseconds, 1000)
+        XCTAssertEqual(PushPayload(userInfo: ["type": "content_updated", "jitter_ms": "0"]).jitterMilliseconds, 0)
+        XCTAssertEqual(PushPayload(userInfo: ["type": "content_updated", "jitter_ms": 999_999]).jitterMilliseconds, 60_000)
+        XCTAssertNil(PushPayload(userInfo: ["type": "content_updated"]).jitterMilliseconds)
+        XCTAssertEqual(ContentUpdatePolicy.jitter(maxMilliseconds: 0), .zero)
+        XCTAssertLessThanOrEqual(ContentUpdatePolicy.jitter(maxMilliseconds: 1000), .milliseconds(1000))
+        XCTAssertLessThanOrEqual(ContentUpdatePolicy.jitter(), .seconds(10))
     }
 }

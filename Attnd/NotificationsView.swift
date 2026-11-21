@@ -25,9 +25,44 @@ struct NotificationsView: View {
     var body: some View {
         ScrollViewReader { proxy in
             List {
-                ForEach(appState.notifications) { notification in
-                    NotificationRow(notification: notification, timeZone: appState.timeZone)
-                        .listRowBackground(rowBackground(notification))
+                let context = appState.currentEvent?.context
+                let groups = UpdatesLayout.groups(appState.layoutSections(.updatesTab),
+                                                  notifications: appState.notifications, now: .now)
+                    .filter { group in
+                        switch group.type {
+                        case "faq": return context?.faq.isEmpty == false
+                        case "getting_there": return context?.gettingThere.isEmpty == false
+                        default: return true
+                        }
+                    }
+                if groups.isEmpty {
+                    ForEach(appState.notifications) { notification in
+                        NotificationRow(notification: notification, timeZone: appState.timeZone)
+                            .listRowBackground(rowBackground(notification))
+                    }
+                } else {
+                    // API-027 `updates_tab`: the organizer's sections (urgent first, pinned, latest,
+                    // earlier, FAQ / getting there); every update still appears once.
+                    let byId = Dictionary(appState.notifications.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+                    ForEach(groups, id: \.type) { group in
+                        Section(group.title) {
+                            switch group.type {
+                            case "faq":
+                                ForEach(appState.currentEvent?.context?.faq ?? [], id: \.self) { entry in
+                                    DisclosureGroup(entry.question) {
+                                        Text(entry.answer).font(.subheadline).foregroundStyle(.secondary)
+                                    }
+                                }
+                            case "getting_there":
+                                Text(appState.currentEvent?.context?.gettingThere ?? "")
+                            default:
+                                ForEach(group.ids.compactMap { byId[$0] }) { notification in
+                                    NotificationRow(notification: notification, timeZone: appState.timeZone)
+                                        .listRowBackground(rowBackground(notification))
+                                }
+                            }
+                        }
+                    }
                 }
             }
             .onAppear {

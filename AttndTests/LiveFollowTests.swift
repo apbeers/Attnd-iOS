@@ -507,4 +507,34 @@ final class LiveFollowTests: XCTestCase {
         XCTAssertEqual(decoded, state)
         XCTAssertFalse(decoded.followsOnLockScreen)
     }
+
+    func testInputs_LiveActivitySettings() {
+        let event = Event(id: 1, name: "E", eventCode: "E")
+        let bundle = EventBundle(event: event, locations: locations, schedule: schedule)
+        let place = FollowPlace(locationId: 20, name: "Food Court", start: now, end: now.addingTimeInterval(2700))
+        let mine = LiveActivityPlanner.inputs(nil, bundle: bundle, hearted: [2], planned: [3], places: [place])
+        XCTAssertEqual(mine.hearted, [2])
+        XCTAssertEqual(mine.planned, [3])
+        XCTAssertEqual(mine.places.count, 1)
+        let all = LiveActivityPlanner.inputs(LiveActivitySettings(follows: .everything), bundle: bundle, hearted: [2], planned: [3], places: [place])
+        XCTAssertTrue(all.hearted.isEmpty && all.planned.isEmpty && all.places.isEmpty)
+        XCTAssertEqual(all.schedule.count, schedule.count)
+        let stage = LiveActivityPlanner.inputs(LiveActivitySettings(follows: .location, locationId: 10), bundle: bundle, hearted: [3], planned: [], places: [])
+        XCTAssertEqual(stage.schedule.map(\.id), [2, 4, 5])
+        XCTAssertTrue(stage.hearted.isEmpty)
+        // An unknown place falls back to My schedule.
+        XCTAssertEqual(LiveActivityPlanner.inputs(LiveActivitySettings(follows: .location, locationId: 99), bundle: bundle, hearted: [3], planned: [], places: []).hearted, [3])
+    }
+
+    func testContentState_ButtonsAndStaleText() throws {
+        var state = EventActivityAttributes.ContentState()
+        XCTAssertTrue(state.showsButton("skip"))
+        state.buttons = ["map"]
+        state.staleText = "Open the app"
+        XCTAssertFalse(state.showsButton("skip"))
+        XCTAssertTrue(state.showsButton("map"))
+        let again = try JSONDecoder().decode(EventActivityAttributes.ContentState.self, from: JSONEncoder().encode(state))
+        XCTAssertEqual(again.buttons, ["map"])
+        XCTAssertEqual(again.staleText, "Open the app")
+    }
 }

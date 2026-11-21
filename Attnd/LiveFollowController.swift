@@ -129,11 +129,13 @@ final class LiveFollowController {
     /// When following starts by itself today (2 h before the first followed item), for Options.
     func nextStart(now: Date = .now) -> Date? {
         guard let appState, let bundle = appState.currentBundle else { return nil }
+        let inputs = LiveActivityPlanner.inputs(bundle.liveActivity, bundle: bundle, hearted: appState.personal.heartedScheduleItems,
+                                                planned: appState.plannedItemIds, places: appState.followPlaces(bundle))
         let day = LiveActivityPlanner.followDay(
-            schedule: bundle.schedule,
-            hearted: appState.personal.heartedScheduleItems,
-            planned: appState.plannedItemIds,
-            places: appState.followPlaces(bundle),
+            schedule: inputs.schedule,
+            hearted: inputs.hearted,
+            planned: inputs.planned,
+            places: inputs.places,
             eventStart: bundle.event.startTime,
             now: now,
             timeZone: bundle.event.timeZone
@@ -170,12 +172,15 @@ final class LiveFollowController {
         let personal = appState.personal
         let planned = appState.plannedItemIds
         let enabled = appState.followsOnLockScreen && activitiesEnabled && !event.isArchived
+        // API-027: what the organizer chose the activity follows by default.
+        let inputs = LiveActivityPlanner.inputs(bundle.liveActivity, bundle: bundle, hearted: personal.heartedScheduleItems,
+                                                planned: planned, places: appState.followPlaces(bundle))
         let day = enabled
             ? LiveActivityPlanner.followDay(
-                schedule: bundle.schedule,
-                hearted: personal.heartedScheduleItems,
-                planned: planned,
-                places: appState.followPlaces(bundle),
+                schedule: inputs.schedule,
+                hearted: inputs.hearted,
+                planned: inputs.planned,
+                places: inputs.places,
                 eventStart: event.startTime,
                 now: now,
                 timeZone: timeZone
@@ -200,7 +205,7 @@ final class LiveFollowController {
         }
 
         func baseState(at date: Date, existing: EventActivityAttributes.Urgent?, for day: FollowDay) -> EventActivityAttributes.ContentState {
-            LiveActivityPlanner.content(
+            var content = LiveActivityPlanner.content(
                 day: day,
                 locations: bundle.locations,
                 hearted: personal.heartedScheduleItems,
@@ -215,6 +220,11 @@ final class LiveFollowController {
                 ),
                 now: date
             )
+            // API-027: the organizer's buttons and stale text.
+            let settings = bundle.liveActivity ?? .defaults
+            content.buttons = settings.buttons == nil ? nil : settings.activityButtons
+            content.staleText = settings.staleText
+            return content
         }
 
         // Existing activities: keep one for the followed day, end the rest.

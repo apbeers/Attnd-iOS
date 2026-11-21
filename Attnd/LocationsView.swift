@@ -104,6 +104,10 @@ struct LocationsView: View {
     @State private var expanded: Set<Int> = []
 
     private var display: DisplayConfig { appState.display }
+    /// The tab's own layout (API-027 `places_tab`) picks the list; else `display.locations_style`.
+    private var style: LocationsStyle {
+        appState.placesTabLayout?.style.flatMap(LocationsStyle.init(rawValue:)) ?? display.locationsStyle
+    }
 
     private var filtered: [Location] {
         LocationGrouping.filter(appState.locations, category: selectedCategory)
@@ -134,7 +138,14 @@ struct LocationsView: View {
             .listRowInsets(EdgeInsets())
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)
-            switch display.locationsStyle {
+            // API-027: the organizer's featured places first.
+            let featured = (appState.placesTabLayout?.featured ?? []).compactMap { id in locations.first { $0.id == id } }
+            if !featured.isEmpty, searchText.isEmpty {
+                Section(appState.placesTabLayout?.featuredTitle ?? "Featured") {
+                    rows(featured, now: now)
+                }
+            }
+            switch style {
             case .grouped:
                 ForEach(LocationGrouping.byCategory(locations, categoryOrder: appState.categories)) { section in
                     Section(section.title) {
@@ -145,7 +156,7 @@ struct LocationsView: View {
                 rows(locations, now: now)
             }
         }
-        .modifier(LocationsListStyle(isCards: display.locationsStyle == .cards))
+        .modifier(LocationsListStyle(isCards: style == .cards))
         .overlay {
             if locations.isEmpty {
                 if !searchText.isEmpty {
@@ -167,7 +178,7 @@ struct LocationsView: View {
 
     @ViewBuilder
     private func rows(_ locations: [Location], now: Date) -> some View {
-        let isCards = display.locationsStyle == .cards
+        let isCards = style == .cards
         ForEach(locations) { location in
             let events = PlaceEvents.make(locationId: location.id, schedule: appState.schedule, now: now)
             let isExpanded = events != nil && expanded.contains(location.id)

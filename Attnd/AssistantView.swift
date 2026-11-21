@@ -141,14 +141,12 @@ private struct PlanChatStack: View {
     var body: some View {
         @Bindable var assistant = appState.assistant
         NavigationStack(path: $assistant.pagePath) {
-            // The chat, its composer, chips, working line and Undo card keep clear of the fold and
-            // the camera housings (iPhone Duo; nothing to avoid on other iPhones).
-            ReservedRegionAvoiding {
-                PlanChatView()
-            }
-            // The wrapper keeps its size when the keyboard shows; the chat's scroll view and its
-            // bottom inset (the composer) handle the keyboard themselves.
-            .ignoresSafeArea(.keyboard)
+            // No wrapper around the chat (build 167 regression: a GeometryReader wrapper sized the
+            // chat itself and the composer ended up under the keyboard). The composer is the scroll
+            // view's bottom safe-area inset, so the system keeps it above the keyboard and the home
+            // indicator; folded there is no fold, unfolded the arrangement splits on it, and the
+            // camera housings are in the system safe area.
+            PlanChatView()
                 .navigationTitle("My Plan")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { PageCloseItem() }

@@ -146,18 +146,11 @@ private enum ActivityStyle {
         return parts.joined(separator: " · ")
     }
 
-    /// "Free until 3:00 · Next: X at Y" / "Gates open 10:00 · First: X", nil otherwise.
+    /// "Free until 2:00" / "Gates open 10:00", nil otherwise (Next's name and place are on its
+    /// own row and are never repeated here).
     static func gapLine(_ state: EventActivityAttributes.ContentState, _ attributes: EventActivityAttributes) -> String? {
-        if let opens = state.opensAt {
-            var text = "Gates open \(shortClock(opens, attributes))"
-            if let name = state.next?.name { text += " · First: \(name)" }
-            return text
-        }
-        if let free = state.freeUntil, let next = state.next {
-            var text = "Free until \(shortClock(free, attributes)) · Next: \(next.name ?? "")"
-            if let place = next.location, !place.isEmpty, place != next.name { text += " at \(place)" }
-            return text
-        }
+        if let opens = state.opensAt { return "Gates open \(shortClock(opens, attributes))" }
+        if let free = state.freeUntil, state.next != nil { return "Free until \(shortClock(free, attributes))" }
         return nil
     }
 
@@ -235,6 +228,8 @@ private struct UrgentBlock: View {
     let urgent: EventActivityAttributes.Urgent
     let eventId: Int
     var compact = false
+    /// The body line (dropped first when the Lock Screen's height budget is tight).
+    var showsBody = true
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -247,11 +242,11 @@ private struct UrgentBlock: View {
                         Text(urgent.title ?? "Urgent update")
                             .font(.headline)
                             .lineLimit(compact ? 1 : 2)
-                        if let body = urgent.body, !body.isEmpty {
+                        if showsBody, let body = urgent.body, !body.isEmpty {
                             Text(body)
-                                .font(.subheadline)
+                                .font(compact ? .caption : .subheadline)
                                 .foregroundStyle(.secondary)
-                                .lineLimit(compact ? 2 : 3)
+                                .lineLimit(compact ? 1 : 3)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -267,8 +262,8 @@ private struct UrgentBlock: View {
                 .foregroundStyle(.secondary)
             }
         }
-        .padding(10)
-        .background(Color.red.opacity(0.18), in: .rect(cornerRadius: 14))
+        .padding(compact ? 8 : 10)
+        .background(Color.red.opacity(0.18), in: .rect(cornerRadius: 12))
     }
 }
 
@@ -295,6 +290,7 @@ private struct ActivityButtons: View {
         }
         .font(.caption.weight(.semibold))
         .buttonStyle(.bordered)
+        .controlSize(.small)
         .tint(palette.primary)
     }
 }
@@ -320,33 +316,30 @@ private struct LockScreenActivityView: View {
     }
 }
 
+/// The Lock Screen (and StandBy) layout. Apple's limit is 84–160 pt tall (HIG, Live Activities;
+/// 371 pt wide on a 6.1" iPhone, 408 pt on the largest) with 14 pt margins, so the content gets at
+/// most `contentLimit` and a fixed budget: one header row (event name + the gap / gates / stale
+/// label, or the urgent block), the Now row, the Next block, then one row with "Then:" and the
+/// buttons. When that doesn't fit (larger Dynamic Type, an urgent block) `ViewThatFits` drops
+/// lines in order — the "Then:" text, the direction, the Now row's place, the Now row, Next's
+/// detail line — never Next itself or the buttons.
 private struct FullActivityView: View {
     let context: Context
     let palette: ActivityPalette
 
+    /// 160 pt minus the 14 pt margins, with a little room to spare.
+    static let contentLimit: CGFloat = 126
+
     var body: some View {
-        let attributes = context.attributes
         let state = context.state
-        VStack(alignment: .leading, spacing: 8) {
-            if let urgent = state.urgent {
-                UrgentBlock(urgent: urgent, eventId: attributes.eventId)
-            }
-            HStack(spacing: 6) {
-                Image(systemName: state.followSymbol)
-                    .foregroundStyle(palette.primary)
-                    .accessibilityHidden(true)
-                Text(attributes.eventName)
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(1)
-                Spacer(minLength: 4)
-                if context.isStale {
-                    Text("Open Attnd to update")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-            }
+        Group {
             if state.dayComplete == true {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 6) {
+                    if let urgent = state.urgent {
+                        UrgentBlock(urgent: urgent, eventId: context.attributes.eventId, compact: true)
+                    } else {
+                        header
+                    }
                     Text("That's a wrap for today")
                         .font(.headline)
                     if let count = state.completedCount, count > 0 {
@@ -356,28 +349,80 @@ private struct FullActivityView: View {
                     }
                 }
             } else {
-                if let gap = ActivityStyle.gapLine(state, attributes) {
-                    Text(gap)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(palette.highlight)
-                        .lineLimit(1)
+                ViewThatFits(in: .vertical) {
+                    layout(.full)
+                    layout(.noThen)
+                    layout(.noDirection)
+                    layout(.noNowPlace)
+                    layout(.noNow)
+                    layout(.minimal)
                 }
-                if let current = state.current {
-                    NowRow(current: current, state: state, attributes: attributes, palette: palette)
-                }
-                if let next = state.next {
-                    NextRow(next: next, state: state, attributes: attributes, palette: palette)
-                }
-                if let after = state.after, let name = after.name, state.urgent == nil {
-                    Text("Then: \(after.start.map { ActivityStyle.clock($0, attributes) + " " } ?? "")\(name)")
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: Self.contentLimit, alignment: .topLeading)
+        .padding(14)
+    }
+
+    enum Level: Int {
+        case full, noThen, noDirection, noNowPlace, noNow, minimal
+    }
+
+    private func layout(_ level: Level) -> some View {
+        let state = context.state
+        let attributes = context.attributes
+        return VStack(alignment: .leading, spacing: 6) {
+            if let urgent = state.urgent {
+                UrgentBlock(urgent: urgent, eventId: attributes.eventId, compact: true, showsBody: level != .minimal)
+            } else {
+                header
+            }
+            if state.urgent == nil, level.rawValue < Level.noNow.rawValue, let current = state.current {
+                NowRow(current: current, state: state, attributes: attributes, palette: palette,
+                       showsPlace: level.rawValue < Level.noNowPlace.rawValue)
+            }
+            if let next = state.next {
+                NextRow(next: next, state: state, attributes: attributes, palette: palette,
+                        showsDirection: level.rawValue < Level.noDirection.rawValue && state.urgent == nil,
+                        compact: level == .minimal || state.urgent != nil)
+            }
+            HStack(alignment: .center, spacing: 8) {
+                if level == .full, state.urgent == nil, let after = state.after, let name = after.name {
+                    Text("Then: \(after.start.map { ActivityStyle.shortClock($0, attributes) + " " } ?? "")\(name)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
+                Spacer(minLength: 0)
                 ActivityButtons(context: context, palette: palette)
             }
         }
-        .padding(14)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// Icon, the event's name and, trailing, "Free until 2:00" / "Gates open 10:00" / the stale note.
+    private var header: some View {
+        let state = context.state
+        let attributes = context.attributes
+        return HStack(spacing: 6) {
+            Image(systemName: state.followSymbol)
+                .foregroundStyle(palette.primary)
+                .accessibilityHidden(true)
+            Text(attributes.eventName)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            if context.isStale {
+                Text("Open Attnd to update")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            } else if let label = ActivityStyle.gapLine(state, attributes) {
+                Text(label)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(palette.highlight)
+                    .lineLimit(1)
+            }
+        }
     }
 }
 
@@ -386,34 +431,37 @@ private struct NowRow: View {
     let state: EventActivityAttributes.ContentState
     let attributes: EventActivityAttributes
     let palette: ActivityPalette
+    var showsPlace = true
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(ActivityStyle.nowLabel(state))
                     .font(.caption.weight(.bold))
                     .foregroundStyle(palette.highlight)
-                Text(current.name ?? "")
-                    .font(.headline)
+                Text(nowName)
+                    .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
                 Spacer(minLength: 4)
                 if let end = current.effectiveEnd {
-                    Text("ends \(ActivityStyle.clock(end, attributes))")
+                    Text("ends \(ActivityStyle.shortClock(end, attributes))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
             }
-            if let place = current.location, !place.isEmpty, place != current.name {
-                Text(place)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
             SlotProgress(slot: current, tint: palette.primary)
         }
-        .padding(8)
-        .background(palette.soft, in: .rect(cornerRadius: 12))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(palette.soft, in: .rect(cornerRadius: 10))
+    }
+
+    /// "Juniper Lane · Main Stage" (the place only while it fits the budget).
+    private var nowName: String {
+        let name = current.name ?? ""
+        guard showsPlace, let place = current.location, !place.isEmpty, place != name else { return name }
+        return "\(name) · \(place)"
     }
 }
 
@@ -422,37 +470,60 @@ private struct NextRow: View {
     let state: EventActivityAttributes.ContentState
     let attributes: EventActivityAttributes
     let palette: ActivityPalette
+    var showsDirection = true
+    /// One line only (an urgent block above, or the tightest level).
+    var compact = false
 
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                if let late = state.lateText {
-                    Label(late, systemImage: "figure.walk.motion")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.orange)
-                } else {
-                    Text(state.nextSource == "event" && state.nowSource != "event" ? "Next at the event" : "Up next")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    if let late = state.lateText {
+                        Text(late)
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.orange)
+                    } else {
+                        Text(state.opensAt != nil ? "First" : "Next")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(next.name ?? "")
+                        .font(compact ? .subheadline.weight(.semibold) : .headline)
+                        .lineLimit(1)
                 }
-                Text(next.name ?? "")
-                    .font(.headline)
-                    .lineLimit(1)
-                Text(ActivityStyle.placeLine(next, attributes))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                DirectionLine(state: state)
+                if !compact {
+                    Text(detailLine)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .accessibilityLabel(detailAccessibility)
+                }
             }
             Spacer(minLength: 4)
             if let start = next.start {
                 Countdown(date: start)
-                    .font(.title3.weight(.semibold))
+                    .font(compact ? .subheadline.weight(.semibold) : .title3.weight(.semibold))
                     .foregroundStyle(palette.highlight)
                     .multilineTextAlignment(.trailing)
-                    .frame(maxWidth: 96, alignment: .trailing)
+                    .frame(maxWidth: 84, alignment: .trailing)
             }
         }
+    }
+
+    /// "2:00 PM · Taco Loco · ↗ 0.4 mi · 8 min walk".
+    private var detailLine: String {
+        var parts = [ActivityStyle.placeLine(next, attributes)].filter { !$0.isEmpty }
+        if showsDirection, let direction = state.nextDirectionLine { parts.append(direction) }
+        return parts.joined(separator: " · ")
+    }
+
+    private var detailAccessibility: String {
+        var parts = [ActivityStyle.placeLine(next, attributes)].filter { !$0.isEmpty }
+        if showsDirection {
+            if let label = state.nextDirectionLabel { parts.append(label) }
+            if let walk = state.walkMinutesToNext { parts.append("\(walk) min walk") }
+        }
+        return parts.joined(separator: ", ")
     }
 }
 
@@ -799,10 +870,39 @@ private let previewState = EventActivityAttributes.ContentState(
     nextPoint: 1, nextDistance: "0.4 mi", nextDirectionLabel: "Northeast, 0.4 miles"
 )
 
+// Every Lock Screen state, to check the 160 pt limit (also at larger Dynamic Type in the canvas).
+private let previewGap = EventActivityAttributes.ContentState(
+    next: .init(id: 7, name: "Hot sauce contest", location: "Taco Loco", locationId: 12,
+                start: .now.addingTimeInterval(1860), end: .now.addingTimeInterval(5400)),
+    after: .init(id: 8, name: "Band: The Crossroads", start: .now.addingTimeInterval(12_600)),
+    walkMinutesToNext: 8, followsHearts: true, nextSource: "schedule", freeUntil: .now.addingTimeInterval(1860),
+    nextPoint: 1, nextDistance: "0.4 mi", nextDirectionLabel: "Northeast, 0.4 miles"
+)
+
+private let previewGates = EventActivityAttributes.ContentState(
+    next: .init(id: 1, name: "Gates open", start: .now.addingTimeInterval(3600)),
+    after: .init(id: 2, name: "Juniper Lane", start: .now.addingTimeInterval(7200)),
+    opensAt: .now.addingTimeInterval(3600)
+)
+
+private var previewUrgent: EventActivityAttributes.ContentState {
+    var state = previewState
+    state.urgent = .init(id: 9, title: "Main Stage closed: storm on the way",
+                         body: "Head to the Barn Stage; sets move there from 3 PM. Stay away from the trees.",
+                         sentAt: "2026-11-21T19:40:00Z")
+    return state
+}
+
+private let previewWrap = EventActivityAttributes.ContentState(dayComplete: true, completedCount: 6)
+
 #Preview("Lock Screen", as: .content, using: previewAttributes) {
     EventLiveActivity()
 } contentStates: {
     previewState
+    previewGap
+    previewGates
+    previewUrgent
+    previewWrap
 }
 
 #Preview("Compact", as: .dynamicIsland(.compact), using: previewAttributes) {

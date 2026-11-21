@@ -71,9 +71,11 @@ struct ScheduleView: View {
 
     private var resolvedStyle: ScheduleStyle { style ?? appState.display.scheduleStyle }
 
-    /// Ended items are hidden by default, except for archived events (where everything has ended).
+    /// Ended items are hidden by default, except for archived events and when nothing is left to come (then the
+    /// ended items are listed greyed instead of an empty tab; the server keeps the Schedule tab for them).
     private var hidesEnded: Bool {
         resolvedStyle != .nowNext && !showEnded && appState.currentEvent?.isArchived != true
+            && appState.schedule.contains { !ScheduleTiming.hasEnded($0, at: Date()) }
     }
 
     private func visibleItems(now: Date) -> [ScheduleItem] {

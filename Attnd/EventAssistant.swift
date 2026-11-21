@@ -77,7 +77,16 @@ extension EventAssistant {
             fresh = true
             budgeted = AssistantModel.toolPrompt(input, ctx, conversation, retrieved, freshSession: true, limit: TokenBudget.freshPrompt / 2)
             await store.hub.begin(ctx)
-            text = try await stream(budgeted.text, store: store, onPartial: onPartial)
+            do {
+                text = try await stream(budgeted.text, store: store, onPartial: onPartial)
+            } catch {
+                store.reset()
+                throw error
+            }
+        } catch {
+            // A cancelled or failed turn may leave the session mid-response: the next turn starts a new one.
+            store.reset()
+            throw error
         }
         let result = await store.hub.finish()
         store.used += budgeted.tokens + TokenBudget.estimate(text) + result.toolTokens + 40

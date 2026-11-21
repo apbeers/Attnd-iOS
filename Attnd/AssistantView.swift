@@ -146,6 +146,9 @@ private struct PlanChatStack: View {
             ReservedRegionAvoiding {
                 PlanChatView()
             }
+            // The wrapper keeps its size when the keyboard shows; the chat's scroll view and its
+            // bottom inset (the composer) handle the keyboard themselves.
+            .ignoresSafeArea(.keyboard)
                 .navigationTitle("My Plan")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { PageCloseItem() }
@@ -285,6 +288,10 @@ private struct PlanChatView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var inputFocused: Bool
+    /// Stays at the bottom as content arrives and the keyboard comes and goes, until the person
+    /// scrolls up; sending a message brings it back to the bottom.
+    @State private var followsBottom = true
+    @State private var atBottom = true
 
     var body: some View {
         let assistant = appState.assistant
@@ -322,25 +329,46 @@ private struct PlanChatView: View {
                 .animation(reduceMotion ? .easeInOut(duration: 0.2) : .snappy, value: assistant.transcript.count)
             }
             .scrollDismissesKeyboard(.interactively)
-            .defaultScrollAnchor(.bottom)
+            // Opens at the bottom, and keeps the bottom in place when the content or the container
+            // (keyboard, chips, cards) changes size while the bottom is shown.
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            .defaultScrollAnchor(.bottom, for: .sizeChanges)
+            // The composer and chips are the scroll view's bottom inset: the content's bottom always
+            // clears them, and the keyboard moves the inset with its own animation (no offsets).
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(spacing: 8) {
+                    if !chips.isEmpty, assistant.busy == nil {
+                        ChipRow(chips: chips.enumerated().map { ChipItem(id: String($0.offset), label: $0.element.label) }) { item in
+                            guard let index = Int(item.id), index < chips.count else { return }
+                            followsBottom = true
+                            assistant.chip(chips[index])
+                        }
+                        .padding(.horizontal, 6)
+                    }
+                    AssistantInputBar(focused: $inputFocused, onSend: { send(proxy) })
+                        .debugFloatingFrame("composer")
+                }
+                .padding(.horizontal, 10)
+                .padding(.bottom, 8)
+            }
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.contentOffset.y + geometry.containerSize.height - geometry.contentInsets.bottom
+                    >= geometry.contentSize.height - 48
+            } action: { _, isAtBottom in
+                atBottom = isAtBottom
+            }
+            .onScrollPhaseChange { _, phase in
+                // Only the person's own scrolling decides whether we stop following the bottom.
+                if phase == .idle || phase == .decelerating { followsBottom = atBottom }
+            }
+            // The keyboard (or the chips row) changed the visible height: back to the bottom.
+            .onScrollGeometryChange(for: CGFloat.self) { $0.containerSize.height } action: { _, _ in
+                if followsBottom { proxy.scrollTo("bottom", anchor: .bottom) }
+            }
             .onChange(of: assistant.transcript.last?.id) { scrollDown(proxy) }
             .onChange(of: assistant.proposal) { scrollDown(proxy) }
             .onChange(of: assistant.stage) { scrollDown(proxy) }
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(spacing: 8) {
-                if !chips.isEmpty, assistant.busy == nil {
-                    ChipRow(chips: chips.enumerated().map { ChipItem(id: String($0.offset), label: $0.element.label) }) { item in
-                        guard let index = Int(item.id), index < chips.count else { return }
-                        assistant.chip(chips[index])
-                    }
-                    .padding(.horizontal, 6)
-                }
-                AssistantInputBar(focused: $inputFocused, onSend: send)
-                    .debugFloatingFrame("composer")
-            }
-            .padding(.horizontal, 10)
-            .padding(.bottom, 8)
+            .onChange(of: assistant.undoPill?.id) { scrollDown(proxy) }
         }
         .modifier(DockFocus(focused: $inputFocused))
     }
@@ -351,16 +379,24 @@ private struct PlanChatView: View {
         return []
     }
 
+    /// To the bottom, animated, unless the person scrolled up since sending.
     private func scrollDown(_ proxy: ScrollViewProxy) {
-        withAnimation(reduceMotion ? nil : .snappy) { proxy.scrollTo("bottom", anchor: .bottom) }
+        guard followsBottom else { return }
+        withAnimation(reduceMotion ? nil : .smooth(duration: 0.3)) { proxy.scrollTo("bottom", anchor: .bottom) }
     }
 
-    private func send() {
+    private func send(_ proxy: ScrollViewProxy) {
         let text = appState.assistant.draft
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        followsBottom = true
         withAnimation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(duration: 0.32)) {
             appState.assistant.draft = ""
             appState.assistant.submit(text)
+        }
+        // The new bubble and the working line in view.
+        Task { @MainActor in
+            await Task.yield()
+            withAnimation(reduceMotion ? nil : .smooth(duration: 0.3)) { proxy.scrollTo("bottom", anchor: .bottom) }
         }
     }
 }

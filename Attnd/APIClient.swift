@@ -230,6 +230,8 @@ final class APIClient: Sendable {
         var headers: [String: String] = [:]
         if let etag { headers["If-None-Match"] = etag }
         if let deviceId { headers["X-Device-Id"] = deviceId }
+        // API-024: the layout section types this build draws (the server sends only those).
+        headers["X-Attnd-Sections"] = String(SectionCatalogue.version)
         let (data, http) = try await send("events/\(eventId)/bundle/", headers: headers)
         if http.statusCode == 304 { return .notModified }
         let bundle: EventBundle = try decode(data)

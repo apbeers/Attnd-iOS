@@ -8,6 +8,8 @@
 //     so never a More tab. No My plan tab and no Explore tab: the plan is the plan page, a
 //     full-screen cover opened by the floating "My plan" button on every tab (AssistantView.swift).
 //   - The tab selected after joining: `default_tab` when listed, else Map, else the first.
+//   - Home (API-024, when `display.tabs` lists it): the event's `home` layout sections
+//     (`HomeTab` in ScreenLayoutViews.swift); never in screenshot mode.
 //   - The Locations tab is titled "Places" (the app's word for locations); screenshot mode keeps
 //     "Locations" so the store screenshots stay exactly as they were.
 //   - Options (the gear) is on one tab's root screen only: Updates, or the first tab when the
@@ -22,8 +24,14 @@ struct TabLayout: Hashable, Sendable {
     /// The tab selected after joining.
     var defaultTab: EventTab
 
-    static func resolve(_ display: DisplayConfig, hasFlyer: Bool) -> TabLayout {
-        TabLayout(tabs: display.resolvedTabs(hasFlyer: hasFlyer), defaultTab: display.resolvedDefaultTab(hasFlyer: hasFlyer))
+    /// Screenshot mode drops the Home tab (API-024): the store screenshots keep the built-in tabs.
+    static func resolve(_ display: DisplayConfig, hasFlyer: Bool, screenshotMode: Bool = false) -> TabLayout {
+        var display = display
+        if screenshotMode, let tabs = display.tabs {
+            display.tabs = tabs.filter { $0 != .home }
+            if display.defaultTab == .home { display.defaultTab = nil }
+        }
+        return TabLayout(tabs: display.resolvedTabs(hasFlyer: hasFlyer), defaultTab: display.resolvedDefaultTab(hasFlyer: hasFlyer))
     }
 
     /// The tab bar's (and the tab's navigation) title.

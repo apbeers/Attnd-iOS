@@ -53,20 +53,10 @@ struct SettingsView: View {
             }
 
             // MARK: - Event
+            // API-024: the event's `options_event` layout (header, website, the info page link).
             if let event = appState.currentEvent {
                 Section {
-                    EventHeader(event: event, logoUrl: appState.logoUrl)
-                    if let website = event.websiteUrl {
-                        EventWebsiteLink(url: website)
-                    }
-                    // API-018: FAQ, amenities, getting there… (the event's info page).
-                    if event.context != nil {
-                        NavigationLink {
-                            EventInfoView()
-                        } label: {
-                            Label("FAQ, Amenities & Getting There", systemImage: "info.circle")
-                        }
-                    }
+                    OptionsEventRows(event: event)
                 }
             }
 
@@ -345,6 +335,48 @@ private struct InternalBuildWarning: View {
         }
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: - Event rows (API-024 `options_event`)
+
+/// Options' event section: the rows of the event's `options_event` layout (header, website, the
+/// info page link), or the built-in default.
+private struct OptionsEventRows: View {
+    let event: Event
+
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        let sections = appState.screenSections(.optionsEvent, now: .now) { bundle, state in
+            ScreenFacts.event(bundle, state)
+        }
+        ForEach(sections, id: \.type) { section in
+            row(section)
+        }
+    }
+
+    @ViewBuilder
+    private func row(_ section: LayoutSection) -> some View {
+        switch section.type {
+        case "header":
+            EventHeader(event: event, logoUrl: appState.logoUrl)
+        case "website":
+            if let website = event.websiteUrl {
+                EventWebsiteLink(url: website)
+            }
+        case "event_info_link":
+            // API-018: FAQ, amenities, getting there… (the event's info page).
+            if event.context != nil {
+                NavigationLink {
+                    EventInfoView()
+                } label: {
+                    Label(section.title ?? "FAQ, Amenities & Getting There", systemImage: "info.circle")
+                }
+            }
+        default:
+            EmptyView()
+        }
     }
 }
 

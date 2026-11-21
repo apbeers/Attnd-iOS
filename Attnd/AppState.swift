@@ -88,6 +88,8 @@ final class AppState {
     private(set) var locations: [Location] = []
     private(set) var schedule: [ScheduleItem] = []
     private(set) var notifications: [AppNotification] = []
+    /// API-024: the bundle's screen layouts (nil: none sent, or screenshot mode → the built-in ones).
+    private(set) var screenLayouts: ScreenLayouts?
 
     // MARK: - Loading
 
@@ -392,7 +394,7 @@ final class AppState {
 
     /// The tab bar (TabLayout.swift): the event's own tabs (`display.tabs`, ≤ 5).
     var tabLayout: TabLayout {
-        TabLayout.resolve(display, hasFlyer: currentEvent?.flyerUrl != nil)
+        TabLayout.resolve(display, hasFlyer: currentEvent?.flyerUrl != nil, screenshotMode: ScreenshotMode.isActive)
     }
 
     var tabs: [EventTab] { tabLayout.tabs }
@@ -738,6 +740,7 @@ final class AppState {
         locations = []
         schedule = []
         notifications = []
+        screenLayouts = nil
         loadError = nil
         refreshProblem = nil
         lastRefreshed = nil
@@ -842,6 +845,8 @@ final class AppState {
         locations = bundle.locations
         schedule = bundle.schedule
         notifications = bundle.notifications
+        // Screenshot mode always draws the built-in layouts, so the store screenshots never change.
+        screenLayouts = ScreenshotMode.isActive ? nil : bundle.layout
 
         let layout = tabLayout
         if pendingNotificationsEventId == bundle.event.id, layout.contains(.notifications) {
@@ -880,7 +885,8 @@ final class AppState {
             categories: categories,
             locations: locations,
             schedule: schedule,
-            notifications: notifications
+            notifications: notifications,
+            layout: screenLayouts
         )
     }
 

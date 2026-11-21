@@ -751,12 +751,20 @@ struct LocationDetailView: View {
         .usesUserLocation(heading: true)
     }
 
-    @ViewBuilder
+    /// API-024: the sections the event's `place_detail` layout lists (or the built-in default,
+    /// today's screen), in order; each draws only when the place has its data. The header's image
+    /// always sits at the top, full width.
     private func detailContent(now: Date) -> some View {
-        let items = appState.scheduleItems(at: location.id)
-        ScrollView {
+        let within = location.coordinate.flatMap { appState.userLocation.direction(to: $0)?.meters }.map { $0 <= 8_000 } ?? false
+        let sections = appState.screenSections(.placeDetail, now: now, subject: ScreenFacts.subject(location)) { bundle, state in
+            var state = state
+            state.withinWalk = within
+            return ScreenFacts.place(location, bundle, state)
+        }
+        let header = sections.first { $0.type == "header" }
+        return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                if let url = location.imageUrl {
+                if let header, header.shows("image"), let url = location.imageUrl {
                     LocationImage(url: url)
                         .frame(maxWidth: .infinity)
                         .frame(height: 240)
@@ -767,98 +775,154 @@ struct LocationDetailView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 12) {
-                    Text(location.name).font(.title2.bold())
-
-                    if let category = location.category {
-                        Text(category)
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.tint)
-                    }
-
-                    if !location.tags.isEmpty {
-                        // Lower case from the server (API-010), capitalised for display.
-                        Text(TagText.line(location.tags))
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if !location.address.isEmpty {
-                        Text(location.address)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    DistanceBadge(target: location.coordinate, font: .subheadline)
-
-                    LocationGlanceLine(location: location, now: now)
-
-                    if let destination = location.coordinate {
-                        // Within walking range: a small map with the walk (route or dashed
-                        // estimate), the user and the pin, plus Directions. Farther away, without
-                        // a position or in screenshot mode: the big button.
-                        if let user = appState.userLocation.location,
-                           PlaceWalkMap.shows(
-                               distanceMeters: appState.userLocation.direction(to: destination)?.meters,
-                               screenshotMode: ScreenshotMode.isActive
-                           ) {
-                            PlaceWalkMapCard(location: location, user: user, destination: destination)
-                        } else {
-                            Button {
-                                WalkingDirections.open(to: location)
-                            } label: {
-                                Label("Get Walking Directions", systemImage: "figure.walk")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.glassProminent)
-                            .controlSize(.large)
+                    ForEach(Array(sections.enumerated()), id: \.element.type) { index, section in
+                        if Self.dividerBefore(section, previous: index > 0 ? sections[index - 1] : nil) {
+                            Divider()
                         }
-                    }
-
-                    if appState.hasAssistant {
-                        // Assistant spec §8: the plan page's assistant (only with the on-device model).
-                        Button {
-                            appState.askAbout(.location(location.id))
-                        } label: {
-                            Label("Ask About This", systemImage: "sparkles")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.large)
-                    }
-
-                    if !location.description.isEmpty {
-                        Divider()
-                        Text(location.description).font(.body)
-                    }
-
-                    // API-018: about, hours, menu, accessibility, age limit, links.
-                    if let context = location.context {
-                        Divider()
-                        LocationContextView(context: context)
-                    }
-
-                    if let website = location.website {
-                        Link("Visit Website", destination: website)
-                            .font(.subheadline)
-                    }
-
-                    if !items.isEmpty {
-                        Divider()
-                        Text("At This Location")
-                            .font(.title3.bold())
-                            .padding(.top, 4)
-
-                        ForEach(items) { item in
-                            LocationScheduleRow(item: item, now: now, timeZone: appState.timeZone)
-                            if item.id != items.last?.id {
-                                Divider().padding(.vertical, 2)
-                            }
-                        }
+                        self.section(section, now: now)
                     }
                 }
                 .padding(.horizontal)
                 .padding(.vertical, 16)
                 .padding(.bottom, 24)
+            }
+        }
+    }
+
+    /// The place's context parts (hours, good to know, menu, links) are one group: a divider
+    /// before the group, before About and before the schedule, as on the fixed screen.
+    private static let contextGroup: Set<String> = ["hours", "good_to_know", "menu", "links"]
+
+    private static func dividerBefore(_ section: LayoutSection, previous: LayoutSection?) -> Bool {
+        guard let previous else { return false }
+        switch section.type {
+        case "about", "at_this_location", "now_next": return true
+        default:
+            return contextGroup.contains(section.type) && !contextGroup.contains(previous.type) && previous.type != "about"
+        }
+    }
+
+    @ViewBuilder
+    private func section(_ section: LayoutSection, now: Date) -> some View {
+        switch section.type {
+        case "header": header(section, now: now)
+        case "walk_map": walkMap
+        case "directions":
+            if location.coordinate != nil { directionsButton }
+        case "ask_about":
+            if appState.hasAssistant {
+                // Assistant spec §8: the plan page's assistant (only with the on-device model).
+                Button {
+                    appState.askAbout(.location(location.id))
+                } label: {
+                    Label("Ask About This", systemImage: "sparkles")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+            }
+        case "about":
+            if let title = section.title {
+                Text(title).font(.title3.bold())
+            }
+            if !location.description.isEmpty {
+                Text(location.description).font(.body)
+            }
+            // API-018: the organizer's notes for the assistant.
+            if let about = location.context?.about, !about.isEmpty {
+                Text(about)
+            }
+        case "hours":
+            if let hours = location.context?.hours, !hours.isEmpty { PlaceHoursLine(hours: hours) }
+        case "good_to_know":
+            if let context = location.context { PlaceFactsLines(context: context) }
+        case "menu":
+            if let menu = location.context?.menu, !menu.isEmpty { MenuList(menu: menu, title: section.title) }
+        case "links":
+            PlaceLinks(links: location.context?.links ?? [], website: location.website)
+        case "now_next":
+            NowNextStrip(locationId: location.id)
+        case "at_this_location": atThisLocation(section, now: now)
+        default:
+            EmptyView()
+        }
+    }
+
+    private func header(_ section: LayoutSection, now: Date) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(location.name).font(.title2.bold())
+
+            if section.shows("category"), let category = location.category {
+                Text(category)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.tint)
+            }
+
+            if section.shows("tags"), !location.tags.isEmpty {
+                // Lower case from the server (API-010), capitalised for display.
+                Text(TagText.line(location.tags))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            if section.shows("address"), !location.address.isEmpty {
+                Text(location.address)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            if section.shows("distance") {
+                DistanceBadge(target: location.coordinate, font: .subheadline)
+            }
+
+            if section.shows("now_next") {
+                LocationGlanceLine(location: location, now: now)
+            }
+        }
+    }
+
+    /// Within walking range: a small map with the walk (route or dashed estimate), the user and
+    /// the pin, plus Directions. Farther away, without a position or in screenshot mode: the big
+    /// button.
+    @ViewBuilder
+    private var walkMap: some View {
+        if let destination = location.coordinate {
+            if let user = appState.userLocation.location,
+               PlaceWalkMap.shows(
+                   distanceMeters: appState.userLocation.direction(to: destination)?.meters,
+                   screenshotMode: ScreenshotMode.isActive
+               ) {
+                PlaceWalkMapCard(location: location, user: user, destination: destination)
+            } else {
+                directionsButton
+            }
+        }
+    }
+
+    private var directionsButton: some View {
+        Button {
+            WalkingDirections.open(to: location)
+        } label: {
+            Label("Get Walking Directions", systemImage: "figure.walk")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.glassProminent)
+        .controlSize(.large)
+    }
+
+    @ViewBuilder
+    private func atThisLocation(_ section: LayoutSection, now: Date) -> some View {
+        let items = appState.scheduleItems(at: location.id)
+        if !items.isEmpty {
+            Text(section.title ?? "At This Location")
+                .font(.title3.bold())
+                .padding(.top, 4)
+
+            ForEach(items) { item in
+                LocationScheduleRow(item: item, now: now, timeZone: appState.timeZone)
+                if item.id != items.last?.id {
+                    Divider().padding(.vertical, 2)
+                }
             }
         }
     }

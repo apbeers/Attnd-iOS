@@ -213,8 +213,8 @@ final class BusinessLogicTests: XCTestCase {
             "perf_launch_cold", "perf_launch_warm", "perf_bundle_fetch", "perf_bundle_304", "perf_api_error",
             "perf_push_refresh_delay", "perf_live_start_fail", "perf_planner_ms", "perf_map_first_render",
         ])
-        // tab_view details: the event tabs' raw values, and "options" for the Options sheet.
-        XCTAssertEqual(EventTab.allCases.map(\.rawValue), ["map", "locations", "schedule", "flyer", "notifications"])
+        // tab_view details: the event tabs' raw values (API-024 adds "home"), and "options" for the Options sheet.
+        XCTAssertEqual(EventTab.allCases.map(\.rawValue), ["home", "map", "locations", "schedule", "flyer", "notifications"])
         XCTAssertEqual(EventSheet.options.usageDetail, "options")
         // The search sheet has no tab_view detail (the server only accepts the event tabs and options).
         XCTAssertNil(EventSheet.search.usageDetail)

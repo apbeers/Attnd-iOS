@@ -391,15 +391,76 @@ struct ScheduleItemDetailView: View {
         .usesUserLocation(heading: true)
     }
 
+    /// API-024: the sections the event's `item_detail` layout lists (or the built-in default,
+    /// today's screen), in order; each draws only when the item has its data.
     private func content(now: Date) -> some View {
-        List {
+        let bundle = appState.currentBundle
+        let sections = appState.screenSections(
+            .itemDetail, now: now, subject: bundle.map { ScreenFacts.subject(item, $0) } ?? .empty
+        ) { bundle, state in
+            ScreenFacts.item(item, bundle, state)
+        }
+        return List {
+            ForEach(sections, id: \.type) { section in
+                self.section(section, now: now)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func section(_ section: LayoutSection, now: Date) -> some View {
+        switch section.type {
+        case "header": header(section, now: now)
+        case "about":
+            if !item.description.isEmpty {
+                Section(section.title ?? "About") {
+                    Text(item.description)
+                }
+            }
+            if let about = item.context?.about, !about.isEmpty {
+                Section(section.title ?? "About") {
+                    Text(about)
+                }
+            }
+        // API-018: performers, price / age / accessibility, links.
+        case "performers":
+            if let context = item.context { PerformersSection(performers: context.performers, title: section.title) }
+        case "good_to_know":
+            if let context = item.context { ItemFactsSection(context: context, title: section.title) }
+        case "links":
+            if let context = item.context { ContextLinksSection(links: context.links, title: section.title) }
+        case "countdown":
+            Section(section.title ?? "Starts In") {
+                Countdown(item: item)
+            }
+        case "place_link": placeLink(section)
+        case "ask_about":
             Section {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(item.name).font(.title2.bold())
+                // Assistant spec §8: the plan page's assistant (only with the on-device model).
+                if appState.hasAssistant {
+                    Button {
+                        appState.askAbout(.scheduleItem(item.id))
+                    } label: {
+                        Label("Ask About This", systemImage: "sparkles")
+                    }
+                }
+            }
+        default:
+            EmptyView()
+        }
+    }
+
+    private func header(_ section: LayoutSection, now: Date) -> some View {
+        Section {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(item.name).font(.title2.bold())
+                if section.shows("time") {
                     Text(EventTimeFormat.range(start: item.startTime, end: item.endTime, in: appState.timeZone, now: now))
                         .font(.headline)
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
+                }
+                if section.shows("status") {
                     if ScheduleTiming.isHappening(item, at: now) {
                         Label(
                             RelativeTimeText.item(item, now: now, timeZone: appState.timeZone, includeEnd: true) ?? "Happening now",
@@ -415,54 +476,34 @@ struct ScheduleItemDetailView: View {
                             .font(.subheadline.bold())
                             .foregroundStyle(ScheduleTiming.hasEnded(item, at: now) ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
                     }
-                    if !item.tags.isEmpty {
-                        Text(TagText.line(item.tags))
-                            .font(.subheadline)
-                            .foregroundStyle(.tint)
+                }
+                if section.shows("tags"), !item.tags.isEmpty {
+                    Text(TagText.line(item.tags))
+                        .font(.subheadline)
+                        .foregroundStyle(.tint)
+                }
+            }
+            .padding(.vertical, 4)
+        } footer: {
+            if section.shows("time"), let note = EventTimeFormat.zoneNote(for: appState.timeZone, at: now) {
+                Text(note)
+            }
+        }
+    }
+
+    private func placeLink(_ section: LayoutSection) -> some View {
+        Section(section.title ?? "Location") {
+            if let location = appState.location(id: item.locationId) {
+                NavigationLink(value: location) {
+                    HStack {
+                        Label(location.name, systemImage: "mappin.and.ellipse")
+                        Spacer(minLength: 8)
+                        DistanceBadge(target: location.coordinate, font: .subheadline)
                     }
                 }
-                .padding(.vertical, 4)
-            } footer: {
-                if let note = EventTimeFormat.zoneNote(for: appState.timeZone, at: now) {
-                    Text(note)
-                }
-            }
-
-            if !item.description.isEmpty {
-                Section("About") {
-                    Text(item.description)
-                }
-            }
-
-            // API-018: about, performers, price / age / accessibility, links.
-            if let context = item.context {
-                ScheduleItemContextSections(context: context)
-            }
-
-            Section("Location") {
-                if let location = appState.location(id: item.locationId) {
-                    NavigationLink(value: location) {
-                        HStack {
-                            Label(location.name, systemImage: "mappin.and.ellipse")
-                            Spacer(minLength: 8)
-                            DistanceBadge(target: location.coordinate, font: .subheadline)
-                        }
-                    }
-                } else {
-                    Label(item.locationName ?? ScheduleGrouping.generalTitle, systemImage: "mappin.slash")
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Section {
-                // Assistant spec §8: the plan page's assistant (only with the on-device model).
-                if appState.hasAssistant {
-                    Button {
-                        appState.askAbout(.scheduleItem(item.id))
-                    } label: {
-                        Label("Ask About This", systemImage: "sparkles")
-                    }
-                }
+            } else {
+                Label(item.locationName ?? ScheduleGrouping.generalTitle, systemImage: "mappin.slash")
+                    .foregroundStyle(.secondary)
             }
         }
     }

@@ -192,7 +192,14 @@ struct MapView: View {
     // MARK: - Overlays
 
     private var overlayContent: some View {
-        let nowPlaying = showsGlance ? NowPlayingItem.items(schedule: appState.schedule, locations: visibleLocations, now: now) : []
+        // API-024: the event's `map_overlay` layout turns the Now playing strip and the selected
+        // place's card on or off (their places in the column are fixed).
+        let overlay = Set(appState.screenSections(.mapOverlay, now: now) { bundle, state in
+            ScreenFacts.common(bundle, state).union(["now_playing"])
+        }.map(\.type))
+        let nowPlaying = showsGlance && overlay.contains("now_playing")
+            ? NowPlayingItem.items(schedule: appState.schedule, locations: visibleLocations, now: now) : []
+        let selected = overlay.contains("selected_place") ? selectedLocation : nil
         // The Liked chip is always there, so the chip row always is.
         return VStack(spacing: 0) {
             CategoryChips(
@@ -227,7 +234,7 @@ struct MapView: View {
                 .padding(.horizontal)
                 .padding(.vertical, showsFloatingButton ? 8 : 16)
             }
-            if let location = selectedLocation {
+            if let location = selected {
                 LocationInfoCard(location: location, walkText: walkCardText) {
                     appState.mapNavigation.open(location.id)
                 }

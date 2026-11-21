@@ -265,12 +265,14 @@ extension AppNotification: Decodable {
 /// A tab the server can show. These are the only tabs in the tab bar: Options and search
 /// are sheets (ContentView), never tabs.
 enum EventTab: String, CaseIterable, Identifiable, Hashable, Sendable {
-    case map, locations, schedule, flyer, notifications
+    /// `home` (API-024): a screen made of the event's layout sections. Older builds drop it as unknown.
+    case home, map, locations, schedule, flyer, notifications
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
+        case .home:          return "Home"
         case .map:           return "Map"
         case .locations:     return "Locations"
         case .schedule:      return "Schedule"
@@ -281,6 +283,7 @@ enum EventTab: String, CaseIterable, Identifiable, Hashable, Sendable {
 
     var systemImage: String {
         switch self {
+        case .home:          return "house"
         case .map:           return "map"
         // A list, not a pin: Map and Locations must not look alike in the tab bar
         // (Android uses a list icon for Locations too).
@@ -404,11 +407,13 @@ struct EventBundle: Hashable, Sendable {
     var locations: [Location] = []
     var schedule: [ScheduleItem] = []
     var notifications: [AppNotification] = []
+    /// API-024: the screens' sections (nil when the server sent none: the built-in layouts).
+    var layout: ScreenLayouts? = nil
 }
 
 extension EventBundle: Decodable {
     private enum CodingKeys: String, CodingKey {
-        case event, display, categories, locations, schedule, notifications
+        case event, display, categories, locations, schedule, notifications, layout
         case schemaVersion = "schema_version"
         case contentVersion = "content_version"
         case updatedAt = "updated_at"
@@ -425,6 +430,7 @@ extension EventBundle: Decodable {
         locations = c.lossyArray(Location.self, .locations)
         schedule = c.lossyArray(ScheduleItem.self, .schedule)
         notifications = c.lossyArray(AppNotification.self, .notifications)
+        layout = c.lenient(ScreenLayouts.self, .layout)
     }
 }
 

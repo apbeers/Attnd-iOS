@@ -300,6 +300,9 @@ private struct EventTabContent: View {
 
     var body: some View {
         switch tab {
+        case .home:
+            // API-024: the event's `home` layout (ScreenLayoutViews.swift).
+            HomeTab()
         case .map:
             MapTab()
         case .locations:

@@ -27,10 +27,29 @@ import SwiftUI
 extension View {
     /// The background of an assistant card: a rounded tile on the grouped secondary background.
     func blockCardBackground(padding: CGFloat = 12) -> some View {
-        self
+        modifier(BlockCardBackground(padding: padding))
+    }
+}
+
+/// The card surface; with an event theme (API-023) a light wash of its secondary colour.
+private struct BlockCardBackground: ViewModifier {
+    let padding: CGFloat
+
+    @Environment(\.themeSoft) private var soft
+
+    func body(content: Content) -> some View {
+        content
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 18))
+            .background {
+                RoundedRectangle(cornerRadius: 18)
+                    .fill(Color(.secondarySystemGroupedBackground))
+                    .overlay {
+                        if let soft {
+                            RoundedRectangle(cornerRadius: 18).fill(soft.opacity(0.12))
+                        }
+                    }
+            }
     }
 }
 

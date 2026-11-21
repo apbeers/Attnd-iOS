@@ -45,6 +45,8 @@ struct Event: Identifiable, Hashable, Sendable {
     var websiteUrl: URL? = nil
     /// API-018: what an assistant needs to know offline (about, FAQ, amenities, policies…); nil when none.
     var context: EventContext? = nil
+    /// API-023: the event's own colours (light / dark), nil without a theme (then `accent_color`).
+    var theme: EventTheme? = nil
 
     /// The event's own time zone. All event times are displayed in it.
     var timeZone: TimeZone {
@@ -68,6 +70,7 @@ extension Event: Decodable {
         case contentVersion = "content_version"
         case joinUrl = "join_url"
         case websiteUrl = "website_url"
+        case theme
         case context
     }
 
@@ -95,6 +98,69 @@ extension Event: Decodable {
         joinUrl = c.url(.joinUrl)
         websiteUrl = c.httpsURL(.websiteUrl)
         context = c.lenient(EventContext.self, .context).flatMap { $0.isEmpty ? nil : $0 }
+        theme = c.lenient(EventTheme.self, .theme).flatMap { $0.isEmpty ? nil : $0 }
+    }
+}
+
+// MARK: - Theme (API-023)
+
+/// The three colours of one appearance, each "#RRGGBB" (anything else → nil: the default for it).
+/// `primary` = the tint (buttons, selected tabs and chips, links), `secondary` = soft surfaces
+/// (used at low opacity), `tertiary` = highlights (progress, badges). The server already adjusted
+/// them for contrast.
+struct ThemeColors: Hashable, Sendable, Decodable {
+    var primary: String? = nil
+    var secondary: String? = nil
+    var tertiary: String? = nil
+
+    init(primary: String? = nil, secondary: String? = nil, tertiary: String? = nil) {
+        self.primary = primary
+        self.secondary = secondary
+        self.tertiary = tertiary
+    }
+
+    private enum CodingKeys: String, CodingKey { case primary, secondary, tertiary }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        primary = Self.hex(c.lenient(String.self, .primary))
+        secondary = Self.hex(c.lenient(String.self, .secondary))
+        tertiary = Self.hex(c.lenient(String.self, .tertiary))
+    }
+
+    var isEmpty: Bool { primary == nil && secondary == nil && tertiary == nil }
+
+    /// "#RRGGBB" (upper-cased), else nil.
+    static func hex(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              value.range(of: #"^#[0-9A-Fa-f]{6}$"#, options: .regularExpression) != nil else { return nil }
+        return value.uppercased()
+    }
+}
+
+/// `event.theme` (API-023): light and dark colours; a missing mode or role uses the defaults.
+struct EventTheme: Hashable, Sendable, Decodable {
+    var light: ThemeColors? = nil
+    var dark: ThemeColors? = nil
+
+    init(light: ThemeColors? = nil, dark: ThemeColors? = nil) {
+        self.light = light
+        self.dark = dark
+    }
+
+    private enum CodingKeys: String, CodingKey { case light, dark }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        light = c.lenient(ThemeColors.self, .light).flatMap { $0.isEmpty ? nil : $0 }
+        dark = c.lenient(ThemeColors.self, .dark).flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    var isEmpty: Bool { light == nil && dark == nil }
+
+    /// One role's colour for an appearance; nil = the default (`accent_color`, else the brand).
+    func hex(_ role: KeyPath<ThemeColors, String?>, dark isDark: Bool) -> String? {
+        (isDark ? dark : light)?[keyPath: role]
     }
 }
 

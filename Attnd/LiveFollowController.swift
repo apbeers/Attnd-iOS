@@ -132,7 +132,7 @@ final class LiveFollowController {
     func nextStart(now: Date = .now) -> Date? {
         guard let appState, let bundle = appState.currentBundle else { return nil }
         let inputs = LiveActivityPlanner.inputs(bundle.liveActivity, bundle: bundle, hearted: appState.personal.heartedScheduleItems,
-                                                planned: appState.plannedItemIds, places: appState.followPlaces(bundle))
+                                                planned: [], places: appState.followPlaces(bundle))
         let day = LiveActivityPlanner.followDay(
             schedule: inputs.schedule,
             hearted: inputs.hearted,
@@ -174,7 +174,8 @@ final class LiveFollowController {
         let timeZone = event.timeZone
         let now = Date.now
         let personal = appState.personal
-        let planned = appState.plannedItemIds
+        // One list (Nov 22, 2026): the activity follows My schedule; there is no separate plan.
+        let planned: Set<Int> = []
         let enabled = appState.followsOnLockScreen && activitiesEnabled && !event.isArchived
         let foreground = UIApplication.shared.applicationState == .active
         // The planning (follow day, decision, contents) walks the whole schedule: it runs off the

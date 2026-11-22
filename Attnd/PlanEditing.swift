@@ -265,8 +265,9 @@ enum PlanVersions {
     }
 }
 
-/// The undo stack of one plan (≤ 20 earlier versions, newest last), stored with the plan per
-/// event. Applying an edit pushes the plan it replaced; `plan_undo` pops it.
+/// The undo stack of one plan (≤ 20 earlier versions, newest last) of older builds. Since the
+/// one-list change (Nov 22, 2026) it is only read once, for the migration (`PlanStore.load`); the
+/// Undo history is `ScheduleHistory` over My schedule.
 struct PlanHistory: Hashable, Sendable {
     static let max = 20
 

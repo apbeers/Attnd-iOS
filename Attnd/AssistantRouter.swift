@@ -39,7 +39,7 @@ struct RouterContext: Sendable {
     var canPlan = true
     /// Ask (the on-device model) is available; the router is then only the fallback.
     var modelAvailable = false
-    var history = PlanHistory()
+    var history = ScheduleHistory()
     var units: DistanceUnits = .imperial
     var locale = Locale(identifier: "en_US")
     /// My schedule (iOS): timed places, reminders, clashes. `likes` mirrors its membership.

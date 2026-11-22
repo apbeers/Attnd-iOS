@@ -163,7 +163,7 @@ private struct TimelineBlock: View {
             let resolved = BlockData.timeline(ids, source: source, bundle, appState.planner.plan, now: .now)
             let items = resolved.compactMap { bundle.scheduleItem($0) }
             if !items.isEmpty {
-                ItemTimeline(items: items, title: title ?? (source == "plan" ? "My plan" : nil))
+                ItemTimeline(items: items, title: title ?? (source == "plan" ? "My Schedule" : nil))
                     .blockCardBackground()
             }
         }
@@ -241,7 +241,7 @@ private struct CompareBlock: View {
         case .item(let item):
             let planned = appState.plannedItemIds.contains(item.id)
             let canAdd = appState.planner.hasPlan && !planned && (item.startTime ?? .distantPast) > .now
-            return .item(item, appState: appState, actionTitle: canAdd ? "Add to My Plan" : nil)
+            return .item(item, appState: appState, actionTitle: canAdd ? "Add to My Schedule" : nil)
         case .version(let kind, let edit):
             var rows = [CompareRow(label: "Changes", value: AssistantRouter.describe(edit, bundle))]
             if let route = DayRoutes.of(edit.after, bundle) {
@@ -253,7 +253,7 @@ private struct CompareBlock: View {
                 title: kind.label,
                 subtitle: Planner.summary(edit.after, timeZone: bundle.event.timeZone),
                 rows: rows,
-                actionTitle: "Use This Plan"
+                actionTitle: "Use This Version"
             )
         }
     }
@@ -497,7 +497,7 @@ private struct PlanDayContent: View {
         let units: DistanceUnits = DistanceText.usesImperial() ? .imperial : .metric
         VStack(alignment: .leading, spacing: 10) {
             if showsHeader {
-                Text(plan.days.count > 1 ? "My plan · \(day.date.weekdayName)" : "My plan")
+                Text(plan.days.count > 1 ? "My Schedule · \(day.date.weekdayName)" : "My Schedule")
                     .font(.headline)
                     .accessibilityAddTraits(.isHeader)
             }
@@ -549,7 +549,7 @@ private struct PlanEntryList: View {
                 }
             }
             if entries.count < day.entries.count {
-                Text("\(day.entries.count - entries.count) more in your plan")
+                Text("\(day.entries.count - entries.count) more in your schedule")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

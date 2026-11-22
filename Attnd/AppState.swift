@@ -1042,6 +1042,7 @@ final class AppState {
         if isFirstApply, !ScreenshotMode.isActive, !UserDefaults.standard.bool(forKey: Keys.onboardingSeen) {
             pendingTour = true
         }
+        refreshDerivedPlan()
         assistant.refreshLive()
         liveFollowNeedsUpdate()
     }
@@ -1439,20 +1440,27 @@ final class AppState {
         migrateScheduleIfNeeded()
     }
 
-    /// My schedule replaces likes and the stored plan (iOS, Nov 21, 2026): once per event, the
-    /// hearted items and places and the plan's items and meal places become entries. No metrics.
+    /// My schedule replaces likes (iOS, Nov 21, 2026) and the stored plan (one list, Nov 22,
+    /// 2026): once per event the hearted items and places become entries, and an older build's
+    /// plan is absorbed (`source: planner`, its meal places, preferences and check-offs), saved,
+    /// then its keys deleted. Re-running finds nothing. No metrics.
     private func migrateScheduleIfNeeded() {
-        guard personalEventId != nil, !ScreenshotMode.isActive else { return }
-        if personal.migrateSchedule(plan: planner.plan) {
+        guard let eventId = personalEventId, !ScreenshotMode.isActive else { return }
+        var changed = personal.migrateSchedule(plan: nil)
+        let legacy = planner.takeLegacyPlan()
+        if let legacy { changed = personal.absorbLegacy(plan: legacy) || changed }
+        if changed {
             if let bundle = currentBundle { _ = personal.updateSchedule { $0.fillFingerprints(bundle) } }
             savePersonalState()
+            flushPersonalState()
             AppLog.debug(.ui, "ui.action", "My schedule migrated", ["name": "schedule_migrate", "count": .int(personal.schedule.entries.count)])
         }
+        if legacy != nil { planner.deleteLegacy(eventId) }
+        refreshDerivedPlan()
     }
 
     private func loadPlan(for eventId: Int?) {
         planner.load(eventId: eventId)
-        planner.onApply = { [weak self] plan, previous in self?.applyPlanToSchedule(plan, replacing: previous) }
         assistant.load(eventId: eventId)
     }
 
@@ -1511,14 +1519,23 @@ final class AppState {
 
     /// Adds an item, or a place at a time (nil: saved without one). A place already there gets
     /// the new time. Counted (API-009) only when it wasn't in My schedule.
-    func addToSchedule(_ target: SearchTarget, at: Date? = nil, minutes: Int? = nil) {
+    func addToSchedule(_ target: SearchTarget, at: Date? = nil, minutes: Int? = nil,
+                       source: ScheduleEntrySource = .you, reason: String? = nil) {
         guard currentEvent != nil else { return }
         let bundle = currentBundle
+        let before = personal.schedule
         let change: MyScheduleChange? = personal.updateSchedule { (schedule: inout MySchedule) -> MyScheduleChange? in
             let change = schedule.add(target, at: at, minutes: minutes)
+            if change?.metric != nil, let (kind, id) = MySchedule.key(target),
+               let index = schedule.entries.firstIndex(where: { $0.kind == kind && $0.id == id }) {
+                schedule.entries[index].source = source
+                schedule.entries[index].reason = ScheduleEntry.cleanReason(reason)
+            }
             if let bundle { _ = schedule.fillFingerprints(bundle) }
             return change
         }
+        // One Undo history (one list §3): adds and time changes are undoable.
+        if change != nil { planner.push(before) }
         scheduleDidChange(change.map { [$0] } ?? [])
     }
 
@@ -1533,7 +1550,7 @@ final class AppState {
         case .location(let id): name = location(id: id)?.name ?? "It"
         default: name = "It"
         }
-        showUndo("\(name) added to My Schedule") { [weak self] in self?.removeFromSchedule(target) }
+        showUndo("\(name) added to My Schedule") { [weak self] in _ = self?.undoScheduleChange() }
     }
 
     /// Items in My schedule the organizer moved, changed or cancelled (Schedule tab hints).
@@ -1547,18 +1564,25 @@ final class AppState {
         guard let bundle = currentBundle else { return }
         personal.updateSchedule { $0.keepChange(itemId, bundle) }
         savePersonalState()
+        refreshDerivedPlan()
         liveFollowNeedsUpdate()
     }
 
     func removeFromSchedule(_ target: SearchTarget) {
         guard currentEvent != nil else { return }
-        scheduleDidChange(personal.updateSchedule { $0.remove(target) }.map { [$0] } ?? [])
+        let before = personal.schedule
+        let change = personal.updateSchedule { $0.remove(target) }
+        if change != nil { planner.push(before) }
+        scheduleDidChange(change.map { [$0] } ?? [])
     }
 
     /// A place entry's time (nil: keep it saved without a time).
     func moveEntry(_ target: SearchTarget, to at: Date?) {
         guard currentEvent != nil else { return }
-        scheduleDidChange(personal.updateSchedule { $0.move(target, to: at) }.map { [$0] } ?? [])
+        let before = personal.schedule
+        let change = personal.updateSchedule { $0.move(target, to: at) }
+        if change != nil { planner.push(before) }
+        scheduleDidChange(change.map { [$0] } ?? [])
     }
 
     /// The entry's reminder (minutes before; 0 = off; nil = the default 15 min).
@@ -1567,15 +1591,59 @@ final class AppState {
         scheduleDidChange(personal.updateSchedule { $0.setReminder(target, minutes: minutes) }.map { [$0] } ?? [])
     }
 
-    /// A plan the planner made or changed fills My schedule (PlanStore's `onApply`).
-    func applyPlanToSchedule(_ plan: Plan?, replacing previous: Plan?) {
-        guard currentEvent != nil, !ScreenshotMode.isActive else { return }
-        scheduleDidChange(personal.updateSchedule { $0.apply(plan: plan, replacing: previous) }, reconcile: false)
+    /// Check-offs (tap or auto): a per-event set, outside the Undo history.
+    func setCheckedOff(_ itemId: Int, _ done: Bool) {
+        guard currentEvent != nil else { return }
+        let before = personal.checkedOff
+        if done { personal.checkedOff.insert(itemId) } else { personal.checkedOff.remove(itemId) }
+        guard personal.checkedOff != before else { return }
+        savePersonalState()
+        refreshDerivedPlan()
     }
 
-    /// Saves, counts real adds / removes (API-009), keeps the planner's copy of the day in line
-    /// and updates the Live Activity, reminders and widgets that follow My schedule.
-    private func scheduleDidChange(_ changes: [MyScheduleChange], reconcile: Bool = true) {
+    /// What the planner was told (one list §1), kept with the personal state.
+    func setPlannerPreferences(_ preferences: SchedulePreferences) {
+        guard currentEvent != nil, preferences != personal.plannerPreferences else { return }
+        personal.plannerPreferences = preferences
+        savePersonalState()
+    }
+
+    /// Applies a proposal to My schedule (one list §3) as one entry on the Undo history.
+    func applyScheduleProposal(_ proposal: ScheduleProposal, source: ScheduleEntrySource = .planner) {
+        guard currentEvent != nil, !ScreenshotMode.isActive, !proposal.isEmpty else { return }
+        let bundle = currentBundle
+        let before = personal.schedule
+        let changes = personal.updateSchedule { (schedule: inout MySchedule) -> [MyScheduleChange] in
+            let changes = schedule.apply(proposal, source: source)
+            if let bundle { _ = schedule.fillFingerprints(bundle) }
+            return changes
+        }
+        if personal.schedule != before { planner.push(before) }
+        scheduleDidChange(changes)
+    }
+
+    /// "undo", the Undo card and the toast: My schedule as it was before the last change. Adds and
+    /// removes it reverses are counted (API-009) like any other. False with nothing to undo.
+    @discardableResult
+    func undoScheduleChange() -> Bool {
+        guard currentEvent != nil, let restored = planner.pop() else { return false }
+        let before = personal.schedule
+        personal.updateSchedule { $0 = restored }
+        var changes: [MyScheduleChange] = []
+        for id in restored.itemIds.subtracting(before.itemIds).sorted() { changes.append(MyScheduleChange(metric: .scheduleItemHeart, target: .scheduleItem(id))) }
+        for id in before.itemIds.subtracting(restored.itemIds).sorted() { changes.append(MyScheduleChange(metric: .scheduleItemUnheart, target: .scheduleItem(id))) }
+        for id in restored.placeIds.subtracting(before.placeIds).sorted() { changes.append(MyScheduleChange(metric: .locationHeart, target: .location(id))) }
+        for id in before.placeIds.subtracting(restored.placeIds).sorted() { changes.append(MyScheduleChange(metric: .locationUnheart, target: .location(id))) }
+        if changes.isEmpty, let first = restored.entries.first ?? before.entries.first {
+            changes.append(MyScheduleChange(metric: nil, target: first.target))
+        }
+        scheduleDidChange(changes)
+        return true
+    }
+
+    /// Saves, counts real adds / removes (API-009), recomputes the day view and updates the Live
+    /// Activity, reminders and widgets that follow My schedule.
+    private func scheduleDidChange(_ changes: [MyScheduleChange]) {
         guard !changes.isEmpty else { return }
         savePersonalState()
         for change in changes {
@@ -1585,10 +1653,7 @@ final class AppState {
             case .notification, .event: break
             }
         }
-        if reconcile, let bundle = currentBundle, let plan = planner.plan {
-            let reconciled = personal.schedule.reconcile(plan, bundle)
-            if reconciled != plan, let reconciled { planner.update(reconciled) }
-        }
+        refreshDerivedPlan()
         liveFollowNeedsUpdate()
     }
 

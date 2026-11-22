@@ -13,16 +13,22 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PKG="$ROOT/build/linux-harness"
 TESTS=(PlannerFixture AssistantFixture AssistantRouterTests ConversationContextTests PlanProposalTests
-       AssistantFlowTests AssistantBlocksTests AssistantExtrasTests PlanEditingTests PlanRequestTests PlannerTests
+       AssistantFlowTests MyScheduleTests LiveFollowTests AssistantBlocksTests AssistantExtrasTests PlanEditingTests PlanRequestTests PlannerTests
        ComponentTests AssistantEvalData AssistantEval AssistantEvalTests)
 [[ -n "${HARNESS_TESTS:-}" ]] && read -r -a TESTS <<< "$HARNESS_TESTS"
 APPLE='^import (SwiftUI|UIKit|MapKit|CoreLocation|ActivityKit|AppIntents|FoundationModels|MetricKit|Security|CryptoKit|Network|os|Observation|DeviceCheck|WebKit|VisionKit|Vision|ImageIO|UserNotifications|CoreSpotlight|CoreImage|UniformTypeIdentifiers)$'
-SKIP=(APIClient.swift Diagnostics.swift Helpers.swift LiveFollowLogic.swift)
+SKIP=(APIClient.swift Diagnostics.swift Helpers.swift)
+# Copied without `import ActivityKit` (an `ActivityAttributes` stand-in below), so LiveFollowLogic compiles.
+ACTIVITYKIT=(LiveActivityModel.swift)
 
 rm -rf "$PKG" && mkdir -p "$PKG/Sources/Attnd" "$PKG/Tests/AttndTests" "$ROOT/build/assistant-eval"
 for f in "$ROOT"/Attnd/*.swift; do
   name="$(basename "$f")"
   [[ " ${SKIP[*]} " == *" $name "* ]] && continue
+  if [[ " ${ACTIVITYKIT[*]} " == *" $name "* ]]; then
+    sed '/^import ActivityKit$/d' "$f" > "$PKG/Sources/Attnd/$name"
+    continue
+  fi
   grep -qE "$APPLE" "$f" && continue
   sed '/^import CoreGraphics$/d' "$f" > "$PKG/Sources/Attnd/$name"
 done
@@ -32,6 +38,7 @@ done
   echo 'enum SHA256 { static func hash(data: Data) -> [UInt8] { var h: UInt64 = 0xcbf29ce484222325; for b in data { h = (h ^ UInt64(b)) &* 0x100000001b3 }; return (0..<32).map { UInt8(truncatingIfNeeded: h >> (UInt64($0 % 8) * 8)) } } }'
   echo 'func CFGetTypeID(_ n: NSNumber) -> Int { String(cString: n.objCType) == "c" ? 1 : 0 }'
   echo 'func CFBooleanGetTypeID() -> Int { 1 }'
+  echo 'protocol ActivityAttributes: Decodable, Encodable { associatedtype ContentState: Codable & Hashable }'
   awk '/^\/\/ MARK: - ISO 8601 parsing/{on=1} /^\/\/ MARK: - Deep links/{on=0} on' "$ROOT/Attnd/Helpers.swift"
 } > "$PKG/Sources/Attnd/LinuxShims.swift"
 for t in "${TESTS[@]}"; do cp "$ROOT/AttndTests/$t.swift" "$PKG/Tests/AttndTests/"; done

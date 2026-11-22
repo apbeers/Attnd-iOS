@@ -99,31 +99,129 @@ final class MyScheduleTests: XCTestCase {
         XCTAssertEqual(MySchedule.date(PlanClock(hour: 13, minute: 0), near: PlannerFixture.sun("12:00"), now: now, timeZone: zone), PlannerFixture.sun("13:00"))
     }
 
-    func testPlannerFillsMyScheduleWithPinnedEntries() {
+    // MARK: One list (Attnd-Web docs/specs/one_list_spec.md)
+
+    func testProposeAddsWithReasonsAndMyScheduleItemsAreMustIncludes() {
         var s = MySchedule()
         s.add(.scheduleItem(101))
         s.add(.scheduleItem(201))  // Sunday: not on the plan's day, stays
-        let planner = Planner(bundle: bundle, preferences: AssistantFixture.musicAndBbq, heartedItems: s.itemIds)
-        let plan = planner.plan(from: now, request: "Plan my Saturday around live music and BBQ")
-        // My schedule's items are the planner's must-includes.
+        let (plan, proposal) = Planner.propose(s, preferences: SchedulePreferences(), request: AssistantFixture.musicAndBbq,
+                                               text: "Plan my Saturday around live music and BBQ", bundle: bundle, now: now)
+        // Same plan as the planner alone with My schedule's items hearted (rule 7): fixture numbers unchanged.
+        let alone = Planner(bundle: bundle, preferences: AssistantFixture.musicAndBbq, heartedItems: s.itemIds)
+            .plan(from: now, request: "Plan my Saturday around live music and BBQ", createdAt: plan.createdAt)
+        XCTAssertEqual(plan.itemIds, alone.itemIds)
         XCTAssertTrue(plan.itemIds.contains(101))
-        let changes = s.apply(plan: plan, replacing: nil)
-        XCTAssertEqual(s.itemIds, Set(plan.itemIds).union([201]))
-        // Counted once per item that was new.
-        XCTAssertEqual(changes.filter { $0.metric == .scheduleItemHeart }.count, plan.itemIds.filter { $0 != 101 }.count)
-        // A changed plan drops what it removed (on its days); clearing the plan keeps My schedule.
+        // Adds: the plan's items not in My schedule, each with the planner's reason; meal places at the break.
+        let added = proposal.adds.compactMap { if case .scheduleItem(let id) = $0.target { return id } else { return nil } }
+        XCTAssertEqual(added, plan.itemIds.filter { $0 != 101 })
+        for add in proposal.adds where add.meal == nil {
+            if case .scheduleItem(let id) = add.target {
+                XCTAssertEqual(add.reason, plan.items.first { $0.itemId == id }?.reason)
+            }
+        }
+        let meals = plan.days.flatMap(\.meals).filter { $0.locationId != nil }
+        XCTAssertEqual(proposal.adds.filter { $0.meal != nil }.count, meals.count)
+        XCTAssertTrue(proposal.removes.isEmpty)
+        XCTAssertTrue(proposal.pillText.hasPrefix("+\(added.count) items"))
+        XCTAssertEqual(proposal.title, "Add \(proposal.adds.count) things to your schedule")
+        // Applying: source planner + reasons; counted once per new item.
+        var applied = s
+        let changes = applied.apply(proposal)
+        XCTAssertEqual(applied.itemIds, Set(plan.itemIds).union([201]))
+        XCTAssertEqual(changes.filter { $0.metric == .scheduleItemHeart }.count, added.count)
+        XCTAssertEqual(applied.entry(.item, 101)?.source, .you)
+        XCTAssertEqual(applied.entry(.item, added[0])?.source, .planner)
+        XCTAssertNotNil(applied.entry(.item, added[0])?.reason)
+        // A new plan the same day removes only the planner's own entries it dropped.
         var edited = plan
-        edited.days[0].entries.removeAll { if case .item(let i) = $0 { return i.itemId == 109 } else { return false } }
-        _ = s.apply(plan: edited, replacing: plan)
-        XCTAssertFalse(s.itemIds.contains(109))
-        XCTAssertTrue(s.apply(plan: nil, replacing: edited).isEmpty)
-        XCTAssertTrue(s.itemIds.contains(101))
-        // Reconcile: an item removed elsewhere leaves the plan; one added on its day joins it.
-        s.remove(.scheduleItem(105))
-        s.add(.scheduleItem(110))
-        let reconciled = s.reconcile(edited, bundle)!
-        XCTAssertFalse(reconciled.itemIds.contains(105))
-        XCTAssertEqual(reconciled.items.first { $0.itemId == 110 }?.reason, MySchedule.inScheduleReason)
+        let dropped = added[0]
+        edited.days[0].entries.removeAll { if case .item(let i) = $0 { return i.itemId == dropped || i.itemId == 101 } else { return false } }
+        let next = applied.proposal(for: edited, bundle)
+        XCTAssertEqual(next.removes.map(\.target), [.scheduleItem(dropped)])
+        // …unless the request asked to remove it ("drop the …").
+        XCTAssertTrue(applied.proposal(for: edited, explicit: [101], bundle).removes.map(\.target).contains(.scheduleItem(101)))
+        XCTAssertTrue(applied.proposal(for: nil, bundle).isEmpty)
+    }
+
+    func testDerivedDayPlanFromMySchedule() {
+        var s = MySchedule()
+        XCTAssertNil(s.dayPlan(bundle, now: now))
+        s.add(.scheduleItem(105))
+        s.add(.scheduleItem(101))
+        s.add(.scheduleItem(201))
+        let plan = s.dayPlan(bundle, checkedOff: [101, 999], now: now)!
+        XCTAssertEqual(plan.days.count, 2)
+        XCTAssertEqual(Set(plan.itemIds), [101, 105, 201])
+        XCTAssertEqual(plan.days[0].items.map(\.start), plan.days[0].items.map(\.start).sorted())
+        XCTAssertEqual(plan.checkedOff, [101])
+        XCTAssertEqual(plan.items.first?.reason, MySchedule.inScheduleReason)
+        // The entry's own reason wins.
+        var p = MySchedule()
+        _ = p.apply(ScheduleProposal(adds: [.init(target: .scheduleItem(105), reason: "Because you like jazz")]))
+        XCTAssertEqual(p.dayPlan(bundle, now: now)?.items.first?.reason, "Because you like jazz")
+        // Derived, so it is the same every time (not stored, nothing to drift).
+        XCTAssertEqual(s.dayPlan(bundle, now: now), s.dayPlan(bundle, now: now.addingTimeInterval(600)))
+    }
+
+    func testSourceAndReasonCodecIsLenient() throws {
+        let json = #"{"entries":[{"kind":"item","id":1,"source":"planner","reason":"Lunch break"},{"kind":"item","id":2,"source":"robot"},{"kind":"place","id":3}]}"#
+        let s = try JSONDecoder().decode(MySchedule.self, from: Data(json.utf8))
+        XCTAssertEqual(s.entry(.item, 1)?.source, .planner)
+        XCTAssertEqual(s.entry(.item, 1)?.reason, "Lunch break")
+        XCTAssertEqual(s.entry(.item, 2)?.source, .you)
+        XCTAssertNil(s.entry(.place, 3)?.reason)
+        let back = try JSONDecoder().decode(MySchedule.self, from: JSONEncoder().encode(s))
+        XCTAssertEqual(back, s)
+        // Reasons are cut at 80 characters.
+        XCTAssertEqual(ScheduleEntry.cleanReason(String(repeating: "a", count: 200))?.count, 80)
+        // Preferences: lenient, everything optional.
+        let prefs = try JSONDecoder().decode(SchedulePreferences.self, from: Data(#"{"pace":"packed","max_walk_minutes":10,"meals":["lunch","brunch"],"earliest":"09:30","kid_friendly":"yes"}"#.utf8))
+        XCTAssertEqual(prefs.pace, .packed)
+        XCTAssertEqual(prefs.maxWalkMinutes, 10)
+        XCTAssertEqual(prefs.meals, [.lunch])
+        XCTAssertEqual(prefs.earliest, PlanClock(hour: 9, minute: 30))
+        XCTAssertFalse(prefs.kidFriendly)
+        XCTAssertEqual(try JSONDecoder().decode(SchedulePreferences.self, from: JSONEncoder().encode(prefs)), prefs)
+    }
+
+    func testLegacyPlanMigrationIsIdempotent() {
+        let plan = AssistantFixture.plan
+        var personal = EventPersonalState()
+        personal.heartedScheduleItems = [101]
+        XCTAssertTrue(personal.migrateSchedule(plan: nil))
+        var legacy = plan
+        legacy.checkedOff = [101]
+        XCTAssertTrue(personal.absorbLegacy(plan: legacy))
+        let s = personal.schedule
+        XCTAssertEqual(s.itemIds, Set(plan.itemIds).union([101]))
+        XCTAssertEqual(s.entry(.item, 101)?.source, .you)
+        for item in plan.items where item.itemId != 101 {
+            XCTAssertEqual(s.entry(.item, item.itemId)?.source, .planner)
+            XCTAssertEqual(s.entry(.item, item.itemId)?.reason, item.reason)
+        }
+        for meal in plan.days.flatMap(\.meals) {
+            guard let id = meal.locationId else { continue }
+            XCTAssertEqual(s.entry(.place, id)?.at, meal.start)
+            XCTAssertEqual(s.entry(.place, id)?.reason, meal.kind.label)
+        }
+        XCTAssertEqual(personal.preferences, SchedulePreferences(plan.preferences, constraints: plan.constraints))
+        XCTAssertEqual(personal.preferences.meals, [.lunch, .dinner])
+        XCTAssertEqual(personal.checkedOff, [101])
+        // A second run finds nothing and changes nothing.
+        let once = personal
+        XCTAssertFalse(personal.absorbLegacy(plan: legacy))
+        XCTAssertEqual(personal, once)
+    }
+
+    func testUndoHistoryKeepsTwentySnapshots() {
+        var history = ScheduleHistory()
+        XCTAssertNil(history.pop())
+        for id in 1...25 { history = history.push(MySchedule(entries: [ScheduleEntry(kind: .item, id: id)])) }
+        XCTAssertEqual(history.snapshots.count, ScheduleHistory.max)
+        XCTAssertEqual(history.pop()?.schedule.itemIds, [25])
+        XCTAssertEqual(ScheduleHistory.decode(history.encode()), history)
+        XCTAssertFalse(ScheduleHistory.decode("nonsense").canUndo)
     }
 
     func testRemindersPerEntry() {

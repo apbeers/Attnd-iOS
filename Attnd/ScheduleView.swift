@@ -721,8 +721,15 @@ private struct OrganizerChangeRow: View {
                     }
                 }
                 Button("Find Another") {
-                    appState.searchText = change.name
-                    appState.openSearch()
+                    // One list §5: a swap proposal in Ask Attnd (search without the on-device model,
+                    // or for a cancelled item, which has no slot to swap).
+                    if AppState.modelReady, change.kind != .cancelled {
+                        appState.showMyPlan()
+                        appState.assistant.proposeSwap(change.itemId)
+                    } else {
+                        appState.searchText = change.name
+                        appState.openSearch()
+                    }
                 }
             }
             .buttonStyle(.bordered)

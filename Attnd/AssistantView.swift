@@ -4,7 +4,7 @@
 // The plan page's frame (planner_view_spec, iOS, Nov 19, 2026; it replaced the snapping plan
 // panel). Only with Apple Intelligence's on-device model (`AppState.hasAssistant`); without it
 // (and in screenshot mode) the floating search button and sheet instead.
-//   - Closed: the floating Liquid Glass "My plan" button (`sparkles`, bottom-trailing on every
+//   - Closed: the floating Liquid Glass "Ask Attnd" button (`sparkles`, bottom-trailing on every
 //     tab) with a small peek of the plan ("Next: Juniper Lane · 11:00 AM · Main Stage",
 //     `PlanDock.summaryLine`).
 //   - Open: a full-screen cover (`PlanPageHost`, presented by ContentView) with its own
@@ -26,7 +26,7 @@ import SwiftUI
 // MARK: - The My plan button (every tab)
 
 extension View {
-    /// The floating "My plan" button (with its peek) over a tab's content.
+    /// The floating "Ask Attnd" button (with its peek) over a tab's content.
     func planButton() -> some View {
         modifier(PlanButtonModifier())
     }
@@ -99,9 +99,9 @@ struct FloatingPlanButton: View {
         .foregroundStyle(.tint)
         .glassEffect(.regular.interactive(), in: .capsule)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("My plan")
+        .accessibilityLabel("Ask Attnd")
         .accessibilityValue(peek ?? "")
-        .accessibilityHint("Opens your plan. Type there to search, ask or change the plan.")
+        .accessibilityHint("Opens Ask Attnd. Ask, search or change your schedule.")
         .accessibilityAddTraits(.isButton)
         .keyboardShortcut("f", modifiers: .command)
     }
@@ -151,7 +151,7 @@ private struct PlanChatStack: View {
             // indicator; folded there is no fold, unfolded the arrangement splits on it, and the
             // camera housings are in the system safe area.
             PlanChatView()
-                .navigationTitle("My Plan")
+                .navigationTitle("Ask Attnd")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { PageCloseItem() }
                 .navigationDestination(for: SearchTarget.self) { target in

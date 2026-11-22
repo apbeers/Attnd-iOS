@@ -516,21 +516,21 @@ final class AssistantController {
                 show(nil, [confirm])
             }
         case .newPlan(let plan):
-            appState.planner.apply(plan)
+            let applied = appState.applyPlan(plan)
             AppLog.info(.planner, "plan.edit", "New plan from an inline action", [
-                "ops": "add", "source": "plan", "applied": true, "removed": 0,
-                "added": .int(plan.itemIds.count), "moved": 0,
+                "ops": "add", "source": "plan", "applied": true, "removed": .int(applied.removes.count),
+                "added": .int(applied.adds.count), "moved": 0,
             ])
             refreshLive()
-            showUndo("Here's your plan: \(Planner.summary(plan, timeZone: appState.timeZone)).")
+            showUndo(applied.isEmpty ? "Your schedule already has all of that." : "Updated your schedule: \(applied.pillText).")
         case .plan(let plan):
-            appState.planner.apply(plan)
+            appState.applyPlan(plan, source: .shared, records: false)
             AppLog.notice(.ui, "share.opened", "Shared plan applied", [
                 "target": "plan", "items": .int(plan.itemIds.count), "known": .int(plan.itemIds.count),
                 "action": .string(index == 0 ? "use" : "merge"), "joined": false,
             ])
             refreshLive()
-            showUndo(index == 0 ? "Using the shared plan." : "Merged with your plan.")
+            showUndo(index == 0 ? "Added the shared plan to your schedule." : "Merged the shared plan into your schedule.")
         }
     }
 
@@ -539,7 +539,7 @@ final class AssistantController {
         nextId += 1
     }
 
-    /// The Undo pill: the previous plan version back.
+    /// The Undo pill: My schedule as it was before the last change (one Undo history).
     func undoLastChange() {
         undoPill = nil
         guard let ctx = context() else { return }
@@ -839,19 +839,19 @@ final class AssistantController {
             guard let kind = PlanVersionKind.of(action.string("kind")) else { return .failed("I don't know that version.") }
             return applyEdit(PlanVersions.make(kind, plan, bundle, appState.likeSet, now: now), ops: ["constraint"], prefix: "\(kind.label): ")
         case .planUndo:
-            let restored = appState.planner.undo()
-            AppLog.info(.planner, "plan.undo", "Plan undo", ["depth": .int(appState.planner.history.plans.count), "ok": .bool(restored != nil)])
+            let restored = appState.undoScheduleChange()
+            AppLog.info(.planner, "plan.undo", "Plan undo", ["depth": .int(appState.planner.history.snapshots.count), "ok": .bool(restored)])
             refreshLive()
-            return restored == nil ? .failed("There's nothing to undo.") : .done(message: "Undid your last plan change.", blocks: [.plan()])
+            return !restored ? .failed("There's nothing to undo.") : .done(message: "Undid your last schedule change.", blocks: [.plan()])
         case .planMake:
             guard let request = action.string("request") else { return .failed("What should the plan be about?") }
             makePlan(request)
             return .done()
         case .checkoff:
-            guard let plan else { return .failed(AssistantRouter.noPlanText) }
+            guard plan != nil else { return .failed(AssistantRouter.noPlanText) }
             guard let id = action.id("item", prefix: "s") else { return .failed("I couldn't find that.") }
             let done = action.bool("done") != false
-            setCheckedOff(plan, id, done, source: "tap")
+            setCheckedOff(id, done, source: "tap")
             let name = bundle.scheduleItem(id)?.name ?? "It"
             return .done(message: done ? "Checked off \(name)." : "\(name) isn't checked off any more.")
         case .followLockScreen:
@@ -924,7 +924,9 @@ final class AssistantController {
     private func applyEdit(_ edit: PlanEdit, ops: [String], prefix: String = "") -> ActionOutcome {
         guard let appState, let bundle = appState.currentBundle else { return .failed("No event.") }
         let started = ContinuousClock.now
-        appState.planner.apply(edit.after)
+        // One list: the edit's result becomes edits to My schedule; what the request removed
+        // (excluded) leaves even when the person added it.
+        appState.applyPlan(edit.after, explicit: edit.after.constraints.excluded)
         AppLog.info(.planner, "plan.edit", "Plan edit applied", [
             "ops": .string(ops.joined(separator: ",")), "source": .string(planSource), "applied": true,
             "removed": .int(edit.diff.removed.count), "added": .int(edit.diff.added.count), "moved": .int(edit.diff.moved.count),
@@ -933,13 +935,14 @@ final class AssistantController {
         refreshLive()
         return .done(message: prefix + AssistantRouter.describe(edit, bundle), blocks: [
             .planDiff(edit.diff),
-            .chips([AssistantChip(label: "Show my plan", action: AssistantAction(name: .plan))]),
+            .chips([AssistantChip(label: "Show my schedule", action: AssistantAction(name: .plan))]),
         ])
     }
 
     // MARK: - Plans
 
-    /// Makes a plan in place (progress in the timeline; the model reads the request when available).
+    /// Plans for a request (the model reads it when available) and previews the result as a
+    /// proposal: Apply adds it to My schedule (one list §3), Cancel / "no" / another turn drops it.
     func makePlan(_ request: String) {
         guard let appState else { return }
         busy = .plan
@@ -952,9 +955,13 @@ final class AssistantController {
                 self.show(nil, [.text(appState.planner.error ?? AppState.nothingFitsMessage)])
                 return
             }
+            let preview = appState.mySchedule.proposal(for: plan, bundle)
+            let before = appState.planner.plan ?? PlanProposals.emptyPlan(eventId: bundle.event.id, createdAt: plan.createdAt)
+            let edit = PlanEdit(before: before, after: plan, diff: PlanDiff.between(before, plan, bundle), notes: [])
             self.answer = nil
-            self.showUndo("Here's your plan: \(Planner.summary(plan, timeZone: bundle.event.timeZone)).")
-            self.remember(bundle.event.id, nil, AssistantTurn(blocks: [.text("Made a plan: \(Planner.summary(plan, timeZone: bundle.event.timeZone)).")]))
+            self.proposal = PlanProposal(kind: .change, text: "\(preview.title). \(Planner.summary(plan, timeZone: bundle.event.timeZone)).",
+                                         options: [ProposalOption(label: "Add to My Schedule", apply: .newPlan(plan), edit: edit)])
+            self.remember(bundle.event.id, nil, AssistantTurn(blocks: [.text("Proposed: \(preview.title.lowercased()) (\(preview.pillText)).")]))
             self.refreshLive()
         }
     }
@@ -1013,7 +1020,7 @@ final class AssistantController {
         }
         if target == "plan" {
             guard let plan = appState.planner.plan, !plan.isEmpty, let url = URL(string: PlanShare.planLink(plan, bundle, host: ServerSwitch.linkHost)) else { return nil }
-            let day = plan.days.first { !$0.items.isEmpty }.map { "My plan for \($0.date.weekdayName)" } ?? "My plan"
+            let day = plan.days.first { !$0.items.isEmpty }.map { "My schedule for \($0.date.weekdayName)" } ?? "My schedule"
             return (url, day, plan.itemIds.count)
         }
         guard let ref = EntityRef.parse(String(target.dropFirst(5))), ref.kind == .schedule,
@@ -1043,21 +1050,18 @@ final class AssistantController {
 
     // MARK: - Live (spec §6)
 
-    private func setCheckedOff(_ plan: Plan, _ itemId: Int, _ done: Bool, source: String, minutesNear: Int? = nil) {
-        guard let appState else { return }
-        var updated = plan
-        if done { updated.checkedOff.insert(itemId) } else { updated.checkedOff.remove(itemId) }
-        guard updated != plan else { return }
-        appState.planner.update(updated)
+    private func setCheckedOff(_ itemId: Int, _ done: Bool, source: String, minutesNear: Int? = nil) {
+        guard let appState, appState.personal.checkedOff.contains(itemId) != done else { return }
+        appState.setCheckedOff(itemId, done)
         var fields: LogFields = ["item_id": .int(itemId), "source": .string(source), "done": .bool(done)]
         if let minutesNear { fields["minutes_near"] = .int(minutesNear) }
         AppLog.info(.live, "live.checkoff", done ? "Checked off" : "Check-off removed", fields)
     }
 
-    /// A check toggle on a plan row (My plan, the assistant's plan block).
+    /// A check toggle on a schedule row (Your Day, the assistant's plan block).
     func toggleCheckOff(_ itemId: Int) {
-        guard let plan = appState?.planner.plan else { return }
-        setCheckedOff(plan, itemId, !plan.checkedOff.contains(itemId), source: "tap")
+        guard let appState else { return }
+        setCheckedOff(itemId, !appState.personal.checkedOff.contains(itemId), source: "tap")
         refreshLive()
     }
 
@@ -1068,10 +1072,9 @@ final class AssistantController {
         let cutoff = at.addingTimeInterval(-Self.sampleWindow)
         samples.removeAll { $0.at < cutoff }
         if samples.count > Self.maxSamples { samples.removeFirst(samples.count - Self.maxSamples) }
-        if let appState, let bundle = appState.currentBundle, var plan = appState.planner.plan, !plan.isEmpty {
+        if let appState, let bundle = appState.currentBundle, let plan = appState.planner.plan, !plan.isEmpty {
             for id in LiveAssist.checkOffs(plan, bundle, samples: samples, now: at).sorted() {
-                setCheckedOff(plan, id, true, source: "auto", minutesNear: Int(LiveAssist.checkoffDwell / 60))
-                plan = appState.planner.plan ?? plan
+                setCheckedOff(id, true, source: "auto", minutesNear: Int(LiveAssist.checkoffDwell / 60))
             }
         }
         refreshLive(at)

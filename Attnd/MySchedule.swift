@@ -13,9 +13,15 @@
 //   - Adding or removing an item or place returns the API-009 metric (`schedule_item_heart` …)
 //     only when membership really changes (never for a time / reminder change, a restore, the
 //     migration or a rejoin: those don't go through `add` / `remove`).
-//   - Migration (`migrate`, once per event): hearted items and the stored plan's items become item
-//     entries, hearted places saved places, planned meal breaks with a suggested food place become
-//     place entries at the break's time. The old keys stay readable.
+//   - Migration (`migrate`, once per event): hearted items become item entries, hearted places
+//     saved places. The stored plan of an older build is absorbed once (`absorb(legacy:)`).
+//   - One list (owner, Nov 22, 2026; Attnd-Web docs/specs/one_list_spec.md): My schedule is the
+//     only stored list. Each entry knows who added it (`source`: you / planner / assistant /
+//     shared) and why (`reason`). The planner is a function: its plan is diffed against My
+//     schedule into a `ScheduleProposal` (adds and removes with reasons; it only removes its own
+//     entries unless asked), previewed, applied, and kept on one `ScheduleHistory` (≤ 20
+//     snapshots, hearts included). The `Plan` the chat and the Live Activity read is derived from
+//     My schedule (`dayPlan`), never stored. `SchedulePreferences` keeps what the planner was told.
 
 import Foundation
 
@@ -33,6 +39,15 @@ enum ScheduleEntryKind: String, Codable, Hashable, Sendable {
     case item, place
 }
 
+/// Who put an entry into My schedule (one list, §1). Unknown or missing → `you`.
+enum ScheduleEntrySource: String, Codable, Hashable, Sendable, CaseIterable {
+    case you, planner, assistant, shared
+
+    static func of(_ value: String?) -> ScheduleEntrySource {
+        value.flatMap { ScheduleEntrySource(rawValue: $0.lowercased()) } ?? .you
+    }
+}
+
 /// One entry of My schedule.
 struct ScheduleEntry: Hashable, Sendable {
     var kind: ScheduleEntryKind
@@ -45,13 +60,24 @@ struct ScheduleEntry: Hashable, Sendable {
     var reminder: Int? = nil
     /// Items: `Planner.fingerprint` when added (or last kept), to notice organizer changes.
     var fingerprint: String? = nil
+    /// Who added it (one list): only `planner` entries may be removed by a new plan unasked.
+    var source: ScheduleEntrySource = .you
+    /// Why ("Because you like jazz", "Lunch break"), ≤ 80 characters.
+    var reason: String? = nil
+
+    static let maxReason = 80
+
+    static func cleanReason(_ text: String?) -> String? {
+        guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
+        return String(text.prefix(maxReason))
+    }
 
     var target: SearchTarget { kind == .item ? .scheduleItem(id) : .location(id) }
     var reminderMinutes: Int { reminder ?? MySchedule.defaultReminder }
 }
 
 extension ScheduleEntry: Codable {
-    private enum CodingKeys: String, CodingKey { case kind, id, at, minutes, reminder, fingerprint }
+    private enum CodingKeys: String, CodingKey { case kind, id, at, minutes, reminder, fingerprint, source, reason }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -64,6 +90,8 @@ extension ScheduleEntry: Codable {
         minutes = c.lenient(Int.self, .minutes).map { min(max($0, 5), 12 * 60) }
         reminder = c.lenient(Int.self, .reminder).flatMap { MySchedule.reminderChoices.contains($0) ? $0 : nil }
         fingerprint = kind == .item ? c.lenient(String.self, .fingerprint) : nil
+        source = ScheduleEntrySource.of(c.lenient(String.self, .source))
+        reason = Self.cleanReason(c.lenient(String.self, .reason))
     }
 
     func encode(to encoder: Encoder) throws {
@@ -74,6 +102,8 @@ extension ScheduleEntry: Codable {
         try c.encodeIfPresent(minutes, forKey: .minutes)
         try c.encodeIfPresent(reminder, forKey: .reminder)
         try c.encodeIfPresent(fingerprint, forKey: .fingerprint)
+        if source != .you { try c.encode(source, forKey: .source) }
+        try c.encodeIfPresent(reason, forKey: .reason)
     }
 }
 
@@ -345,112 +375,190 @@ struct MySchedule: Hashable, Sendable {
 
     // MARK: Migration
 
-    /// My schedule from the likes and the plan of an older build (once per event).
+    /// My schedule from the likes of an older build (once per event); an older build's stored
+    /// plan, when given, is absorbed too (`absorb(legacy:)`).
     static func migrate(heartedItems: Set<Int>, heartedLocations: Set<Int>, plan: Plan?) -> MySchedule {
-        var entries: [ScheduleEntry] = heartedItems.sorted().map { ScheduleEntry(kind: .item, id: $0) }
-        let planned = plan?.items.map(\.itemId) ?? []
-        for id in planned where !heartedItems.contains(id) && !entries.contains(where: { $0.kind == .item && $0.id == id }) {
-            entries.append(ScheduleEntry(kind: .item, id: id))
-        }
-        var places = heartedLocations.sorted().map { ScheduleEntry(kind: .place, id: $0) }
-        for day in plan?.days ?? [] {
-            for meal in day.meals {
-                guard let locationId = meal.locationId else { continue }
-                let minutes = max(5, PlanCalendar.minutes(from: meal.start, to: meal.end))
-                if let index = places.firstIndex(where: { $0.id == locationId }) {
-                    if places[index].at == nil {
-                        places[index].at = meal.start
-                        places[index].minutes = minutes
-                    }
-                } else {
-                    places.append(ScheduleEntry(kind: .place, id: locationId, at: meal.start, minutes: minutes))
-                }
-            }
-        }
-        return MySchedule(entries: entries + places)
+        var schedule = MySchedule(entries: heartedItems.sorted().map { ScheduleEntry(kind: .item, id: $0) }
+            + heartedLocations.sorted().map { ScheduleEntry(kind: .place, id: $0) })
+        if let plan { schedule.absorb(legacy: plan) }
+        return schedule
     }
 
-    // MARK: Plans (the planner fills My schedule)
-
-    /// What applying a plan does to My schedule: its items are added; items of the previous plan
-    /// that the new one dropped (on the new plan's days) are removed; meal breaks with a
-    /// suggested food place become place entries at the break's time. Returns the changes.
-    mutating func apply(plan: Plan?, replacing previous: Plan?) -> [MyScheduleChange] {
-        var changes: [MyScheduleChange] = []
-        let newIds = Set(plan?.itemIds ?? [])
-        let newDays = Set(plan?.days.map(\.date) ?? [])
-        // Clearing the plan ("New plan") keeps My schedule as it is.
-        for day in previous?.days ?? [] where plan != nil && newDays.contains(day.date) {
-            for item in day.items where !newIds.contains(item.itemId) {
-                if let change = remove(.scheduleItem(item.itemId)) { changes.append(change) }
-            }
-            for meal in day.meals {
-                guard let locationId = meal.locationId, entry(.place, locationId)?.at == meal.start else { continue }
-                let stays = plan?.days.flatMap(\.meals).contains { $0.locationId == locationId && $0.start == meal.start } ?? false
-                if !stays, let change = remove(.location(locationId)) { changes.append(change) }
-            }
+    /// One list §6: the stored plan of an older build becomes entries: every planned item not in
+    /// My schedule (`source: planner`, the plan's reason), each meal break with a food place not
+    /// in it (a timed place, "Lunch break" / "Dinner break"); a saved place without a time gets
+    /// the break's time. Idempotent: a second run finds nothing. True when something changed.
+    @discardableResult
+    mutating func absorb(legacy plan: Plan) -> Bool {
+        var changed = false
+        for item in plan.items where entry(.item, item.itemId) == nil && entries.count < Self.maxEntries {
+            entries.append(ScheduleEntry(kind: .item, id: item.itemId, source: .planner, reason: ScheduleEntry.cleanReason(item.reason)))
+            changed = true
         }
-        for id in plan?.itemIds ?? [] {
-            if let change = add(.scheduleItem(id)) { changes.append(change) }
-        }
-        for meal in plan?.days.flatMap(\.meals) ?? [] {
+        for meal in plan.days.flatMap(\.meals) {
             guard let locationId = meal.locationId else { continue }
             let minutes = max(5, PlanCalendar.minutes(from: meal.start, to: meal.end))
-            if entry(.place, locationId)?.at == nil || previous?.days.flatMap(\.meals).contains(where: { $0.locationId == locationId }) == true {
-                if let change = add(.location(locationId), at: meal.start, minutes: minutes) { changes.append(change) }
+            if let index = entries.firstIndex(where: { $0.kind == .place && $0.id == locationId }) {
+                guard entries[index].at == nil else { continue }
+                entries[index].at = meal.start
+                entries[index].minutes = minutes
+                changed = true
+            } else if entries.count < Self.maxEntries {
+                entries.append(ScheduleEntry(kind: .place, id: locationId, at: meal.start, minutes: minutes,
+                                             source: .planner, reason: meal.kind.label))
+                changed = true
+            }
+        }
+        return changed
+    }
+
+    static let inScheduleReason = "In your schedule"
+
+    /// The planner's input (one list §2): a timed food place in My schedule during lunch
+    /// (11:30–13:30) or dinner (17:30–19:30) of that day covers that meal break.
+    func mealsCovered(_ bundle: EventBundle) -> Set<MealSlot> {
+        let calendar = PlanCalendar.calendar(bundle.event.timeZone)
+        var slots = Set<MealSlot>()
+        for entry in entries where entry.kind == .place {
+            guard let at = entry.at, let location = bundle.location(entry.id), Self.isFood(location) else { continue }
+            let day = PlanDate(at, in: calendar)
+            if let kind = Self.mealKind(at, calendar) { slots.insert(MealSlot(date: day, kind: kind)) }
+        }
+        return slots
+    }
+
+    static func isFood(_ location: Location) -> Bool {
+        ([location.category ?? ""] + location.tags).contains { $0.lowercased().contains("food") }
+    }
+
+    /// The meal a time belongs to: lunch 11:30–13:30, dinner 17:30–19:30, else none.
+    static func mealKind(_ at: Date, _ calendar: Calendar) -> MealKind? {
+        let minute = calendar.component(.hour, from: at) * 60 + calendar.component(.minute, from: at)
+        if (11 * 60 + 30)...(13 * 60 + 30) ~= minute { return .lunch }
+        if (17 * 60 + 30)...(19 * 60 + 30) ~= minute { return .dinner }
+        return nil
+    }
+
+    // MARK: One list: proposals (the planner proposes edits to My schedule)
+
+    /// One list §2: a plan (the planner's result, an edit's re-solve, a version, a shared plan)
+    /// as edits to My schedule. Adds: its items not in My schedule (with the planner's reason) and
+    /// its meal breaks with a place not there at that time. Removes: on the plan's days, entries the
+    /// planner added that the plan no longer has, and anything in `explicit` (the request asked:
+    /// "drop the BBQ"); never what the person added unasked. nil plan: nothing.
+    func proposal(for plan: Plan?, explicit: Set<Int> = [], _ bundle: EventBundle) -> ScheduleProposal {
+        guard let plan else { return ScheduleProposal() }
+        let calendar = PlanCalendar.calendar(bundle.event.timeZone)
+        let days = Set(plan.days.map(\.date))
+        let planned = Set(plan.itemIds)
+        var proposal = ScheduleProposal()
+        for item in plan.items where entry(.item, item.itemId) == nil {
+            proposal.adds.append(.init(target: .scheduleItem(item.itemId), reason: ScheduleEntry.cleanReason(item.reason)))
+        }
+        let meals = plan.days.flatMap(\.meals)
+        for meal in meals {
+            guard let locationId = meal.locationId, entry(.place, locationId)?.at != meal.start,
+                  !proposal.adds.contains(where: { $0.target == .location(locationId) }) else { continue }
+            proposal.adds.append(.init(target: .location(locationId), at: meal.start,
+                                       minutes: max(5, PlanCalendar.minutes(from: meal.start, to: meal.end)), reason: meal.kind.label, meal: meal.kind))
+        }
+        for entry in entries {
+            switch entry.kind {
+            case .item:
+                guard !planned.contains(entry.id) else { continue }
+                if explicit.contains(entry.id) {
+                    proposal.removes.append(.init(target: .scheduleItem(entry.id)))
+                } else if entry.source == .planner, let start = bundle.scheduleItem(entry.id)?.startTime,
+                          days.contains(PlanDate(start, in: calendar)) {
+                    proposal.removes.append(.init(target: .scheduleItem(entry.id)))
+                }
+            case .place:
+                guard entry.source == .planner, let at = entry.at, days.contains(PlanDate(at, in: calendar)),
+                      !meals.contains(where: { $0.locationId == entry.id }) else { continue }
+                proposal.removes.append(.init(target: .location(entry.id), meal: Self.mealKind(at, calendar)))
+            }
+        }
+        proposal.summary = Planner.summary(plan, timeZone: bundle.event.timeZone)
+        return proposal
+    }
+
+    /// Applies a proposal: adds get `source` and the proposal's reason (an entry already there
+    /// keeps who added it; a place gets the new time), removes leave. The API-009 changes.
+    mutating func apply(_ proposal: ScheduleProposal, source: ScheduleEntrySource = .planner) -> [MyScheduleChange] {
+        var changes: [MyScheduleChange] = []
+        for remove in proposal.removes {
+            if let change = self.remove(remove.target) { changes.append(change) }
+        }
+        for add in proposal.adds {
+            let existed = contains(add.target)
+            guard let change = self.add(add.target, at: add.at, minutes: add.minutes) else { continue }
+            changes.append(change)
+            if !existed, let (kind, id) = Self.key(add.target), let index = entries.firstIndex(where: { $0.kind == kind && $0.id == id }) {
+                entries[index].source = source
+                entries[index].reason = add.reason
             }
         }
         return changes
     }
 
-    /// The plan kept in line with My schedule after a change made elsewhere: items no longer in
-    /// My schedule leave it, items added on one of its days join it ("In your schedule"), meal
-    /// breaks whose place entry was removed lose the place. nil stays nil.
-    func reconcile(_ plan: Plan?, _ bundle: EventBundle) -> Plan? {
-        guard var plan else { return nil }
+    // MARK: One list: the derived day view (never stored)
+
+    /// The `Plan` the chat (Your Day, proposals' previews, plan edits), the Live Activity, live
+    /// hints, WhyNot and sharing read: My schedule's items per event day, laid out by the planner's
+    /// rules (`Planner.dayView`: walks, swap alternatives), its timed food places at meal times as
+    /// meal breaks, the entries' own reasons. nil without a timed item.
+    func dayPlan(_ bundle: EventBundle, preferences: SchedulePreferences = SchedulePreferences(),
+                 checkedOff: Set<Int> = [], now: Date) -> Plan? {
         let calendar = PlanCalendar.calendar(bundle.event.timeZone)
-        let items = itemIds
-        let planned = Set(plan.itemIds)
-        plan.days = plan.days.map { day in
-            var day = day
-            var entries: [PlanEntry] = day.entries.compactMap { entry in
-                switch entry {
-                case .item(let item):
-                    return items.contains(item.itemId) ? entry : nil
-                case .meal(var meal):
-                    if let id = meal.locationId, self.entry(.place, id) == nil { meal.locationId = nil }
-                    return .meal(meal)
-                }
-            }
-            for id in items.subtracting(planned).sorted() {
-                guard let item = bundle.scheduleItem(id), let start = item.startTime, PlanDate(start, in: calendar) == day.date else { continue }
-                let end = ScheduleTiming.effectiveEnd(of: item) ?? start.addingTimeInterval(3600)
-                entries.append(.item(PlannedItem(itemId: id, start: start, end: end, reason: Self.inScheduleReason,
-                                                 walkMinutes: nil, alternatives: [], orInstead: [])))
-            }
-            day.entries = entries.stableSorted { $0.start < $1.start }
-            return day
+        var itemsByDay: [PlanDate: [Int]] = [:]
+        var spans: [PlanDate: (start: Date, end: Date)] = [:]
+        func widen(_ day: PlanDate, _ start: Date, _ end: Date) {
+            let old = spans[day]
+            spans[day] = (min(old?.start ?? start, start), max(old?.end ?? end, end))
         }
-        return plan
-    }
-
-    static let inScheduleReason = "In your schedule"
-
-    /// Meal breaks the planner shouldn't add: a timed food place in My schedule during lunch
-    /// (12:00–13:30) or dinner (18:00–19:30) of that day covers it.
-    func mealsCovered(_ bundle: EventBundle) -> Set<MealSlot> {
-        let calendar = PlanCalendar.calendar(bundle.event.timeZone)
-        var slots = Set<MealSlot>()
+        for entry in entries where entry.kind == .item {
+            guard let item = bundle.scheduleItem(entry.id), let start = item.startTime else { continue }
+            let day = PlanDate(start, in: calendar)
+            itemsByDay[day, default: []].append(entry.id)
+            widen(day, start, ScheduleTiming.effectiveEnd(of: item) ?? start.addingTimeInterval(3600))
+        }
+        guard !itemsByDay.isEmpty else { return nil }
+        var mealsByDay: [PlanDate: [MealBreak]] = [:]
         for entry in entries where entry.kind == .place {
-            guard let at = entry.at, let location = bundle.location(entry.id) else { continue }
-            let food = ([location.category ?? ""] + location.tags).contains { $0.lowercased().contains("food") }
-            guard food else { continue }
+            guard let at = entry.at, let location = bundle.location(entry.id), Self.isFood(location),
+                  let kind = Self.mealKind(at, calendar) else { continue }
             let day = PlanDate(at, in: calendar)
-            let minute = calendar.component(.hour, from: at) * 60 + calendar.component(.minute, from: at)
-            if (11 * 60 + 30)...(13 * 60 + 30) ~= minute { slots.insert(MealSlot(date: day, kind: .lunch)) }
-            if (17 * 60 + 30)...(19 * 60 + 30) ~= minute { slots.insert(MealSlot(date: day, kind: .dinner)) }
+            guard itemsByDay[day] != nil, mealsByDay[day]?.contains(where: { $0.kind == kind }) != true else { continue }
+            let end = at.addingTimeInterval(TimeInterval((entry.minutes ?? Self.defaultMinutes) * 60))
+            mealsByDay[day, default: []].append(MealBreak(kind: kind, start: at, end: end, locationId: entry.id))
+            widen(day, at, end)
         }
-        return slots
+        var planning = preferences.planPreferences
+        planning.includeMeals = false
+        let planner = Planner(bundle: bundle, preferences: planning, heartedItems: itemIds, heartedLocations: placeIds,
+                              constraints: preferences.constraints)
+        let reasons = Dictionary(entries.filter { $0.kind == .item }.compactMap { e in e.reason.map { (e.id, $0) } },
+                                 uniquingKeysWith: { first, _ in first })
+        let days: [PlanDay] = itemsByDay.keys.sorted().map { day in
+            let span = spans[day]!
+            let windowStart = preferences.earliest.map { min(day.at($0, in: calendar), span.start) } ?? span.start
+            let windowEnd = preferences.latest.map { max(day.at($0, in: calendar), span.end) } ?? span.end
+            var built = planner.dayView(day, items: itemsByDay[day]!, meals: mealsByDay[day] ?? [],
+                                        windowStart: windowStart, windowEnd: windowEnd)
+            built.entries = built.entries.map { entry in
+                guard case .item(var item) = entry, let reason = reasons[item.itemId] else { return entry }
+                item.reason = reason
+                return .item(item)
+            }
+            return built
+        }
+        var prints: [Int: String] = [:]
+        for day in days {
+            for item in day.items { if let current = bundle.scheduleItem(item.itemId) { prints[item.itemId] = Planner.fingerprint(current) } }
+        }
+        return Plan(eventId: bundle.event.id, createdAt: Date(timeIntervalSince1970: 0), request: "",
+                    preferences: preferences.planPreferences, days: days, fingerprints: prints,
+                    constraints: preferences.constraints, checkedOff: checkedOff.intersection(Set(itemsByDay.values.flatMap { $0 })))
     }
 }
 
@@ -472,5 +580,199 @@ extension MySchedule: Codable {
     private struct LossyEntry: Decodable {
         var entry: ScheduleEntry?
         init(from decoder: Decoder) throws { entry = try? ScheduleEntry(from: decoder) }
+    }
+}
+
+// MARK: - One list (owner, Nov 22, 2026; Attnd-Web docs/specs/one_list_spec.md)
+
+/// Edits to My schedule the planner (or an edit, version, swap, sequence, shared plan) proposes:
+/// previewed, then applied as one entry on `ScheduleHistory`.
+struct ScheduleProposal: Hashable, Sendable {
+    struct Add: Hashable, Sendable {
+        var target: SearchTarget
+        /// Places only: the time (a meal break); nil keeps / saves without one.
+        var at: Date? = nil
+        var minutes: Int? = nil
+        var reason: String? = nil
+        /// The meal break a place add covers (for the pill).
+        var meal: MealKind? = nil
+    }
+
+    struct Remove: Hashable, Sendable {
+        var target: SearchTarget
+        var meal: MealKind? = nil
+    }
+
+    var adds: [Add] = []
+    var removes: [Remove] = []
+    /// `Planner.summary` of the plan it came from ("8 items, 10:00 AM – 11:00 PM, with a lunch break").
+    var summary: String = ""
+
+    var isEmpty: Bool { adds.isEmpty && removes.isEmpty }
+
+    /// "+5 items, +1 lunch break, −2 items" (U+2212 minus); "No change" when empty.
+    var pillText: String {
+        func count(_ n: Int, _ one: String, _ many: String) -> String { "\(n) \(n == 1 ? one : many)" }
+        var parts: [String] = []
+        let addedItems = adds.filter { $0.meal == nil }.count
+        if addedItems > 0 { parts.append("+" + count(addedItems, "item", "items")) }
+        for kind in MealKind.allCases {
+            let n = adds.filter { $0.meal == kind }.count
+            if n > 0 { parts.append("+" + count(n, kind.label.lowercased(), kind.label.lowercased() + "s")) }
+        }
+        let removedItems = removes.filter { $0.meal == nil }.count
+        if removedItems > 0 { parts.append("\u{2212}" + count(removedItems, "item", "items")) }
+        for kind in MealKind.allCases {
+            let n = removes.filter { $0.meal == kind }.count
+            if n > 0 { parts.append("\u{2212}" + count(n, kind.label.lowercased(), kind.label.lowercased() + "s")) }
+        }
+        return parts.isEmpty ? "No change" : parts.joined(separator: ", ")
+    }
+
+    /// The proposal card's sentence: "Add 6 things to your schedule" (one list §7).
+    var title: String {
+        let things = adds.count
+        if removes.isEmpty { return things == 1 ? "Add 1 thing to your schedule" : "Add \(things) things to your schedule" }
+        if adds.isEmpty { return removes.count == 1 ? "Remove 1 thing from your schedule" : "Remove \(removes.count) things from your schedule" }
+        return "Change your schedule: \(pillText)"
+    }
+}
+
+/// One Undo history over My schedule (one list §3): ≤ 20 snapshots, newest last. Plans, edits,
+/// versions, swaps, shared plans and hearts all push one; "undo", the Undo card and the toast pop.
+struct ScheduleHistory: Hashable, Sendable {
+    static let max = 20
+
+    var snapshots: [MySchedule] = []
+
+    var canUndo: Bool { !snapshots.isEmpty }
+
+    func push(_ previous: MySchedule) -> ScheduleHistory {
+        ScheduleHistory(snapshots: Array((snapshots + [previous]).suffix(Self.max)))
+    }
+
+    func pop() -> (schedule: MySchedule, rest: ScheduleHistory)? {
+        guard let last = snapshots.last else { return nil }
+        return (last, ScheduleHistory(snapshots: Array(snapshots.dropLast())))
+    }
+
+    func encode() -> String? {
+        guard let data = try? JSONEncoder().encode(snapshots) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// Lenient: unreadable text is an empty history.
+    static func decode(_ text: String?) -> ScheduleHistory {
+        guard let data = text?.data(using: .utf8), let list = try? JSONDecoder().decode([MySchedule].self, from: data) else {
+            return ScheduleHistory()
+        }
+        return ScheduleHistory(snapshots: Array(list.suffix(max)))
+    }
+}
+
+/// What the planner was told for this event (one list §1), kept with the personal state.
+struct SchedulePreferences: Hashable, Sendable {
+    var pace: PlanPace = .balanced
+    var kidFriendly = false
+    var maxWalkMinutes: Int? = nil
+    var likedTags: Set<String> = []
+    var dislikedTags: Set<String> = []
+    /// Meal breaks wanted (lunch / dinner).
+    var meals: Set<MealKind> = []
+    var earliest: PlanClock? = nil
+    var latest: PlanClock? = nil
+
+    init() {}
+
+    init(pace: PlanPace = .balanced, kidFriendly: Bool = false, maxWalkMinutes: Int? = nil, likedTags: Set<String> = [],
+         dislikedTags: Set<String> = [], meals: Set<MealKind> = [], earliest: PlanClock? = nil, latest: PlanClock? = nil) {
+        self.pace = pace
+        self.kidFriendly = kidFriendly
+        self.maxWalkMinutes = maxWalkMinutes
+        self.likedTags = likedTags
+        self.dislikedTags = dislikedTags
+        self.meals = meals
+        self.earliest = earliest
+        self.latest = latest
+    }
+
+    /// From a request's preferences and an edit's constraints (a new plan, a migrated one).
+    init(_ preferences: PlanPreferences, constraints: PlanConstraints = .none) {
+        pace = constraints.pace ?? preferences.pace
+        kidFriendly = preferences.kidFriendly
+        maxWalkMinutes = constraints.maxWalkMinutes
+        likedTags = preferences.likedTags
+        dislikedTags = preferences.dislikedTags
+        meals = preferences.includeMeals ? Set(MealKind.allCases) : []
+        earliest = preferences.earliest
+        latest = preferences.latest
+    }
+
+    var planPreferences: PlanPreferences {
+        var p = PlanPreferences()
+        p.likedTags = likedTags
+        p.dislikedTags = dislikedTags
+        p.earliest = earliest
+        p.latest = latest
+        p.pace = pace
+        p.includeMeals = !meals.isEmpty
+        p.kidFriendly = kidFriendly
+        return p
+    }
+
+    var constraints: PlanConstraints {
+        var c = PlanConstraints()
+        c.maxWalkMinutes = maxWalkMinutes
+        return c
+    }
+}
+
+extension SchedulePreferences: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case pace, kidFriendly = "kid_friendly", maxWalkMinutes = "max_walk_minutes", likedTags = "liked_tags"
+        case dislikedTags = "disliked_tags", meals, earliest, latest
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        pace = PlanPace.of(c.lenient(String.self, .pace))
+        kidFriendly = c.lenient(Bool.self, .kidFriendly) ?? false
+        maxWalkMinutes = c.lenient(Int.self, .maxWalkMinutes).flatMap { $0 > 0 ? $0 : nil }
+        likedTags = Set((c.lenient([String].self, .likedTags) ?? []).map { $0.lowercased() })
+        dislikedTags = Set((c.lenient([String].self, .dislikedTags) ?? []).map { $0.lowercased() })
+        meals = Set((c.lenient([String].self, .meals) ?? []).compactMap { MealKind(rawValue: $0) })
+        earliest = c.lenient(String.self, .earliest).flatMap(PlanClock.parse)
+        latest = c.lenient(String.self, .latest).flatMap(PlanClock.parse)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(pace.rawValue, forKey: .pace)
+        if kidFriendly { try c.encode(true, forKey: .kidFriendly) }
+        try c.encodeIfPresent(maxWalkMinutes, forKey: .maxWalkMinutes)
+        if !likedTags.isEmpty { try c.encode(likedTags.sorted(), forKey: .likedTags) }
+        if !dislikedTags.isEmpty { try c.encode(dislikedTags.sorted(), forKey: .dislikedTags) }
+        if !meals.isEmpty { try c.encode(meals.map(\.rawValue).sorted(), forKey: .meals) }
+        try c.encodeIfPresent(earliest?.description, forKey: .earliest)
+        try c.encodeIfPresent(latest?.description, forKey: .latest)
+    }
+}
+
+extension Planner {
+    /// One list §2: the planner as a function. Plans from `now` with `request` (else the stored
+    /// preferences), My schedule's items as the must-includes (rule 7) and its timed food places
+    /// covering their meal breaks, then diffs the result against My schedule. Rules 1–20 and the
+    /// fixture's numbers are unchanged; only the output is a proposal. `plan` is the planner's
+    /// result (its reasons, walks and alternatives, for the preview).
+    static func propose(_ schedule: MySchedule, preferences: SchedulePreferences, request: PlanPreferences? = nil,
+                        text: String = "", constraints: PlanConstraints = .none, bundle: EventBundle,
+                        now: Date) -> (plan: Plan, proposal: ScheduleProposal) {
+        var constraints = constraints
+        constraints.mealsDone.formUnion(schedule.mealsCovered(bundle))
+        if constraints.maxWalkMinutes == nil { constraints.maxWalkMinutes = preferences.maxWalkMinutes }
+        let planner = Planner(bundle: bundle, preferences: request ?? preferences.planPreferences,
+                              heartedItems: schedule.itemIds, heartedLocations: schedule.placeIds, constraints: constraints)
+        let plan = planner.plan(from: now, request: text, createdAt: Date(timeIntervalSince1970: now.timeIntervalSince1970.rounded(.down)))
+        return (plan, schedule.proposal(for: plan, bundle))
     }
 }

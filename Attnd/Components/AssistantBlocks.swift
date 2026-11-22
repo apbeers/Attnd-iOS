@@ -375,7 +375,7 @@ enum PlanDiffStatus: Hashable, Sendable {
 /// preview) or Undo (applied).
 struct PlanDiffView: View {
     let rows: [PlanDiffRow]
-    var title: String = "Changes to Your Plan"
+    var title: String = "Changes to Your Schedule"
     var summary: String? = nil
     var status: PlanDiffStatus = .preview
     var onApply: (() -> Void)? = nil
@@ -390,7 +390,7 @@ struct PlanDiffView: View {
                 Text(summary).font(.subheadline).foregroundStyle(.secondary)
             }
             if rows.isEmpty {
-                Text("No changes to your plan.")
+                Text("No changes to your schedule.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }

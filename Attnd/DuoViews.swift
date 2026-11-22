@@ -567,7 +567,7 @@ struct PlanningBoard: View {
                                     Button {
                                         appState.assistant.addToPlan(item.id)
                                     } label: {
-                                        Label("Add to My Plan", systemImage: "plus.circle.fill")
+                                        Label("Add to My Schedule", systemImage: "plus.circle.fill")
                                             .labelStyle(.iconOnly)
                                             .font(.title3)
                                     }

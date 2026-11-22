@@ -213,7 +213,7 @@ struct OnboardingView: View {
     @ViewBuilder
     private var planCard: some View {
         CardLayout(systemImage: "wand.and.stars", title: "Plan your day") {
-            Text("Say what you'd like in your own words. Apple Intelligence builds a plan on your iPhone from the event's schedule, what's in your schedule and walking times.")
+            Text("Say what you'd like in your own words. Apple Intelligence suggests what to add to your schedule, on your iPhone, from the event's schedule, what you already picked and walking times.")
                 .foregroundStyle(.secondary)
             ForEach(examples) { example in
                 Button {

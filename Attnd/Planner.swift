@@ -737,6 +737,25 @@ final class Planner {
         return updated
     }
 
+    /// One list (Nov 22, 2026): the day view of items chosen elsewhere (My schedule), laid out by
+    /// the same rules as a planned day (walks between them, swap alternatives from the day's
+    /// candidates in `windowStart…windowEnd`) with `meals` kept verbatim. No meal breaks are
+    /// added. The derived, never stored, `Plan` the chat, Live Activity and hints read.
+    func dayView(_ day: PlanDate, items: [Int], meals: [MealBreak], windowStart: Date, windowEnd: Date) -> PlanDay {
+        let chosen = items.compactMap { itemsById[$0] }.filter { $0.startTime != nil }.sorted(by: Self.itemOrder)
+        let pool = candidates(day, windowStart: windowStart, windowEnd: windowEnd)
+        var built = buildDay(day, windowStart: windowStart, windowEnd: windowEnd, chosen: chosen, orInstead: [:],
+                             candidates: pool, frozenMeals: meals)
+        // `buildDay` adds meal breaks only when asked (`includeMeals`); the view never invents one.
+        if preferences.includeMeals {
+            built.entries = built.entries.filter { entry in
+                guard case .meal(let meal) = entry else { return true }
+                return meals.contains(meal)
+            }
+        }
+        return built
+    }
+
     /// The integer milli-point score of `item` (rule 5).
     func score(_ item: ScheduleItem) -> Int {
         if let cached = scores[item.id] { return cached }

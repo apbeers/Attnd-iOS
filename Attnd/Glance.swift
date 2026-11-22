@@ -572,12 +572,16 @@ struct EventPersonalState: Codable, Hashable, Sendable {
     /// My schedule (iOS, Nov 21, 2026): nil until the event's likes and plan were migrated
     /// (`AppState.loadPersonalState`). The hearted sets above mirror its entries.
     var mySchedule: MySchedule? = nil
+    /// One list (Nov 22, 2026): what the planner was told for this event (pace, meals, tags…).
+    var plannerPreferences: SchedulePreferences? = nil
+    /// Items of My schedule checked off (tap or auto check-off).
+    var checkedOff: Set<Int> = []
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
         case heartedLocations, heartedScheduleItems, updatesSeenAt, dismissedUpdateBannerId
-        case dismissedUrgentIds, followOnLockScreen, skippedItems, mySchedule
+        case dismissedUrgentIds, followOnLockScreen, skippedItems, mySchedule, plannerPreferences, checkedOff
     }
 
     init(from decoder: Decoder) throws {
@@ -590,7 +594,12 @@ struct EventPersonalState: Codable, Hashable, Sendable {
         followOnLockScreen = c.lenient(Bool.self, .followOnLockScreen)
         skippedItems = c.lenient(Set<Int>.self, .skippedItems) ?? []
         mySchedule = c.lenient(MySchedule.self, .mySchedule)
+        plannerPreferences = c.lenient(SchedulePreferences.self, .plannerPreferences)
+        checkedOff = c.lenient(Set<Int>.self, .checkedOff) ?? []
     }
+
+    /// The planner's preferences (defaults until a plan was made).
+    var preferences: SchedulePreferences { plannerPreferences ?? SchedulePreferences() }
 
     /// My schedule (empty before the migration).
     var schedule: MySchedule { mySchedule ?? MySchedule() }
@@ -611,6 +620,22 @@ struct EventPersonalState: Codable, Hashable, Sendable {
         let migrated = MySchedule.migrate(heartedItems: heartedScheduleItems, heartedLocations: heartedLocations, plan: plan)
         updateSchedule { $0 = migrated }
         return true
+    }
+
+    /// One list §6: an older build's stored plan → My schedule (`source: planner`), the planner's
+    /// preferences and the check-offs. Idempotent; true when something changed.
+    mutating func absorbLegacy(plan: Plan) -> Bool {
+        var changed = updateSchedule { $0.absorb(legacy: plan) }
+        if plannerPreferences == nil {
+            plannerPreferences = SchedulePreferences(plan.preferences, constraints: plan.constraints)
+            changed = true
+        }
+        let checks = plan.checkedOff.subtracting(checkedOff)
+        if !checks.isEmpty {
+            checkedOff.formUnion(checks)
+            changed = true
+        }
+        return changed
     }
 
     /// Whether the Live Activity follows this event: the user's choice, else on (batch 7: it

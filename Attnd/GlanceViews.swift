@@ -914,3 +914,53 @@ struct HeartedListView: View {
         .usesUserLocation(heading: true)
     }
 }
+
+// MARK: - User dot with a heading cone (batch 7)
+
+/// The user's dot on every map (the Map tab, mini maps, the place walk map) with a soft cone
+/// in the direction the phone faces whenever a compass heading is available, like Apple Maps.
+/// `mapHeading` is the camera's heading (the cone is drawn in screen space).
+struct HeadingUserDot: View {
+    let heading: CLHeading?
+    var mapHeading: Double = 0
+
+    private var degrees: Double? {
+        guard let heading, heading.headingAccuracy >= 0 else { return nil }
+        let value = heading.trueHeading >= 0 ? heading.trueHeading : heading.magneticHeading
+        return value - mapHeading
+    }
+
+    var body: some View {
+        ZStack {
+            if let degrees {
+                HeadingCone()
+                    .fill(RadialGradient(colors: [Color.accentColor.opacity(0.45), Color.accentColor.opacity(0)],
+                                         center: .center, startRadius: 4, endRadius: 34))
+                    .frame(width: 68, height: 68)
+                    .rotationEffect(.degrees(degrees))
+                    .animation(.easeOut(duration: 0.2), value: degrees)
+            }
+            Circle()
+                .fill(.white)
+                .frame(width: 20, height: 20)
+                .shadow(color: .black.opacity(0.25), radius: 2)
+            Circle()
+                .fill(Color.accentColor)
+                .frame(width: 14, height: 14)
+        }
+        .accessibilityLabel("Your location")
+    }
+}
+
+/// A 70° wedge pointing up from the centre.
+private struct HeadingCone: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        path.move(to: center)
+        path.addArc(center: center, radius: rect.width / 2,
+                    startAngle: .degrees(-90 - 35), endAngle: .degrees(-90 + 35), clockwise: false)
+        path.closeSubpath()
+        return path
+    }
+}

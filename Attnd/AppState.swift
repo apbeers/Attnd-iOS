@@ -1552,9 +1552,9 @@ final class AppState {
 
     // MARK: - Follow on Lock Screen (Live Activity), reminders, onboarding
 
-    /// "Follow on Lock Screen" for this event (default: on once something is hearted or planned).
+    /// "Follow on Lock Screen" for this event (default on: batch 7 starts the activity on join).
     var followsOnLockScreen: Bool {
-        return personal.followOnLockScreen ?? (personal.hasHearts || planner.hasPlan)
+        return personal.followOnLockScreen ?? true
     }
 
     func setFollowOnLockScreen(_ on: Bool) {

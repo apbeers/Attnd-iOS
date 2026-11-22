@@ -145,6 +145,8 @@ struct EventActivityAttributes: ActivityAttributes {
         var buttons: [String]?
         /// API-027 `live_activity.stale_text`, nil = "Open Attnd to update".
         var staleText: String?
+        /// Batch 7: the activity starts on join; while nothing is in My schedule it says how to fill it.
+        var hint: String?
 
         func showsButton(_ name: String) -> Bool { buttons?.contains(name) ?? true }
 
@@ -216,6 +218,7 @@ struct EventActivityAttributes: ActivityAttributes {
             case nextDirectionLabel = "next_direction_label"
             case buttons
             case staleText = "stale_text"
+            case hint
         }
 
         /// Lenient: a missing, null or mistyped field is nil, never a decoding failure.
@@ -241,6 +244,7 @@ struct EventActivityAttributes: ActivityAttributes {
             nextDirectionLabel = try? c.decodeIfPresent(String.self, forKey: .nextDirectionLabel)
             buttons = try? c.decodeIfPresent([String].self, forKey: .buttons)
             staleText = try? c.decodeIfPresent(String.self, forKey: .staleText)
+            hint = try? c.decodeIfPresent(String.self, forKey: .hint)
         }
 
         /// Now isn't from My schedule: label it "At the event".

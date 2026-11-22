@@ -540,6 +540,7 @@ private struct MyScheduleSection: View {
     let open: (ScheduleItem) -> Void
 
     @Environment(AppState.self) private var appState
+    @State private var showsShare = false
 
     var body: some View {
         if let bundle = appState.currentBundle {
@@ -556,7 +557,41 @@ private struct MyScheduleSection: View {
                             .opacity(row.ended ? 0.5 : 1)
                     }
                 } header: {
-                    Text(MyScheduleText.title)
+                    HStack {
+                        Text(MyScheduleText.title)
+                        Spacer()
+                        // Batch 7: share My schedule as a /p/ link with its QR code.
+                        if !appState.personal.heartedScheduleItems.isEmpty {
+                            Button {
+                                showsShare = true
+                            } label: {
+                                Label("Share", systemImage: "qrcode")
+                                    .labelStyle(.titleAndIcon)
+                                    .font(.caption.weight(.semibold))
+                            }
+                            .textCase(nil)
+                        }
+                    }
+                }
+                .sheet(isPresented: $showsShare) {
+                    NavigationStack {
+                        ScrollView {
+                            if let link = appState.assistant.shareLink("schedule") {
+                                ShareCard(title: link.title, url: link.url,
+                                          subtitle: "\(link.items) items, read-only. Friends can use it or merge it with theirs.")
+                                    .padding()
+                                    .task(id: link.url) { appState.assistant.logShare("schedule", url: link.url, items: link.items) }
+                            }
+                        }
+                        .navigationTitle("Share My Schedule")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Close", systemImage: "xmark", role: .close) { showsShare = false }
+                            }
+                        }
+                    }
+                    .presentationDetents([.medium, .large])
                 }
             }
             // Places saved without a time (a time only when asked for: the heart's menu).

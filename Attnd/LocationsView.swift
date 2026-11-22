@@ -990,7 +990,7 @@ private struct PlaceWalkMapCard: View {
                     }
                 }
                 Marker(location.name, coordinate: destination.clCoordinate)
-                UserAnnotation()
+                UserAnnotation { user in HeadingUserDot(heading: user.heading) }
             }
             .mapStyle(.standard(pointsOfInterest: .excludingAll))
             .frame(height: 190)

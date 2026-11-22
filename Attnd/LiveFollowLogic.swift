@@ -169,6 +169,9 @@ enum LiveActivityPlanner {
         return .schedule(day.startAt)
     }
 
+    /// The header line while nothing is in My schedule (the activity starts on join).
+    static let emptyHint = "Tap ♥ on anything and it shows here"
+
     /// The user's last position is used for walk, direction and distance only this long.
     static let maxPositionAge: TimeInterval = 30 * 60
 

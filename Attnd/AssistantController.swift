@@ -884,6 +884,18 @@ final class AssistantController {
         case .open:
             appState.openAssistantScreen(action.string("screen") ?? "", EntityRef.of(action.params["id"]))
             return .done()
+        case .location:
+            let on = action.bool("on") != false
+            appState.showUserLocation = on
+            return .done(message: on ? "Your location shows on the map." : "Your location is hidden on the map.")
+        case .leave:
+            Task { await appState.leaveEvent() }
+            return .done(message: "Left the event.")
+        case .switchServer:
+            guard ServerSwitch.isSwitchable else { return .failed("Only test builds can switch servers.") }
+            let choice: ServerSwitch.Choice = action.string("server") == "dev" ? .dev : .production
+            Task { await appState.switchServer(to: choice) }
+            return .done(message: "Switched to the \(choice == .dev ? "dev" : "production") server. Open Attnd again to use it.")
         case .directions:
             guard let location = action.id("location", prefix: "l").flatMap({ appState.location(id: $0) }), location.coordinate != nil else {
                 return .failed("That place has no map position.")
@@ -989,6 +1001,15 @@ final class AssistantController {
     /// The link of a `share` block ("plan" or "item:s12"), logged as `share.created` once shown.
     func shareLink(_ target: String) -> (url: URL, title: String, items: Int)? {
         guard let appState, let bundle = appState.currentBundle else { return nil }
+        if target == "schedule" {
+            // My schedule's items in time order (batch 7: share My schedule by QR / link, API-015).
+            let ids = bundle.schedule
+                .filter { appState.personal.heartedScheduleItems.contains($0.id) }
+                .sorted { ($0.startTime ?? .distantFuture, $0.id) < ($1.startTime ?? .distantFuture, $1.id) }
+                .map(\.id)
+            guard !ids.isEmpty, let url = URL(string: PlanShare.link(bundle.event.eventCode, ids, host: ServerSwitch.linkHost)) else { return nil }
+            return (url, "My schedule at \(bundle.event.name)", ids.count)
+        }
         if target == "plan" {
             guard let plan = appState.planner.plan, !plan.isEmpty, let url = URL(string: PlanShare.planLink(plan, bundle, host: ServerSwitch.linkHost)) else { return nil }
             let day = plan.days.first { !$0.items.isEmpty }.map { "My plan for \($0.date.weekdayName)" } ?? "My plan"
@@ -1001,7 +1022,7 @@ final class AssistantController {
 
     func logShare(_ target: String, url: URL, items: Int) {
         AppLog.info(.ui, "share.created", "Share link made", [
-            "target": .string(target == "plan" ? "plan" : "item"), "items": .int(items),
+            "target": .string(target == "plan" || target == "schedule" ? "plan" : "item"), "items": .int(items),
             "payload_len": .int(url.lastPathComponent.count), "via": "share_sheet",
         ])
     }

@@ -135,6 +135,10 @@ enum ActionName: String, CaseIterable, Hashable, Sendable {
     // My schedule (iOS, Nov 21, 2026): `target` = "s12" / "l3"; times "HH:MM" in the event's zone.
     case scheduleAdd = "schedule_add", scheduleRemove = "schedule_remove", scheduleMove = "schedule_move"
     case scheduleReminder = "schedule_reminder"
+    // App settings from the chat (batch 7, iOS): the location dot, leaving the event (always
+    // confirmed; `leave`, not Android's never-available `leave_event`), the test server switch
+    // (TestFlight / Xcode installs only). Router only: the model's tools don't offer them.
+    case location, leave, switchServer = "switch_server"
 
     var key: String { rawValue }
 
@@ -161,7 +165,9 @@ enum ActionName: String, CaseIterable, Hashable, Sendable {
         case .planEdit: return [p("ops", .ops, true)]
         case .planVersion: return [p("kind", .enumeration, true, "chill", "everything")]
         case .checkoff: return [p("item", .scheduleId, true), p("done", .bool, true)]
-        case .followLockScreen, .reminders, .notifications: return [p("on", .bool, true)]
+        case .followLockScreen, .reminders, .notifications, .location: return [p("on", .bool, true)]
+        case .leave: return []
+        case .switchServer: return [p("server", .enumeration, true, "production", "dev")]
         case .shareItem: return [p("id", .scheduleId, true)]
         case .open: return [ActionParam(name: "screen", type: .enumeration, required: true, values: assistantOpenScreens), p("id", .entity, false)]
         case .directions: return [p("location", .locationId, true)]
@@ -176,7 +182,8 @@ enum ActionName: String, CaseIterable, Hashable, Sendable {
     var mutates: Bool {
         switch self {
         case .like, .unlike, .planMake, .planEdit, .planUndo, .planVersion, .checkoff, .followLockScreen, .reminders,
-             .notifications, .sharePlan, .shareItem, .scheduleAdd, .scheduleRemove, .scheduleMove, .scheduleReminder:
+             .notifications, .sharePlan, .shareItem, .scheduleAdd, .scheduleRemove, .scheduleMove, .scheduleReminder,
+             .location, .leave, .switchServer:
             return true
         default:
             return false
@@ -185,7 +192,7 @@ enum ActionName: String, CaseIterable, Hashable, Sendable {
 
     var confirm: ConfirmKind {
         switch self {
-        case .followLockScreen, .reminders, .notifications: return .chip
+        case .followLockScreen, .reminders, .notifications, .location, .leave, .switchServer: return .chip
         case .sharePlan, .shareItem: return .sheet
         default: return .none
         }
@@ -207,7 +214,7 @@ enum ActionName: String, CaseIterable, Hashable, Sendable {
         case .route: return .route
         case .dayRoute: return .dayRoute
         case .planEdit, .planVersion: return .planDiff
-        case .followLockScreen, .reminders, .notifications: return .setting
+        case .followLockScreen, .reminders, .notifications, .location, .leave, .switchServer: return .setting
         case .sharePlan, .shareItem: return .sheet
         case .open, .directions: return .navigation
         }
@@ -437,6 +444,10 @@ enum ActionRegistry {
         case .followLockScreen: return on ? "Follow your day on the Lock Screen?" : "Stop following on the Lock Screen?"
         case .reminders: return on ? "Turn on reminders before things in your schedule?" : "Turn off reminders?"
         case .notifications: return on ? "Turn on notifications from the organizer?" : "Turn off notifications from the organizer?"
+        case .location: return on ? "Show your location on the map?" : "Stop showing your location on the map?"
+        case .leave: return "Leave this event? Your schedule is kept if you join again."
+        case .switchServer:
+            return action.string("server") == "dev" ? "Switch to the dev server? You'll leave this event." : "Switch to the production server? You'll leave this event."
         default: return "Are you sure?"
         }
     }

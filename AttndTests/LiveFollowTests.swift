@@ -497,7 +497,8 @@ final class LiveFollowTests: XCTestCase {
         XCTAssertTrue(old.followsOnLockScreen)
         XCTAssertTrue(old.skippedItems.isEmpty)
         XCTAssertTrue(old.dismissedUrgentIds.isEmpty)
-        XCTAssertFalse(try JSONDecoder().decode(EventPersonalState.self, from: Data("{}".utf8)).followsOnLockScreen)
+        XCTAssertTrue(try JSONDecoder().decode(EventPersonalState.self, from: Data("{}".utf8)).followsOnLockScreen,
+                      "on by default: the activity starts on join (batch 7)")
 
         var state = old
         state.followOnLockScreen = false

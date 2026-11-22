@@ -49,6 +49,8 @@ struct MapView: View {
     @State private var tracking = MapTracking.off
     /// 0…1 along the walking line: the pulse flowing from the user to the place.
     @State private var pulse: Double = 0
+    /// The camera's heading, for the user dot's cone (drawn in screen space).
+    @State private var cameraHeading: Double = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var visibleLocations: [Location] {
@@ -150,7 +152,8 @@ struct MapView: View {
                 .annotationTitles(.hidden)
             }
             if appState.showUserLocation {
-                UserAnnotation()
+                // The dot with a heading cone whenever the compass is available (batch 7).
+                UserAnnotation { user in HeadingUserDot(heading: user.heading, mapHeading: cameraHeading) }
             }
         }
         .mapStyle(.standard)
@@ -162,6 +165,10 @@ struct MapView: View {
                 pulse = RoutePulse.fraction(elapsed: Date.now.timeIntervalSince(start))
                 try? await Task.sleep(for: .milliseconds(50))
             }
+        }
+        .onMapCameraChange(frequency: .continuous) { context in
+            let heading = context.camera.heading
+            if abs(heading - cameraHeading) > 2 { cameraHeading = heading }
         }
         .onMapCameraChange(frequency: .onEnd) { context in
             visibleSpan = context.region.span

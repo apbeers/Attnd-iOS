@@ -497,4 +497,17 @@ final class ScreenLayoutTests: XCTestCase {
         XCTAssertEqual(fresh.string(forKey: "pref.savedEventCode"), "MINE")
         try? FileManager.default.removeItem(at: base)
     }
+
+    func testAssistantSettingCommands() {
+        XCTAssertEqual(AssistantRouter.settingCommand("leave this event")?.name, .leave)
+        XCTAssertEqual(AssistantRouter.settingCommand("switch to the dev server")?.string("server"), "dev")
+        XCTAssertEqual(AssistantRouter.settingCommand("switch back to the production server")?.string("server"), "production")
+        XCTAssertEqual(AssistantRouter.settingCommand("hide my location")?.bool("on"), false)
+        XCTAssertEqual(AssistantRouter.settingCommand("show my location on the map")?.bool("on"), true)
+        XCTAssertNil(AssistantRouter.settingCommand("where is the main stage location"))
+        XCTAssertNil(AssistantRouter.settingCommand("leave now for the barn"))
+        XCTAssertEqual(ActionName.leave.confirm, .chip)
+        XCTAssertEqual(ActionName.switchServer.confirm, .chip)
+        XCTAssertTrue(ActionName.neverAvailable.contains("leave_event"), "the shared never-available name stays refused")
+    }
 }

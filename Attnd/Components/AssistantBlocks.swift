@@ -99,7 +99,7 @@ struct MiniMap: View {
                 .tint(Color.accentColor)
         }
         if showsUser, appState.userLocation.isAuthorized, !ScreenshotMode.isActive {
-            UserAnnotation()
+            UserAnnotation { user in HeadingUserDot(heading: user.heading) }
         }
     }
 

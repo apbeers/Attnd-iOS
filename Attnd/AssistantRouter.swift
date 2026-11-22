@@ -126,10 +126,15 @@ enum AssistantRouter {
         if let m = Rx.find(#"^(?:unlike|unheart|un like)\s+(.+)$"#, cmd) { return like(m[1], liked: false, ctx) }
         if let m = Rx.find(#"^(?:like|heart|love|i like|i love)\s+(.+)$"#, cmd) { return like(m[1], liked: true, ctx) }
 
-        if let action = toggle(cmd) {
+        if let action = toggle(cmd) ?? settingCommand(cmd) {
             return done(.toggle, [.confirm(action: action, prompt: ActionRegistry.confirmPrompt(action))], ctx)
         }
 
+        if Rx.matches(#"share\s+(?:my\s+)?schedule"#, cmd) {
+            // Batch 7: My schedule's items as a /p/ link and QR.
+            guard !ctx.likes.scheduleItems.isEmpty else { return done(.share, [.text("Add things to your schedule first, then share it.")], ctx) }
+            return done(.share, [.share("schedule")], ctx)
+        }
         if Rx.matches(#"share\s+(?:my\s+)?plan"#, cmd) {
             guard plan != nil else { return noPlan(ctx) }
             return done(.share, [.share("plan")], ctx)
@@ -982,6 +987,23 @@ enum AssistantRouter {
         else { return nil }
         let off = Rx.contains(#"\b(off|stop|disable|don t)\b|\bno\s"#, cmd + " ")
         return .toggle(name, on: !off)
+    }
+
+    /// Batch 7: "show my location" / "hide my location", "leave (this) event", "switch to the dev
+    /// server" — always confirmed first.
+    static func settingCommand(_ cmd: String) -> AssistantAction? {
+        if Rx.matches(#"^(?:please\s+)?(?:leave|exit|quit)(?:\s+(?:this|the))?\s+event$"#, cmd) {
+            return AssistantAction(name: .leave)
+        }
+        if let m = Rx.find(#"\b(?:switch|change|move)\b.*\b(dev|development|test|prod|production|live)\b\s+server"#, cmd) {
+            let server = ["dev", "development", "test"].contains(m[1]) ? "dev" : "production"
+            return AssistantAction(name: .switchServer, params: ["server": .string(server)])
+        }
+        if Rx.contains(#"\b(?:my\s+)?location\b"#, cmd), Rx.contains(#"\b(show|hide|turn|share|stop|use|enable|disable)\b"#, cmd) {
+            let off = Rx.contains(#"\b(hide|off|stop|disable|don t)\b"#, cmd)
+            return .toggle(.location, on: !off)
+        }
+        return nil
     }
 
     // MARK: Read actions (model tool calls, chips)

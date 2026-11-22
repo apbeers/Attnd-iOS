@@ -401,7 +401,7 @@ private struct ShareBlock: View {
 
     var body: some View {
         if let link = appState.assistant.shareLink(target) {
-            ShareCard(title: link.title, url: link.url, subtitle: target == "plan" ? "\(link.items) items, read-only. Friends can use it or merge it with theirs." : nil)
+            ShareCard(title: link.title, url: link.url, subtitle: target == "plan" || target == "schedule" ? "\(link.items) items, read-only. Friends can use it or merge it with theirs." : nil)
                 .task(id: link.url) {
                     appState.assistant.logShare(target, url: link.url, items: link.items)
                 }

@@ -23,8 +23,11 @@ final class AssistantBlocksTests: XCTestCase {
             "share_plan", "share_item", "open", "directions",
             // iOS (My schedule, Nov 21, 2026)
             "schedule_add", "schedule_remove", "schedule_move", "schedule_reminder",
+            // iOS (app settings from the chat, batch 7)
+            "location", "leave", "switch_server",
         ])
-        XCTAssertEqual(Set(ActionName.allCases.filter { $0.confirm == .chip }), [.followLockScreen, .reminders, .notifications])
+        XCTAssertEqual(Set(ActionName.allCases.filter { $0.confirm == .chip }),
+                       [.followLockScreen, .reminders, .notifications, .location, .leave, .switchServer])
         XCTAssertEqual(Set(ActionName.allCases.filter { $0.confirm == .sheet }), [.sharePlan, .shareItem])
         XCTAssertEqual(Set(ActionName.allCases.filter(\.undoable)), [.like, .unlike, .planMake, .planEdit, .planVersion, .checkoff, .scheduleAdd, .scheduleRemove])
         XCTAssertTrue(ActionName.allCases.filter { !$0.mutates }.allSatisfy { $0.confirm == .none })

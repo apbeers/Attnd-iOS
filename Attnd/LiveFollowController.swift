@@ -227,6 +227,10 @@ final class LiveFollowController {
             let settings = bundle.liveActivity ?? .defaults
             content.buttons = settings.buttons == nil ? nil : settings.activityButtons
             content.staleText = settings.staleText
+            // Started on join (batch 7): until something is in My schedule, say how to fill it.
+            if !personal.hasHearts, !appState.planner.hasPlan, content.dayComplete != true {
+                content.hint = LiveActivityPlanner.emptyHint
+            }
             return content
         }
 
@@ -301,6 +305,12 @@ final class LiveFollowController {
                     start(day: day, bundle: bundle, state: state(at: now, existing: nil, for: day), at: nil)
                     await setFollowPrompt(nil)
                 }
+            case .schedule(_) where foreground:
+                // Batch 7 (owner): the activity starts as soon as someone joins (a way back into
+                // the App Clip after a force quit), showing the day ahead until it begins.
+                if let pending { await end(pending, final: nil) }
+                start(day: day, bundle: bundle, state: state(at: now, existing: nil, for: day), at: nil)
+                await setFollowPrompt(nil)
             case .schedule(let at):
                 if let pending {
                     await send(state(at: at, existing: pending.content.state.urgent, for: day), to: pending, now: now)
@@ -318,6 +328,10 @@ final class LiveFollowController {
                     ))
                 }
             case .nothing:
+                // More than 36 h ahead: started now too while the app is open (batch 7).
+                if foreground, now < day.endAt {
+                    start(day: day, bundle: bundle, state: state(at: now, existing: nil, for: day), at: nil)
+                }
                 await setFollowPrompt(nil)
             }
         } else {

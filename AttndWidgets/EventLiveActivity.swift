@@ -178,8 +178,15 @@ private struct Countdown: View {
     let date: Date
 
     var body: some View {
-        Text(timerInterval: Date.now...max(date, Date.now), countsDown: true)
-            .monospacedDigit()
+        // The activity now starts on join, maybe days ahead (batch 7): a ticking clock for the
+        // last hour, a self-updating "2 hr, 5 min" / "2 days" before that.
+        if date.timeIntervalSinceNow > 3600 {
+            Text(date, style: .relative)
+                .monospacedDigit()
+        } else {
+            Text(timerInterval: Date.now...max(date, Date.now), countsDown: true)
+                .monospacedDigit()
+        }
     }
 }
 
@@ -421,6 +428,12 @@ private struct FullActivityView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(palette.highlight)
                     .lineLimit(1)
+            } else if let hint = state.hint {
+                Text(hint)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
             }
         }
     }
@@ -559,6 +572,11 @@ private struct SmallActivityView: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(palette.highlight)
                         .lineLimit(1)
+                } else {
+                    // Watch audit (batch 7): never an empty first line; the event's name.
+                    Text(attributes.eventName)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
                 }
                 if let next = state.next {
                     HStack(spacing: 4) {
@@ -568,10 +586,17 @@ private struct SmallActivityView: View {
                         if let start = next.start {
                             Countdown(date: start)
                                 .foregroundStyle(palette.highlight)
-                                .frame(maxWidth: 52, alignment: .trailing)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                                .frame(maxWidth: 64, alignment: .trailing)
                         }
                     }
                     .font(.caption)
+                } else if state.current == nil, let hint = state.hint {
+                    Text(hint)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
                 }
             }
         }
@@ -895,6 +920,16 @@ private var previewUrgent: EventActivityAttributes.ContentState {
 
 private let previewWrap = EventActivityAttributes.ContentState(dayComplete: true, completedCount: 6)
 
+/// Started on join, two days ahead, nothing in My schedule yet (batch 7).
+private var previewJoined: EventActivityAttributes.ContentState {
+    var state = EventActivityAttributes.ContentState(
+        next: .init(id: 1, name: "Juniper Lane", location: "Main Stage", start: .now.addingTimeInterval(2 * 86_400)),
+        nextSource: "event"
+    )
+    state.hint = "Tap ♥ on anything and it shows here"
+    return state
+}
+
 #Preview("Lock Screen", as: .content, using: previewAttributes) {
     EventLiveActivity()
 } contentStates: {
@@ -903,6 +938,7 @@ private let previewWrap = EventActivityAttributes.ContentState(dayComplete: true
     previewGates
     previewUrgent
     previewWrap
+    previewJoined
 }
 
 #Preview("Compact", as: .dynamicIsland(.compact), using: previewAttributes) {

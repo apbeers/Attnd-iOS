@@ -3,18 +3,25 @@ No sign-in or account is needed; the app is anonymous.
 To see a fully populated event:
 1. On the first screen, tap the search field ("Event code or name"), type DEMO and tap Search on the keyboard.
    (Or open https://attnd.app/join/DEMO/ on the device: it opens the app, or the App Clip, straight into the event.)
-2. The demo event is always happening now, so the map, schedule (now / next), locations and updates are all filled in.
+2. The demo event is always happening now, so Home, the map, the schedule (now / next), places and updates are all filled in.
 
-Location permission is optional: the first screen asks for it to list nearby events, and it is used to show your position (blue dot) on the event map. Declining it does not limit anything else.
-Notifications are optional: they can be turned on in Options (the gear button at the top of each event screen) and deliver announcements from the event's organizer.
+Tabs: Home (what's on now and next, the urgent announcement, your schedule), Map, Places, Schedule and Updates. Options is the gear button at the top of the Updates tab.
 
-After joining an event for the first time, a short tour (onboarding cards) explains the map, schedule, updates, search and likes and offers the optional location and notification prompts; it can be skipped with Skip and reopened any time from Options (gear button) > Tour. On devices with Apple Intelligence it also shows "Plan your day" examples: tapping one opens the plan page (the "My plan" button, bottom right on every tab) and builds the plan or answers the question there, on the device.
+My Schedule: tap the heart on any schedule item or place to add it (Undo appears for a few seconds). Tap a filled heart to set a time for a place, choose a reminder or remove it. Added items show first on the Schedule tab and on Home. With notifications on, they get a reminder before they start.
 
-Follow on Lock Screen (Live Activity): like a schedule item (heart button on any schedule row), or turn on Options > Lock Screen > Follow on Lock Screen and tap Start Now. A Live Activity then shows what is on now and next on the Lock Screen and in the Dynamic Island. With notifications on, liked items also get a reminder 15 minutes before they start.
-Urgent announcements from organizers (e.g. a cancellation) are delivered as time-sensitive notifications and shown on the Live Activity.
+Ask Attnd (only on devices with Apple Intelligence): the sparkles button at the bottom right of every tab opens a chat that runs entirely on the device. Try "What's on now?", "Where is the bathroom?", "Plan my Saturday around live music" or "Add Taco Row at 7". Changes to My Schedule are shown first and only happen after tapping Apply, with Undo. Without Apple Intelligence the same button is a search button that searches the event offline.
+
+Location permission is optional: the first screen asks for it to list nearby events, and it is used to show your position on the event map and walking times. Declining it does not limit anything else.
+Notifications are optional: they can be turned on in Options and deliver announcements from the event's organizer.
+
+After joining an event for the first time, a short tour explains the app and offers the optional location and notification prompts; it can be skipped and reopened from Options > Tour.
+
+Follow on Lock Screen (Live Activity) is on by default: after joining, a Live Activity shows what is on now and next on the Lock Screen and in the Dynamic Island. It can be turned off in Options > Lock Screen. Urgent announcements from organizers (e.g. a cancellation) are delivered as time-sensitive notifications and shown on the Live Activity.
 
 Diagnostics: crash and hang reports from MetricKit and anonymous performance counts (launch and loading times in ranges) are sent without any identifier and are not linked to the user or used for tracking. Options > About & Support > "Turn On Debug Logging for 10 Minutes" is optional and user-started: for 10 minutes it sends detailed app logs (no search text, location or account details, no device identifier) under a random debug code the user can share with support; it turns itself off. "Recent Logs" only shows the logs kept on the device.
 
-To switch events, use Options (gear button) > Leave Event.
+Options > About & Support may also show "Test server: Production / Dev" (shown to test installs); please leave it on Production, where the DEMO event lives.
+
+To switch events, use Options > Leave Event.
 
 The App Clip (opened from https://attnd.app/join/DEMO/ or an event's QR code) has exactly the same features as the app.

@@ -16,6 +16,15 @@ final class TabLayoutTests: XCTestCase {
         return TabLayout.resolve(display, hasFlyer: flyer, screenshotMode: !home)
     }
 
+    func testServerTabRules_API_V2() {
+        // API_V2.md tab rules (Nov 22, 2026): Home first and the default; Home alone when that's all.
+        XCTAssertEqual(layout([.home], home: true).tabs, [.home])
+        XCTAssertEqual(layout([.home, .map, .schedule], default: .map, home: true).defaultTab, .home)
+        // Home plus five: the flyer is left out first.
+        XCTAssertEqual(layout([.home, .map, .locations, .schedule, .flyer, .notifications], home: true).tabs,
+                       [.home, .map, .locations, .schedule, .notifications])
+    }
+
     func testRemoveThenReAddATab() {
         // The preview phone (batch 7 report): Schedule removed in the console, then added back.
         let full = layout([.home, .map, .locations, .schedule, .notifications], home: true)

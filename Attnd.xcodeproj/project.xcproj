@@ -316,6 +316,10 @@
         { "path": "MyScheduleTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "ConversationContextTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "ComponentTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
+        { "path": "AssistantEvalData.swift", "target-membership": [ "AttndTests/compile-sources" ] },
+        { "path": "AssistantEval.swift", "target-membership": [ "AttndTests/compile-sources" ] },
+        { "path": "AssistantEvalTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
+        { "path": "AssistantEvalModelTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
       ],
     }, {
       "kind": "group",

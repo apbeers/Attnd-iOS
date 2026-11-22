@@ -47,7 +47,7 @@ enum PlanRequest {
 
     /// Whether an Ask request should make a plan rather than answer a question.
     static func looksLikePlan(_ request: String) -> Bool {
-        let pattern = #"\b(plan|planner|planning|itinerary|highlights|schedule me|build me|my (day|morning|afternoon|evening|night|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b|\b\d+(\.\d)? ?(hours?|hrs?)\b|\b(an|one|two|three|four|five|six|a few|a couple of) hours?\b|\b(kid|kids|family) friendly (morning|afternoon|evening|day)\b"#
+        let pattern = #"\b(plan|planner|planning|itinerary|highlights|schedule me|build me|my (day|morning|afternoon|evening|night|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b|(?<!\bin )\b\d+(\.\d)? ?(hours?|hrs?)\b|(?<!\bin )\b(an|one|two|three|four|five|six|a few|a couple of) hours?\b|\b(kid|kids|family) friendly (morning|afternoon|evening|day)\b"#
         return firstMatch(pattern, in: PlanText.normalize(request)) != nil
     }
 

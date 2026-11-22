@@ -67,6 +67,10 @@ enum AssistantIntent: Hashable, Sendable {
     case whyNot, toggle, open, share, calendar
     /// My schedule commands (add / remove / move / remind / what's on my schedule / clashes).
     case schedule
+    /// An emergency, feeling unwell, a lost child, danger: 911 + the event's help points (never the model).
+    case safety
+    /// The organizer's facts: amenities, FAQ / policies, menus, updates, changes, a named entity.
+    case facts
 }
 
 /// A routed turn: what the router understood, the turn (validated blocks + actions) and any plan preview.
@@ -101,10 +105,13 @@ enum AssistantRouter {
     }
 
     static func route(_ input: String, _ ctx: RouterContext) -> RoutedTurn {
-        let cmd = command(input)
+        let cmd = withoutLeadingFiller(Rx.replace(#"\b(where|what|how|when|who)s\b"#, command(input)) { m in m[1] + " s" })
         let plan = ctx.plan
 
         if cmd.isEmpty { return done(.empty, [.chips(suggestionChips(ctx))], ctx) }
+
+        // Safety first (the eval, Nov 22, 2026): 911 and the event's help points, never a search.
+        if let turn = safetyTurn(cmd, ctx) { return turn }
 
         if cmd == "undo" || cmd == "undo that" {
             guard plan != nil else { return noPlan(ctx) }
@@ -119,12 +126,17 @@ enum AssistantRouter {
             return done(.calendar, blocks, ctx)
         }
 
+        // The organizer's facts (the eval): distances, amenities, menus, FAQ / policy topics.
+        if let turn = howFarTurn(cmd, ctx) ?? amenityTurn(cmd, ctx) ?? menuTurn(cmd, ctx) ?? topicTurn(cmd, ctx) ?? memoryQuestion(cmd, ctx) {
+            return turn
+        }
+
         if let turn = scheduleCommand(cmd, ctx) { return turn }
 
         if let turn = planCommand(cmd, ctx) { return turn }
 
         if let m = Rx.find(#"^(?:unlike|unheart|un like)\s+(.+)$"#, cmd) { return like(m[1], liked: false, ctx) }
-        if let m = Rx.find(#"^(?:like|heart|love|i like|i love)\s+(.+)$"#, cmd) { return like(m[1], liked: true, ctx) }
+        if let m = Rx.find(#"^(?:like|heart|love|i like|i love)\s+(.+)$"#, cmd), !notTargets.contains(m[1]) { return like(m[1], liked: true, ctx) }
 
         if let action = toggle(cmd) ?? settingCommand(cmd) {
             return done(.toggle, [.confirm(action: action, prompt: ActionRegistry.confirmPrompt(action))], ctx)
@@ -168,7 +180,7 @@ enum AssistantRouter {
             guard plan != nil else { return done(.schedule, myScheduleBlocks(nil, ctx), ctx) }
             return done(.planShow, planBlocks(ctx), ctx)
         }
-        if Rx.contains(#"\b(how far|how much walking|walking)\b"#, cmd) && !cmd.contains("short") {
+        if Rx.contains(#"\b(how far|how much walking|walking)\b"#, cmd) && !cmd.contains("short") && plan != nil || cmd == "how far" || cmd == "how much walking" {
             guard let plan else { return noPlan(ctx) }
             return done(.walking, walkingBlocks(plan, ctx), ctx)
         }
@@ -180,7 +192,7 @@ enum AssistantRouter {
             return done(.recap, [.text(recap.text), .summary("recap"), chips(recap.chips)], ctx)
         }
 
-        if Rx.matches(#"liked|likes|my likes|what (?:have|did) i liked?|show (?:me )?(?:my )?likes|what i liked|things i liked|saved|saved places|my saved places"#, cmd) {
+        if Rx.matches(#"liked|likes|my likes|what (?:have|did) i liked?|show (?:me )?(?:my )?likes|what i liked|things i liked|saved|saved places|my saved places|(?:show |see )?(?:me )?(?:my )?(?:saved|favou?rite|hearted) (?:stuff|things|items|list)|my favou?rites|my stuff|my list|what (?:have|did) i saved?"#, cmd) {
             return done(.liked, likedBlocks(ctx), ctx)
         }
 
@@ -188,6 +200,8 @@ enum AssistantRouter {
             let screen = m[1] == "settings" ? "options" : m[1]
             return done(.open, [.text("Opening \(screen == "options" ? "Options" : "the \(screen)").")], ctx, actions: [.open(screen)])
         }
+
+        if let turn = updatesTurn(cmd, ctx) ?? changesTurn(cmd, ctx) ?? endTurn(cmd, ctx) { return turn }
 
         if Rx.contains(#"\b(near me|nearby|closest|around me|near here)\b"#, cmd) { return nearMe(cmd, ctx) }
 
@@ -197,11 +211,25 @@ enum AssistantRouter {
 
         let keywords = AssistantSearch.keywords(cmd)
         if AssistantSearch.parse(keywords).isTimeOnly { return whatsOn(keywords, input, ctx) }
+        // "sunday schedule", "what is happening right now", "what's on in an hour".
+        let timeWords = timeQuery(cmd, keywords, ctx)
+        if !timeWords.isEmpty, AssistantSearch.parse(timeWords).isTimeOnly { return whatsOn(timeWords, input, ctx) }
+        if let turn = smallTalkTurn(cmd, ctx) { return turn }
 
         let firstWord = cmd.split(separator: " ").first.map(String.init) ?? cmd
         let question = input.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("?") || questionWords.contains(firstWord)
         let results = AssistantSearch.search(ctx.bundle, question ? keywords : cmd, now: ctx.now)
-        if results.isEmpty { return done(.noMatch, [.text(noMatchText), .chips(suggestionChips(ctx))], ctx) }
+        if results.isEmpty {
+            // A name inside the question, an FAQ answer, a few everyday words ("grub", "edm").
+            if let turn = entityQuestionTurn(cmd, ctx) { return turn }
+            if let query = synonymQuery(cmd) {
+                if AssistantSearch.parse(query).isTimeOnly { return whatsOn(query, input, ctx) }
+                let found = AssistantSearch.search(ctx.bundle, query, now: ctx.now)
+                if !found.isEmpty { return done(.search, searchBlocks(found, ctx), ctx) }
+            }
+            if let turn = topicTurn(cmd, ctx, faqOnly: true) { return turn }
+            return done(.noMatch, [.text(noMatchText), .chips(suggestionChips(ctx))], ctx)
+        }
         let blocks = searchBlocks(results, ctx)
         if question { return done(.question, [.text(ctx.modelAvailable ? "Here's what matches." : askUnavailable)] + blocks, ctx) }
         return done(.search, blocks, ctx)
@@ -228,7 +256,7 @@ enum AssistantRouter {
     static func scheduleCommand(_ cmd: String, _ ctx: RouterContext) -> RoutedTurn? {
         let kinds: Set<RefKind> = [.schedule, .location]
         if let m = Rx.find(#"^(?:find|search for|look for|looking for|i want|i need|get me)\s+(.+)$"#, cmd) {
-            let phrase = m[1].trimmingCharacters(in: .whitespaces)
+            let phrase = Rx.replace(#"^(?:to\s+)?(?:(?:see|hear|watch|catch|try|check out)\s+)?(?:(?:some|a|an|the)\s+)?"#, m[1].trimmingCharacters(in: .whitespaces), with: "")
             let query = mealWords.contains(Rx.replace(#"^(?:some|a|an|the)\s+"#, phrase, with: "")) ? "food" : AssistantSearch.keywords(phrase)
             let results = AssistantSearch.search(ctx.bundle, query, now: ctx.now)
             if results.isEmpty { return done(.noMatch, [.text(noMatchText), .chips(suggestionChips(ctx))], ctx) }
@@ -309,6 +337,8 @@ enum AssistantRouter {
                 let scheduled = refs.filter { ctx.mine.contains(target($0)) }
                 if scheduled.count == 1 { return found(scheduled) }
             }
+            // One act or demo at several times ("add Sundown Choir"): the one on now, else the next one.
+            if let next = sameNameNext(refs, ctx) { return found([next]) }
             return pick(refs, ctx, .schedule) { ref in AssistantChip(label: name(ref, ctx), action: .scheduleAdd(ref)) }
         case .notFound:
             // Small typos ("prairie lihgts"): the search's best result when it is the only one on top.
@@ -601,6 +631,7 @@ enum AssistantRouter {
         var version: PlanVersionKind?
         if Rx.contains(#"\b(chill|relaxed|easy) (version|plan|day)\b"#, cmd) { version = .chill }
         else if Rx.contains(#"\b(see everything|see it all|packed version|packed plan|everything version)\b"#, cmd) { version = .everything }
+        if let version, ctx.plan == nil, ctx.canPlan, PlanRequest.looksLikePlan(cmd) { _ = version; return nil }
         if let version {
             guard let plan = ctx.plan else { return noPlan(ctx) }
             let preview = PlanVersions.make(version, plan, bundle, ctx.likes, now: ctx.now)
@@ -1050,5 +1081,594 @@ enum AssistantRouter {
             blocks = []
         }
         return BlockValidator.validate(blocks, ctx.blockContext)
+    }
+}
+
+// MARK: - Event facts and safety (the assistant eval, Nov 22, 2026)
+//
+// Rules added after the first run of the assistant eval (attnd-web docs/assistant_eval/): the
+// router answered "Where is the bathroom?", "I lost my kid" or "what's the bag policy" with
+// "Nothing matches that". Every answer here quotes the organizer's own data (amenities, FAQ,
+// policies, menus, updates) and never adds facts; safety answers always say to call 911.
+//   - safety: emergencies, feeling unwell, a lost child, danger → 911 + First Aid / info places
+//     (deterministic: `.safety` never goes to the model).
+//   - amenities: restrooms (toilet, loo, porta potty, baño…), water, ATM / cash, first aid,
+//     charging, lockers, info / lost and found, accessible entrance, merch, parking, shuttle → the
+//     event's amenities with their places (nearest first), or "The event doesn't list lockers."
+//   - topics: policies (bags, pets, drones, smoking…), weather plan, getting there, accessibility,
+//     tickets / price → the best FAQ answer, else the organizer's text, + the places it names.
+//   - menus and diets: "menu at Taco Row", "anything vegan", "how much is the brisket plate".
+//   - updates and organizer changes, an entity named inside a question ("when does Neon Armadillo
+//     play"), similar acts, the event's end. `.facts` turns go to the model when it's there.
+extension AssistantRouter {
+
+    static let emergencyText = "If anyone is hurt or in danger, call 911 now."
+
+    private static let commandVerb = #"^(?:add|put|save|book|schedule|remove|drop|delete|move|remind|directions|get directions|walk me|take me|share|like|unlike|show|open|swap|replace|turn|switch|enable|disable|stop|mute)\b"#
+
+    /// Discourse words in front of a command ("actually remove it", "ok add it", "so what's next").
+    static func withoutLeadingFiller(_ cmd: String) -> String {
+        let stripped = Rx.replace(#"^(?:(?:actually|ok|okay|hey|so|um|uh|oh|well|also|and|hmm|wait|cool|great|thanks|alright|then)\s+)+"#, cmd, with: "")
+        return stripped.isEmpty ? cmd : stripped
+    }
+
+    // MARK: Safety
+
+    private enum SafetyKind { case emergency, unwell, lostChild, danger }
+
+    private static func safetyKind(_ cmd: String) -> SafetyKind? {
+        if Rx.contains(#"\b(lost (my |our )?(kid|kids|child|children|son|daughter|baby|toddler|boy|girl)|(kid|child|son|daughter|baby|toddler) (is |went )?(missing|lost|gone)|can t find my (kid|child|son|daughter|baby)|missing (child|kid)|perdi a mi (hijo|hija|nino|nina))\b"#, cmd) {
+            return .lostChild
+        }
+        if Rx.contains(#"\b(emergency|ambulance|call 911|911|collapsed|collapse|unconscious|passed out|not breathing|can t breathe|cant breathe|heart attack|chest pain|seizure|overdose|od d|bleeding|allergic|allergy|anaphyla\w*|stroke|medico|medecin|necesito un medico|emergencia|urgence|socorro|ayuda)\b"#, cmd) {
+            return .emergency
+        }
+        if Rx.contains(#"\b(fight|fighting|followed|following me|stalk\w*|harass\w*|grabbed|groped|assault\w*|attacked|threaten\w*|weapon|gun|knife|fire|unsafe|in danger|scared|police|security)\b"#, cmd) {
+            return .danger
+        }
+        if Rx.contains(#"\b(sick|nauseous|nausea|throw(ing)? up|vomit\w*|dizzy|faint\w*|hurt|injured|injury|cut (my|myself|his|her)|burn(ed|t)?|bee sting|stung|headache|heat ?stroke|dehydrated|feel (bad|unwell|ill|awful)|unwell|drunk|too much to drink|sprain\w*|twisted my)\b"#, cmd) {
+            return .unwell
+        }
+        return nil
+    }
+
+    /// The event's place for an amenity kind (from its amenities, else a location named / tagged so).
+    private static func places(for kind: AmenityKind, _ ctx: RouterContext, matching: String? = nil) -> (amenities: [Amenity], places: [Int]) {
+        var amenities = (ctx.bundle.event.context?.amenities ?? []).filter { $0.kind == kind }
+        if let matching {
+            let filtered = amenities.filter { "\($0.name) \($0.note)".lowercased().contains(matching) }
+            if !filtered.isEmpty { amenities = filtered }
+        }
+        var ids: [Int] = []
+        for a in amenities { if let id = a.locationId, ctx.bundle.location(id) != nil, !ids.contains(id) { ids.append(id) } }
+        if ids.isEmpty, let words = amenityTags[kind] {
+            ids = ctx.bundle.locations.filter { loc in
+                let text = ([loc.name, loc.category ?? ""] + loc.tags).joined(separator: " ").lowercased()
+                return words.contains { text.contains($0) }
+            }.map(\.id)
+        }
+        return (amenities, nearestFirst(ids, ctx))
+    }
+
+    private static let amenityTags: [AmenityKind: [String]] = [
+        .restrooms: ["restroom", "toilet"], .water: ["water"], .atm: ["atm"], .firstAid: ["first aid", "medical"],
+        .charging: ["charging"], .lockers: ["locker"], .info: ["info", "lost and found"], .merch: ["merch"],
+        .parking: ["parking"], .shuttle: ["shuttle"], .accessibleEntrance: ["accessible entrance"],
+    ]
+
+    private static func nearestFirst(_ ids: [Int], _ ctx: RouterContext) -> [Int] {
+        guard let user = ctx.user else { return ids }
+        return Array(ids.enumerated()).stableSorted { a, b in
+            let da = ctx.bundle.location(a.element)?.coordinate.map { Planner.distance(user, $0) } ?? .infinity
+            let db = ctx.bundle.location(b.element)?.coordinate.map { Planner.distance(user, $0) } ?? .infinity
+            return da != db ? da < db : a.offset < b.offset
+        }.map(\.element)
+    }
+
+    private static func placeBlocks(_ ids: [Int], title: String) -> [AssistantBlock] {
+        let refs = ids.map { EntityRef(kind: .location, id: $0) }
+        if refs.isEmpty { return [] }
+        if refs.count == 1 { return [BlockValidator.card(refs[0])] }
+        return [.carousel(ids: Array(refs.prefix(BlockValidator.maxCarousel)), title: title)]
+    }
+
+    private static func amenityLine(_ amenities: [Amenity], _ ctx: RouterContext) -> String {
+        amenities.prefix(4).map { a in
+            var line = a.name
+            if let place = ctx.bundle.location(a.locationId)?.name, place.lowercased() != a.name.lowercased() { line += " at \(place)" }
+            if !a.note.isEmpty { line += " (\(a.note))" }
+            return line
+        }.joined(separator: "; ")
+    }
+
+    static func safetyTurn(_ cmd: String, _ ctx: RouterContext) -> RoutedTurn? {
+        guard let kind = safetyKind(cmd) else { return nil }
+        let aid = places(for: .firstAid, ctx)
+        let info = places(for: .info, ctx)
+        let aidName = aid.places.first.flatMap { ctx.bundle.location($0)?.name }
+        let aidNote = aid.amenities.first.map { $0.note }.flatMap { $0.isEmpty ? nil : $0 }
+        let text: String
+        var ids: [Int]
+        switch kind {
+        case .emergency:
+            text = emergencyText + (aidName.map { " \($0) has help on site" + (aidNote.map { " (\($0))" } ?? "") + "." } ?? "")
+            ids = aid.places
+        case .unwell:
+            text = (aidName.map { "Head to \($0)" + (aidNote.map { " (\($0))" } ?? "") + ". " } ?? "Find a staff member. ")
+                + "If it's an emergency, call 911."
+            ids = aid.places
+        case .lostChild:
+            let lost = (ctx.bundle.event.context?.amenities ?? []).first { "\($0.name) \($0.note)".lowercased().contains("lost child") }
+            text = "Tell the nearest staff member right away, and call 911 if your child may be in danger."
+                + (lost.map { " The event says: \($0.name)" + ($0.note.isEmpty ? "" : " (\($0.note))") + "." } ?? "")
+            ids = aid.places + info.places.filter { !aid.places.contains($0) }
+        case .danger:
+            text = "If you're in danger, call 911 now. Get to a safe, busy spot and tell any staff member"
+                + (info.places.first.flatMap { ctx.bundle.location($0)?.name }.map { ", or go to \($0)" } ?? "") + "."
+            ids = info.places + aid.places.filter { !info.places.contains($0) }
+        }
+        ids = Array(ids.prefix(3))
+        var blocks: [AssistantBlock] = [.text(text)]
+        blocks += placeBlocks(ids, title: "Help")
+        if let first = ids.first, ctx.bundle.location(first)?.coordinate != nil {
+            blocks.append(chips([AssistantChip(label: "Directions to \(ctx.bundle.location(first)!.name)", action: .directions(first))]))
+        }
+        return done(.safety, blocks, ctx)
+    }
+
+    // MARK: Amenities
+
+    private static let amenityWords: [(AmenityKind, String)] = [
+        (.restrooms, #"\b(bathrooms?|restrooms?|rest rooms?|toilets?|loo|loos|wc|washrooms?|porta ?(potty|potties|john|johns|loo)|portaloos?|lavatory|lavatories|pee|poop|ladies room|mens room|men s room|diaper|nappy|baby chang\w*|bano|banos|aseos?|toilettes|toiletten|sanitarios)\b"#),
+        (.water, #"\b(water|refill|refills|drinking fountain|water fountain|agua|eau|wasser)\b"#),
+        (.atm, #"\b(atm|atms|cash|cash machine|cajero)\b"#),
+        (.firstAid, #"\b(first aid|medic|medics|medical|band ?aid|bandaid|plaster|sunscreen|nurse|emt|emts|paramedic)\b"#),
+        (.charging, #"\b(charge|charging|charger|battery|power bank|outlet|plug in)\b"#),
+        (.lockers, #"\b(lockers?|bag check|coat check)\b"#),
+        (.info, #"\b(info booth|information|info desk|help desk|lost and found|lost found|lost (my |a )?(wallet|phone|keys|bag|purse|jacket|item|something|glasses|card)|report a lost)\b"#),
+        (.accessibleEntrance, #"\b(wheelchair entrance|accessible entrance|step free|ramp)\b"#),
+        (.merch, #"\b(merch|merchandise|t ?shirts?|tee shirts?|souvenirs?|hoodies?|posters?)\b"#),
+        (.shuttle, #"\b(shuttles?)\b"#),
+        (.parking, #"\b(park|parking|car park|parking lot)\b"#),
+    ]
+
+    private static func amenityLabel(_ kind: AmenityKind) -> String {
+        switch kind {
+        case .restrooms: return "restrooms"
+        case .water: return "water"
+        case .atm: return "an ATM"
+        case .firstAid: return "first aid"
+        case .charging: return "phone charging"
+        case .lockers: return "lockers"
+        case .info: return "an info point"
+        case .accessibleEntrance: return "an accessible entrance"
+        case .merch: return "merch"
+        case .parking: return "parking"
+        case .shuttle: return "a shuttle"
+        case .food, .other: return "that"
+        }
+    }
+
+    static func amenityTurn(_ cmd: String, _ ctx: RouterContext) -> RoutedTurn? {
+        guard !Rx.contains(commandVerb, cmd) else { return nil }
+        for (kind, pattern) in amenityWords where Rx.contains(pattern, cmd) {
+            if kind == .parking, Rx.contains(#"\b(bike|bikes|bicycle|scooter)\b"#, cmd) { continue }
+            if kind == .water, Rx.contains(#"\b(waterfront|water bottle policy)\b"#, cmd) { continue }
+            let matching = kind == .info && cmd.contains("lost") ? "lost" : nil
+            let found = places(for: kind, ctx, matching: matching)
+            if found.amenities.isEmpty && found.places.isEmpty {
+                let help = places(for: .info, ctx).places
+                var blocks: [AssistantBlock] = [.text("The event doesn't list \(amenityLabel(kind))." + (help.isEmpty ? "" : " Ask at the info point."))]
+                blocks += placeBlocks(Array(help.prefix(1)), title: "Info")
+                return done(.facts, blocks, ctx)
+            }
+            var blocks: [AssistantBlock] = []
+            if !found.amenities.isEmpty { blocks.append(.text(amenityLine(found.amenities, ctx) + ".")) }
+            blocks += placeBlocks(found.places, title: amenityLabel(kind).capitalized)
+            if let first = found.places.first, ctx.bundle.location(first)?.coordinate != nil {
+                blocks.append(chips([AssistantChip(label: "Directions", action: .directions(first)),
+                                     AssistantChip(label: "Show on map", action: .open("map", EntityRef(kind: .location, id: first)))]))
+            }
+            return done(.facts, blocks, ctx)
+        }
+        return nil
+    }
+
+    // MARK: Topics and the FAQ
+
+    private enum Topic { case policies, weather, gettingThere, accessibility, price, about }
+
+    private static func topic(_ cmd: String) -> Topic? {
+        if Rx.contains(#"\b(what is this (festival|event)|what s this (festival|event)|tell me about (the|this) (festival|event)|about (the|this) (festival|event))\b"#, cmd) { return .about }
+        if Rx.contains(#"\b(tickets?|admission|entry fee|entrance fee|cover charge|is it free|is entry free|cost to get in|how much (is|are) (it|entry|admission|tickets?)|refunds?|vip)\b"#, cmd) { return .price }
+        if Rx.contains(#"\b(rain|rains|raining|storm|storms|lightning|thunder|weather plan|bad weather|heat|so hot|too hot|wind|windy)\b"#, cmd) { return .weather }
+        if Rx.contains(#"\b(wheelchair|accessible|accessibility|ada|asl|deaf|blind|disabilit\w*|disabled|sensory|hearing|ear defenders|autis\w*|quiet (place|space|tent|area))\b"#, cmd) { return .accessibility }
+        if Rx.contains(#"\b(getting here|get to the (festival|event)|getting to the (festival|event)|bus|buses|train|metro|transit|public transport\w*|address|bike|bikes|bicycle|uber|lyft|rideshare|taxi|cab|drive here|driving)\b"#, cmd) { return .gettingThere }
+        if Rx.contains(#"\b(bags?|backpacks?|purse|policy|policies|rules|allowed|bring|drones?|pets?|dogs?|smok\w*|vap\w*|glass|weapons?|outside (food|drinks|alcohol)|coolers?|chairs?|blankets?|re ?entry|come back|leave and come|wristbands?|id|age limit|ages|all ages|kids allowed)\b"#, cmd) { return .policies }
+        return nil
+    }
+
+    private static let faqSynonyms: [String: [String]] = [
+        "ticket": ["entry", "free"], "tickets": ["entry", "free"], "admission": ["entry", "free"], "cost": ["free", "entry"],
+        "price": ["free", "entry"], "dog": ["pet", "animal"], "dogs": ["pet", "animal"], "vape": ["smoke"], "vaping": ["smoke"],
+        "smoking": ["smoke"], "backpack": ["bag"], "purse": ["bag"], "ages": ["age"],
+        "cards": ["card"], "credit": ["card"], "pay": ["card"], "reentry": ["leave", "come", "back"], "drones": ["drone"],
+        "group": ["separated"], "friends": ["separated", "group"], "lost": ["found", "lost"], "rain": ["rain"],
+        "hot": ["heat"], "uber": ["rideshare"], "lyft": ["rideshare"], "taxi": ["rideshare"], "cab": ["rideshare"],
+        "bicycle": ["bike"], "transit": ["bus"], "wheelchair": ["step"], "deaf": ["asl"], "autistic": ["quiet"], "autism": ["quiet"],
+    ]
+
+    /// The sentences of an organizer text that mention the question's words (prefixes count: "bus" →
+    /// "buses"), else its first two sentences.
+    static func relevantSentences(_ text: String, for cmd: String) -> String {
+        var words = Set(AssistantSearch.words(cmd).filter { $0.count >= 3 && !faqGeneric.contains($0) && !AssistantSearch.stopWords.contains($0) }.map(stem))
+        for w in Array(words) { words.formUnion(faqSynonyms[w] ?? []) }
+        let sentences = text.replacingOccurrences(of: "\n", with: " ").split(separator: ".", omittingEmptySubsequences: true)
+            .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        let hits = sentences.filter { sentence in
+            let have = AssistantSearch.words(sentence).map(stem)
+            return words.contains { w in have.contains { $0.hasPrefix(w) } }
+        }
+        let picked = hits.isEmpty ? Array(sentences.prefix(2)) : Array(hits.prefix(3))
+        return picked.joined(separator: ". ") + "."
+    }
+    private static let faqGeneric: Set<String> = ["can", "bring", "do", "does", "is", "are", "there", "where", "what", "how",
+                                                  "get", "i", "my", "the", "a", "an", "any", "allowed", "much", "we", "you"]
+
+    private static func stem(_ word: String) -> String {
+        word.count > 3 && word.hasSuffix("s") && !word.hasSuffix("ss") ? String(word.dropLast()) : word
+    }
+
+    /// The FAQ entry that best answers `cmd`: content words (and a few synonyms) in its question
+    /// (×2) and answer (×1); at least one in the question.
+    static func faqAnswer(_ cmd: String, _ ctx: RouterContext, strict: Bool = false) -> FAQEntry? {
+        guard let faq = ctx.bundle.event.context?.faq, !faq.isEmpty else { return nil }
+        var words = Set(AssistantSearch.words(cmd).filter { !faqGeneric.contains($0) && !AssistantSearch.stopWords.contains($0) }.map(stem))
+        for w in Array(words) { words.formUnion(faqSynonyms[w] ?? []) }
+        guard !words.isEmpty else { return nil }
+        var best: (entry: FAQEntry, score: Int)?
+        for entry in faq {
+            let q = Set(AssistantSearch.words(entry.question).map(stem)).subtracting(faqGeneric)
+            let a = Set(AssistantSearch.words(entry.answer).map(stem))
+            let inQuestion = words.intersection(q).count
+            guard inQuestion > 0 else { continue }
+            if strict && inQuestion < 2 { continue }
+            let score = inQuestion * 2 + words.intersection(a).count
+            if score > (best?.score ?? 0) { best = (entry, score) }
+        }
+        return best?.entry
+    }
+
+    /// Places whose names appear in `text` (an FAQ answer, a policy), longest names first.
+    private static func placesNamed(in text: String, _ ctx: RouterContext) -> [Int] {
+        let folded = " " + command(text) + " "
+        return ctx.bundle.locations.sorted { $0.name.count > $1.name.count }
+            .filter { folded.contains(" " + command($0.name) + " ") }.map(\.id)
+    }
+
+    private static func clip(_ text: String) -> String {
+        guard text.count > 380 else { return text }
+        let cut = String(text.prefix(380))
+        if let end = cut.lastIndex(where: { $0 == "." }) { return String(cut[...end]) }
+        return cut + "…"
+    }
+
+    static func topicTurn(_ cmd: String, _ ctx: RouterContext, faqOnly: Bool = false) -> RoutedTurn? {
+        guard !Rx.contains(commandVerb, cmd) else { return nil }
+        let event = ctx.bundle.event.context
+        let found = faqOnly ? nil : topic(cmd)
+        if found == nil && !faqOnly { return nil }
+        var text: String?
+        var component: String?
+        // Policies and prices answer from the FAQ first; the other topics from their own text.
+        if found == nil || found == .policies || found == .price, let entry = faqAnswer(cmd, ctx, strict: faqOnly) { text = entry.answer }
+        func from(_ topicText: String?) { if text == nil, let t = topicText, !t.isEmpty { text = relevantSentences(t, for: cmd) } }
+        switch found {
+        case .policies?: component = "policies"; from(event?.policies)
+        case .weather?: component = "weather_plan"; from(event?.weatherPlan)
+        case .gettingThere?: component = "getting_there"; from(event?.gettingThere)
+        case .accessibility?: component = "accessibility"; from(event?.accessibility)
+        case .about?:
+            let about = event?.about.split(separator: "\n").first.map(String.init) ?? ""
+            text = about.isEmpty ? ctx.bundle.event.description : about
+        case .price?:
+            if text == nil { text = "The event's details don't say." }
+        case nil: break
+        }
+        guard let answer = text, !answer.isEmpty else { return nil }
+        var blocks: [AssistantBlock] = [.text(clip(answer))]
+        if let component { blocks.append(.component(Component(type: component))) }
+        blocks += placeBlocks(Array(placesNamed(in: answer, ctx).prefix(3)), title: "Places")
+        return done(.facts, blocks, ctx)
+    }
+
+    // MARK: Menus and diets
+
+    private static let dietWords = ["vegan", "vegetarian", "gluten free", "gluten-free", "dairy free", "dairy-free", "halal", "kosher", "nut free"]
+
+    static func menuTurn(_ cmd: String, _ ctx: RouterContext) -> RoutedTurn? {
+        guard !Rx.contains(commandVerb, cmd) else { return nil }
+        let bundle = ctx.bundle
+        let menus = bundle.locations.filter { !($0.context?.menu.isEmpty ?? true) }
+        guard !menus.isEmpty else { return nil }
+        // "anything vegan", "gluten free options": menu lines whose note (or name) says so.
+        if let diet = dietWords.first(where: { cmd.contains($0.replacingOccurrences(of: "-", with: " ")) }) {
+            let key = diet.replacingOccurrences(of: "-", with: " ")
+            var lines: [String] = []
+            var ids: [Int] = []
+            for loc in menus {
+                for entry in loc.context?.menu ?? [] where command("\(entry.name) \(entry.note)").contains(key) {
+                    lines.append("\(entry.name)\(entry.price.isEmpty ? "" : " (\(entry.price))") at \(loc.name)")
+                    if !ids.contains(loc.id) { ids.append(loc.id) }
+                }
+            }
+            for loc in bundle.locations where !ids.contains(loc.id) && loc.tags.contains(where: { command($0) == key }) { ids.append(loc.id) }
+            if ids.isEmpty { return done(.facts, [.text("The menus don't mark anything \(diet).")], ctx) }
+            let text = lines.isEmpty ? "Marked \(diet):" : "\(diet.prefix(1).uppercased() + diet.dropFirst()): " + lines.prefix(5).joined(separator: "; ") + "."
+            return done(.facts, [.text(text)] + placeBlocks(ids, title: "Places"), ctx)
+        }
+        // "menu at Taco Row", "what's on the menu", "what do they have" (the place just shown).
+        if Rx.contains(#"\b(menu|menus|what do they (have|sell|serve)|what can i (get|order) (at|there))\b"#, cmd) {
+            var place: Int?
+            if let named = placesNamed(in: cmd, ctx).first(where: { id in menus.contains { $0.id == id } }) { place = named }
+            else if let refs = ctx.memory.resolve("there", kinds: [.location, .schedule], bundle), let ref = refs.first {
+                place = ref.kind == .location ? ref.id : bundle.scheduleItem(ref.id)?.locationId
+            }
+            guard let id = place, let loc = bundle.location(id), !(loc.context?.menu.isEmpty ?? true) else { return nil }
+            return done(.facts, [.text("The menu at \(loc.name)."), .component(Component(type: "menu", ids: [EntityRef(kind: .location, id: id)])),
+                                 BlockValidator.card(EntityRef(kind: .location, id: id))], ctx)
+        }
+        // "how much is the brisket plate": a menu line named in the question.
+        let words = Set(AssistantSearch.words(cmd).map(stem))
+        var best: (loc: Location, entry: MenuEntry, score: Int)?
+        for loc in menus {
+            for entry in loc.context?.menu ?? [] {
+                let name = AssistantSearch.words(entry.name).map(stem).filter { $0.count > 2 }
+                guard !name.isEmpty, name.allSatisfy(words.contains) else { continue }
+                if name.count > (best?.score ?? 0) { best = (loc, entry, name.count) }
+            }
+        }
+        if let best, best.score >= 2 || Rx.contains(#"\b(how much|price|cost)\b"#, cmd) {
+            let price = best.entry.price.isEmpty ? "" : " is \(best.entry.price)"
+            let note = best.entry.note.isEmpty ? "" : " (\(best.entry.note))"
+            return done(.facts, [.text("\(best.entry.name)\(price) at \(best.loc.name)\(note)."), BlockValidator.card(EntityRef(kind: .location, id: best.loc.id))], ctx)
+        }
+        return nil
+    }
+
+    // MARK: Updates and organizer changes
+
+    static func updatesTurn(_ cmd: String, _ ctx: RouterContext) -> RoutedTurn? {
+        guard !Rx.contains(commandVerb, cmd), !ctx.bundle.notifications.isEmpty,
+              Rx.contains(#"\b(announcements?|updates?|news|alerts?|notifications?|messages?)\b"#, cmd) else { return nil }
+        let sorted = ctx.bundle.notifications.stableSorted { ($0.sendTime ?? .distantPast) > ($1.sendTime ?? .distantPast) }
+        let urgentOnly = Rx.contains(#"\b(urgent|emergency|important)\b"#, cmd)
+        let latestOnly = Rx.contains(#"\b(latest|last|newest|recent|most recent)\b"#, cmd)
+        var picked = urgentOnly ? sorted.filter(\.isUrgent) : sorted
+        if picked.isEmpty { picked = sorted }
+        if latestOnly || urgentOnly { picked = Array(picked.prefix(1)) }
+        let refs = picked.map { EntityRef(kind: .update, id: $0.id) }
+        let blocks: [AssistantBlock] = refs.count == 1 ? [BlockValidator.card(refs[0])]
+            : [.list(ids: refs, title: "Updates"), chips([AssistantChip(label: "All updates", action: .open("updates"))])]
+        return done(.facts, blocks, ctx)
+    }
+
+    /// Updates that name `name` (a moved or cancelled set).
+    private static func updatesNaming(_ name: String, _ ctx: RouterContext) -> [Int] {
+        let key = command(name)
+        return ctx.bundle.notifications.filter { command("\($0.title) \($0.body)").contains(key) }.map(\.id)
+    }
+
+    static func changesTurn(_ cmd: String, _ ctx: RouterContext) -> RoutedTurn? {
+        guard !Rx.contains(commandVerb, cmd),
+              Rx.contains(#"\b(cancel+ed|cancellations?|cancelled|moved|changes?|changed|delayed|delays?|rescheduled|postponed)\b"#, cmd),
+              Rx.contains(#"^(is|are|was|were|any|anything|did|has|have|what|which|whats|what s)\b"#, cmd) else { return nil }
+        if namedEntities(cmd, ctx).isEmpty == false { return nil }  // "did Velvet Mesquite move": the entity rule
+        let cancelled = ctx.bundle.schedule.filter { item in
+            command("\(item.description) \(item.context?.about ?? "")").contains("cancel") && ScheduleTiming.effectiveEnd(of: item).map { $0 > ctx.now } ?? true
+        }.map(\.id)
+        let notes = ctx.bundle.notifications.filter { Rx.contains(#"\b(cancel\w*|moves?|moved|delay\w*|chang\w*|reschedul\w*)\b"#, command("\($0.title) \($0.body)")) }.map(\.id)
+        if cancelled.isEmpty && notes.isEmpty { return done(.facts, [.text("The organizer hasn't announced any changes.")], ctx) }
+        var refs = cancelled.map { EntityRef(kind: .schedule, id: $0) }
+        refs += notes.map { EntityRef(kind: .update, id: $0) }
+        let blocks: [AssistantBlock] = [.text("Changes from the organizer:"), refs.count == 1 ? BlockValidator.card(refs[0]) : .list(ids: refs, title: "Changes")]
+        return done(.facts, blocks, ctx)
+    }
+
+    // MARK: Entities named in a question
+
+    private static let genericNameWords: Set<String> = ["the", "stage", "row", "lane", "zone", "booth", "garden", "stand", "market", "kitchen",
+                                                       "demo", "pit", "north", "south", "tacos", "island", "open", "gates", "trio", "radio", "band",
+                                                       "games", "home", "street", "main", "spot", "sweet", "kids", "info", "first", "aid", "lights", "parking"]
+
+    /// Schedule items and places named in `cmd`: whole names first (longest first, "the" optional),
+    /// else a distinctive word that only one name has ("mariachi", "strings").
+    static func namedEntities(_ cmd: String, _ ctx: RouterContext) -> [EntityRef] {
+        let padded = " " + cmd + " "
+        var names: [(String, [EntityRef])] = []
+        var byName: [String: [EntityRef]] = [:]
+        for item in ctx.bundle.schedule { byName[command(item.name), default: []].append(EntityRef(kind: .schedule, id: item.id)) }
+        for loc in ctx.bundle.locations { byName[command(loc.name), default: []].append(EntityRef(kind: .location, id: loc.id)) }
+        for (name, refs) in byName { names.append((name, refs)) }
+        names.sort { $0.0.count != $1.0.count ? $0.0.count > $1.0.count : $0.0 < $1.0 }
+        for (name, refs) in names {
+            let bare = name.hasPrefix("the ") ? String(name.dropFirst(4)) : name
+            if padded.contains(" \(name) ") || (bare.count >= 5 && padded.contains(" \(bare) ")) { return refs }
+        }
+        var owners: [String: Set<String>] = [:]
+        for (name, _) in names {
+            for word in name.split(separator: " ").map(String.init) where word.count >= 5 && !genericNameWords.contains(word) {
+                owners[word, default: []].insert(name)
+            }
+        }
+        let words = Set(cmd.split(separator: " ").map(String.init))
+        let hits = owners.filter { words.contains($0.key) && $0.value.count == 1 }.compactMap(\.value.first)
+        if Set(hits).count == 1, let name = hits.first { return byName[name] ?? [] }
+        return []
+    }
+
+    /// The upcoming (or running) instances first, then ended ones, by time.
+    private static func byTiming(_ refs: [EntityRef], _ ctx: RouterContext) -> [EntityRef] {
+        refs.stableSorted { a, b in
+            func key(_ r: EntityRef) -> (Int, Date) {
+                guard let item = ctx.bundle.scheduleItem(r.id) else { return (2, .distantFuture) }
+                let ended = ScheduleTiming.effectiveEnd(of: item).map { $0 <= ctx.now } ?? false
+                return (ended ? 1 : 0, item.startTime ?? .distantFuture)
+            }
+            let ka = key(a), kb = key(b)
+            return ka.0 != kb.0 ? ka.0 < kb.0 : ka.1 < kb.1
+        }
+    }
+
+    static func entityQuestionTurn(_ cmd: String, _ ctx: RouterContext) -> RoutedTurn? {
+        var refs = namedEntities(cmd, ctx)
+        guard !refs.isEmpty else { return nil }
+        let bundle = ctx.bundle
+        var blocks: [AssistantBlock] = []
+        if refs.allSatisfy({ $0.kind == .schedule }) {
+            refs = byTiming(refs, ctx)
+            if let item = bundle.scheduleItem(refs[0].id) {
+                // "something similar to X": acts sharing a genre tag.
+                if Rx.contains(#"\b(similar|like|sounds like|more like)\b"#, cmd) {
+                    let tags = Set(item.tags).subtracting(["live music", "free", "general"])
+                    let similar = bundle.schedule.filter { other in
+                        other.name != item.name && !Set(other.tags).isDisjoint(with: tags)
+                            && (ScheduleTiming.effectiveEnd(of: other).map { $0 > ctx.now } ?? true)
+                    }.map { EntityRef(kind: .schedule, id: $0.id) }
+                    if !similar.isEmpty {
+                        let shown = byTiming(similar, ctx)
+                        return done(.facts, [.text("Like \(item.name):"), shown.count == 1 ? BlockValidator.card(shown[0]) : .carousel(ids: Array(shown.prefix(8)), title: "Similar")], ctx)
+                    }
+                }
+                let note = command("\(item.description) \(item.context?.about ?? "")").contains("cancel") ? item.description : nil
+                if let note { blocks.append(.text(note)) }
+                if Rx.contains(#"\b(listen|spotify|apple music|stream|song|songs|album)\b"#, cmd), !(item.context?.performers.isEmpty ?? true) {
+                    let linked = item.context?.performers.contains { $0.appleMusicURL != nil } ?? false
+                    if cmd.contains("spotify") || !linked {
+                        blocks.append(.text(linked ? "Attnd links to Apple Music only." : "There's no music link for \(item.name) here."))
+                    }
+                    blocks.append(.component(Component(type: "performers", ids: [refs[0]])))
+                }
+            }
+        }
+        blocks.append(refs.count == 1 ? BlockValidator.card(refs[0]) : .list(ids: Array(refs.prefix(BlockValidator.maxList)), title: "Times"))
+        if let first = refs.first, let name = first.name(bundle) {
+            let updates = updatesNaming(name, ctx)
+            if !updates.isEmpty { blocks.append(BlockValidator.card(EntityRef(kind: .update, id: updates[0]))) }
+        }
+        if let first = refs.first { blocks.append(chips(entityChips(first, ctx))) }
+        return done(.facts, blocks, ctx)
+    }
+
+    /// "How far is the Main Stage", "how long to walk to X": the place (its card shows distance and walk).
+    static func howFarTurn(_ cmd: String, _ ctx: RouterContext) -> RoutedTurn? {
+        guard let m = Rx.find(#"^(?:how far(?: away)?(?: is| are| to)?|how long (?:to walk|is the walk|does it take) to|how many minutes to)\s+(?:the\s+)?(.+)$"#, cmd) else { return nil }
+        var refs = namedEntities(m[1], ctx)
+        if refs.isEmpty, case .found(let ref) = resolve(m[1], [.location, .schedule], ctx) { refs = [ref] }
+        guard let ref = refs.first else { return nil }
+        let place = ref.kind == .location ? ref.id : ctx.bundle.scheduleItem(ref.id)?.locationId
+        guard let place, let loc = ctx.bundle.location(place) else { return nil }
+        var blocks: [AssistantBlock] = []
+        if let user = ctx.user, let point = loc.coordinate {
+            let meters = Planner.distance(user, point)
+            let minutes = max(1, Int((meters * 1.2 / 1.3 / 60).rounded(.up)))
+            blocks.append(.text("\(loc.name) is about \(minutes) min on foot."))
+        } else {
+            blocks.append(.text("Turn on location to see how far \(loc.name) is."))
+        }
+        blocks.append(BlockValidator.card(EntityRef(kind: .location, id: place)))
+        if loc.coordinate != nil { blocks.append(chips([AssistantChip(label: "Directions", action: .directions(place))])) }
+        return done(.facts, blocks, ctx)
+    }
+
+    /// "When does the festival end", "what time does it end tonight".
+    static func endTurn(_ cmd: String, _ ctx: RouterContext) -> RoutedTurn? {
+        guard Rx.contains(#"\b(when|what time)\b.*\b(end|ends|finish|finishes|over|close|closes|wrap up)\b"#, cmd) else { return nil }
+        let zone = ctx.bundle.event.timeZone
+        if Rx.contains(#"\b(tonight|today)\b"#, cmd) {
+            let calendar = PlanCalendar.calendar(zone)
+            let today = calendar.startOfDay(for: ctx.now)
+            let todays = ctx.bundle.schedule.filter { $0.startTime.map { calendar.startOfDay(for: $0) == today } ?? false }
+            guard let last = todays.max(by: { (ScheduleTiming.effectiveEnd(of: $0) ?? .distantPast) < (ScheduleTiming.effectiveEnd(of: $1) ?? .distantPast) }),
+                  let end = ScheduleTiming.effectiveEnd(of: last) else { return nil }
+            let place = ctx.bundle.location(last.locationId).map { " at \($0.name)" } ?? ""
+            return done(.facts, [.text("Today's last item, \(last.name)\(place), ends at \(EventTimeFormat.time(end, in: zone, locale: ctx.locale))."),
+                                 BlockValidator.card(EntityRef(kind: .schedule, id: last.id))], ctx)
+        }
+        guard Rx.contains(#"\b(festival|event|it all|everything|this)\b"#, cmd), let end = ctx.bundle.event.endTime else { return nil }
+        let weekday = PlanCalendar.calendar(zone).component(.weekday, from: end)
+        let day = Calendar(identifier: .gregorian).shortWeekdaySymbols[(weekday + 6) % 7]
+        return done(.facts, [.text("\(ctx.bundle.event.name) runs until \(day) \(EventTimeFormat.time(end, in: zone, locale: ctx.locale)).")], ctx)
+    }
+
+    /// Small talk the router shouldn't search for ("thanks", "you suck", "I love you").
+    static func smallTalkTurn(_ cmd: String, _ ctx: RouterContext) -> RoutedTurn? {
+        let text: String
+        if Rx.matches(#"(thanks|thank you|thx|ty|cheers|thanks a lot|thank you so much)"#, cmd) { text = "You're welcome!" }
+        else if Rx.matches(#"(hi|hello|hey|hey there|hiya|yo|good (morning|afternoon|evening))"#, cmd) { text = "Hi! Ask me about the schedule, places or your plan." }
+        else if Rx.contains(#"\b(you suck|you re useless|youre useless|stupid|dumb bot|hate you)\b"#, cmd) { text = "Sorry about that. Try one of these:" }
+        else if Rx.matches(#"(i love you|love you|you re great|you are great|good bot)"#, cmd) { text = "Glad to help! Anything else about the event?" }
+        else if Rx.matches(#"(help|what can you do|what do you do|how does this work|what can i ask|what can i ask you|how do i use this)"#, cmd) {
+            text = "Ask me what's on, where things are (food, restrooms, water), about the event's rules, or say \"add Taco Row to my schedule\"."
+        }
+        else if Rx.matches(#"(ok|okay|cool|got it|nice|great|alright|k|kk|perfect|sounds good)"#, cmd) { text = "Okay." }
+        else { return nil }
+        return done(.facts, [.text(text), .chips(suggestionChips(ctx))], ctx)
+    }
+
+    /// Not a thing to add ("I love you").
+    static let notTargets: Set<String> = ["you", "u", "ya", "this app", "attnd", "it all", "this", "that", "everything", "everyone", "all of it"]
+
+    /// Of several instances of one name (an act playing three times), the one on now, else the next.
+    static func sameNameNext(_ refs: [EntityRef], _ ctx: RouterContext) -> EntityRef? {
+        let items = refs.compactMap { ref in ref.kind == .schedule ? ctx.bundle.scheduleItem(ref.id) : nil }
+        guard items.count == refs.count, items.count > 1, Set(items.map { command($0.name) }).count == 1 else { return nil }
+        let upcoming = items.filter { ScheduleTiming.effectiveEnd(of: $0).map { $0 > ctx.now } ?? true }
+            .sorted { ($0.startTime ?? .distantFuture) < ($1.startTime ?? .distantFuture) }
+        return upcoming.first.map { EntityRef(kind: .schedule, id: $0.id) }
+    }
+
+    /// "When is it", "where is that": the thing the conversation just showed.
+    static func memoryQuestion(_ cmd: String, _ ctx: RouterContext) -> RoutedTurn? {
+        guard let m = Rx.find(#"^(?:when|where|what time) (?:is|are|does|do) (it|that|this|they|them|this one|that one)(?: start| play| on| begin| open)?$"#, cmd),
+              let refs = ctx.memory.resolve(m[1], kinds: [.schedule, .location], ctx.bundle), let ref = refs.first else { return nil }
+        return done(.facts, [BlockValidator.card(ref), chips(entityChips(ref, ctx))], ctx)
+    }
+
+    /// The time words of a "what's on" question without the words around them ("sunday schedule",
+    /// "happening right now"); "in an hour" / "in 30 minutes" → that clock time.
+    static func timeQuery(_ cmd: String, _ keywords: String, _ ctx: RouterContext) -> String {
+        if let m = Rx.find(#"\bin (an|one|a|half an|\d+) (hour|hours|minutes|mins|min)\b"#, cmd) {
+            let n = Int(m[1]) ?? (m[1] == "half an" ? 30 : 1)
+            let minutes = m[2].hasPrefix("h") ? (m[1] == "half an" ? 30 : n * 60) : n
+            let at = ctx.now.addingTimeInterval(Double(minutes) * 60)
+            let c = PlanCalendar.calendar(ctx.bundle.event.timeZone).dateComponents([.hour, .minute], from: at)
+            let hour = c.hour ?? 0, minute = c.minute ?? 0
+            return "\((hour + 11) % 12 + 1):\(String(format: "%02d", minute))\(hour < 12 ? "am" : "pm")"
+        }
+        let text = " " + keywords + " "
+        let stripped = Rx.replace(#"\b(schedule|lineup|line up|program|programme|agenda|events?|timetable|set times|happening|going on|right|currently|on|there|anything|stuff|things|playing|shows?)\b"#, text, with: " ")
+        let words = stripped.split(separator: " ").map(String.init)
+        return words == keywords.split(separator: " ").map(String.init) ? "" : words.joined(separator: " ")
+    }
+
+    /// Everyday words the event's tags don't use.
+    static func synonymQuery(_ cmd: String) -> String? {
+        let table: [(String, String)] = [
+            (#"\b(hungry|grub|starving|snacks?|something to eat|eat|eats|munchies|comer|comida|manger|nourriture|essen)\b"#, "food"),
+            (#"\b(ahora|maintenant|jetzt|adesso)\b"#, "now"),
+            (#"\b(prochain|prochaine|siguiente|proximo|nachste|naechste)\b"#, "next"),
+            (#"\b(booze|alcohol|cocktails?|wine|a drink|drinks|thirsty)\b"#, "drinks"),
+            (#"\b(edm|electronic|techno|house music|dance music|rave)\b"#, "dj"),
+            (#"\b(party|after ?party|late night|nightlife)\b"#, "late night"),
+            (#"\b(kids area|kid area|play area|children s area|for kids|for children)\b"#, "kids"),
+            (#"\b(bored|what should i do|something to do|anything fun|entertain me)\b"#, "now"),
+            (#"^(?:any|some)\s+(.+)$"#, "$1"),
+        ]
+        for (pattern, query) in table {
+            if query == "$1", let m = Rx.find(pattern, cmd) { return m[1] }
+            if query != "$1", Rx.contains(pattern, cmd) { return query }
+        }
+        return nil
     }
 }

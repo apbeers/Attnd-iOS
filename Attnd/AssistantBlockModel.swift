@@ -459,6 +459,8 @@ enum BlockValidator {
             return AssistantBlock.summaries.contains(kind) && (kind != "walking" || hasPlan) ? block : nil
         case .share(let target):
             if target == "plan" { return hasPlan ? block : nil }
+            // My schedule's /p/ link (batch 7; the eval found it dropped here, Nov 22, 2026).
+            if target == "schedule" { return block }
             if target.hasPrefix("item:") {
                 guard let ref = EntityRef.parse(String(target.dropFirst(5))), ref.kind == .schedule, ref.exists(bundle) else { return nil }
                 return .share("item:\(ref.code)")

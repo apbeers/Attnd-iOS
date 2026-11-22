@@ -31,13 +31,13 @@ enum AssistantFlow {
         .planEdit, .planUndo, .planVersion, .planCompare, .planMake, .planShow, .planNext, .walking, .recap, .noPlan, .whyNot,
     ]
 
-    private static let asked: Set<AssistantIntent> = [.question, .noMatch]
+    private static let asked: Set<AssistantIntent> = [.question, .noMatch, .facts]
 
     static func path(_ intent: AssistantIntent, _ input: String, modelAvailable: Bool, forced: TurnPath? = nil) -> TurnPath {
         if forced == .ask { return modelAvailable ? .ask : .search }
         if let forced { return forced }
         // The router is English: questions in other languages go to the model (iOS).
-        if modelAvailable && intent != .schedule && looksForeign(input) { return .ask }
+        if modelAvailable && intent != .schedule && intent != .safety && looksForeign(input) { return .ask }
         if planIntents.contains(intent) { return .plan }
         if modelAvailable && (asked.contains(intent) || (intent == .search && AssistantSearch.words(input).count >= 4)) { return .ask }
         return .search

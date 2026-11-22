@@ -582,14 +582,12 @@ struct MyScheduleUpNext: View {
                 RoundedRectangle(cornerRadius: 20).strokeBorder(.tint, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
             }
         }
-        .dropDestination(for: String.self) { strings, _ in
-            guard let payload = strings.lazy.compactMap(DragPayload.parse).first else { return false }
+        .payloadDrop(isTargeted: $dropTargeted) { payload in
             switch payload {
             case .item(let id): appState.addToScheduleWithUndo(.scheduleItem(id))
             case .place(let id): appState.addToScheduleWithUndo(.location(id))
             }
-            return true
-        } isTargeted: { dropTargeted = $0 }
+        }
         .animation(.easeOut(duration: 0.15), value: dropTargeted)
     }
 

@@ -462,6 +462,7 @@ final class AssistantController {
         }
     }
 
+    /// Older builds' UserDefaults key (moved into `AssistantFiles` on first read).
     private static func transcriptKey(_ eventId: Int) -> String { "pref.assistantTranscript.\(eventId)" }
 
     private func saveTranscript() {
@@ -469,11 +470,11 @@ final class AssistantController {
         let entries = transcript.filter { !$0.streaming }.map {
             ChatTranscript.Entry(id: $0.id, input: $0.input, blocks: $0.blocks, fromModel: $0.source == .model, status: $0.status)
         }
-        UserDefaults.standard.set(ChatTranscript(entries: entries).encode(), forKey: Self.transcriptKey(eventId))
+        AssistantFiles.shared.set(ChatTranscript(entries: entries).encode(), "transcript-\(eventId).json")
     }
 
     private func restoreTranscript(_ eventId: Int) {
-        let stored = ChatTranscript.decode(UserDefaults.standard.string(forKey: Self.transcriptKey(eventId)))
+        let stored = ChatTranscript.decode(AssistantFiles.shared.string("transcript-\(eventId).json", legacyKey: Self.transcriptKey(eventId)))
         transcript = stored.entries.map { Turn(id: $0.id, input: $0.input, blocks: $0.blocks, source: $0.fromModel ? .model : .rules, status: $0.status) }
         nextId = (transcript.map(\.id).max() ?? 0) + 1
     }

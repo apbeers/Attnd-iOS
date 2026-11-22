@@ -391,7 +391,8 @@ struct LocationGlance: Hashable, Sendable {
     static let pinNextWindow: TimeInterval = 3 * 3600
 
     static func make(locationId: Int, schedule: [ScheduleItem], now: Date) -> LocationGlance {
-        all(schedule: schedule, now: now)[locationId] ?? LocationGlance()
+        // Only that place's items (rows call this per place; `all` walked the whole schedule).
+        all(schedule: schedule.filter { $0.locationId == locationId }, now: now)[locationId] ?? LocationGlance()
     }
 
     /// Glances for every location with schedule items (keyed by location id).

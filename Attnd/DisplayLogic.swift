@@ -519,6 +519,8 @@ enum FoldPosture: Hashable, Sendable {
 /// `period` seconds, fading in at the start and out at the end.
 enum RoutePulse {
     static let period: Double = 2
+    /// Passes shown when a route appears (then it stops; opacity 0 at the ends).
+    static let passes = 3
 
     static func fraction(elapsed: Double) -> Double {
         let t = elapsed.truncatingRemainder(dividingBy: period) / period

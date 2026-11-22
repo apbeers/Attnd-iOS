@@ -139,6 +139,46 @@ struct TimeTravelScrubber: View {
     }
 }
 
+/// Drag between panes: a drop of `DragPayload` strings. iOS 26's `dropDestination(for:isEnabled:
+/// action:)` with its `DropSession` (the `action:isTargeted:` variant is deprecated in the 27.3
+/// SDK); the "targeted" highlight comes from `onDropSessionUpdated`, which exists from iOS 27.0
+/// (iOS 26 drops work, without the highlight).
+private struct PayloadDrop: ViewModifier {
+    var isTargeted: Binding<Bool>?
+    let perform: (DragPayload) -> Void
+
+    func body(content: Content) -> some View {
+        let base = content.dropDestination(for: String.self) { strings, _ in
+            isTargeted?.wrappedValue = false
+            if let payload = strings.lazy.compactMap(DragPayload.parse).first { perform(payload) }
+        }
+        #if IOS27_SDK
+        if #available(iOS 27.0, *) {
+            if let isTargeted {
+                base.onDropSessionUpdated { session in
+                    switch session.phase {
+                    case .entering, .active: if !isTargeted.wrappedValue { isTargeted.wrappedValue = true }
+                    default: if isTargeted.wrappedValue { isTargeted.wrappedValue = false }
+                    }
+                }
+            } else {
+                base
+            }
+        } else {
+            base
+        }
+        #else
+        base
+        #endif
+    }
+}
+
+extension View {
+    func payloadDrop(isTargeted: Binding<Bool>? = nil, perform: @escaping (DragPayload) -> Void) -> some View {
+        modifier(PayloadDrop(isTargeted: isTargeted, perform: perform))
+    }
+}
+
 /// Bottom spacing for overlays at the map's bottom edge: clear of Apple Maps' legal label.
 enum MapOverlayMetrics {
     static let legalClearance: CGFloat = 30
@@ -552,11 +592,10 @@ struct PlanningBoard: View {
                     .allowsHitTesting(false)
             }
         }
-        .dropDestination(for: String.self) { strings, _ in
-            guard case .item(let id)? = strings.lazy.compactMap(DragPayload.parse).first else { return false }
+        .payloadDrop(isTargeted: $targeted) { payload in
+            guard case .item(let id) = payload else { return }
             appState.assistant.addToPlan(id)
-            return true
-        } isTargeted: { targeted = $0 }
+        }
         .animation(.easeOut(duration: 0.15), value: targeted)
     }
 }

@@ -198,11 +198,17 @@ struct MapView: View {
         }
         .task(id: walk.map { "\($0.linePoints.count)-\($0.isEstimate)" } ?? "none") {
             guard walk != nil, !reduceMotion else { return }
+            // Hitch audit (Nov 22, 2026): every pulse step re-evaluates the whole map (all pins,
+            // badges, clusters), so it runs at ~15 fps and only for a few passes after the route
+            // appears (it showed the direction; a pulse forever cost frames while panning).
             let start = Date.now
             while !Task.isCancelled {
-                pulse = RoutePulse.fraction(elapsed: Date.now.timeIntervalSince(start))
-                try? await Task.sleep(for: .milliseconds(50))
+                let elapsed = Date.now.timeIntervalSince(start)
+                guard elapsed < RoutePulse.period * Double(RoutePulse.passes) else { break }
+                pulse = RoutePulse.fraction(elapsed: elapsed)
+                try? await Task.sleep(for: .milliseconds(66))
             }
+            pulse = 0
         }
         .onMapCameraChange(frequency: .continuous) { context in
             let heading = context.camera.heading
@@ -246,19 +252,17 @@ struct MapView: View {
             ui.paneScrollLocationId = id
         }
         // Drag between panes: a set or place dropped on the map shows where it is.
-        .dropDestination(for: String.self) { strings, _ in
-            guard let payload = strings.lazy.compactMap(DragPayload.parse).first else { return false }
+        .payloadDrop { payload in
             switch payload {
             case .place(let id):
-                guard appState.location(id: id)?.coordinate != nil else { return false }
+                guard appState.location(id: id)?.coordinate != nil else { return }
                 focus(on: id)
             case .item(let id):
                 guard let locationId = appState.schedule.first(where: { $0.id == id })?.locationId,
-                      appState.location(id: locationId)?.coordinate != nil else { return false }
+                      appState.location(id: locationId)?.coordinate != nil else { return }
                 ui.paneItemId = id
                 focus(on: locationId)
             }
-            return true
         }
         .onChange(of: selectedCategory) { dropHiddenSelection(); refitForFilter() }
         .onChange(of: heartedOnly) { dropHiddenSelection(); refitForFilter() }

@@ -21,24 +21,51 @@ import SwiftUI
 /// of the container that is clear of reserved hardware regions — the hinge of a
 /// foldable and camera housings — using `ReservedRegionLayout.insets`.
 /// Fills its container; empty space stays transparent to touches.
+///
+/// Cheap (hitch audit, Nov 22, 2026): the regions are read by a small probe in the background
+/// that re-runs only when the container's geometry changes (an `EquatableView` that is always
+/// "equal", so the overlay's own updates never re-run it); the content re-renders with the stored
+/// insets and nothing is recomputed per layout pass of the content.
 struct ReservedRegionAvoiding<Content: View>: View {
     @ViewBuilder var content: Content
 
+    @State private var insets = ReservedRegionLayout.Insets()
+
+    var body: some View {
+        content
+            .padding(EdgeInsets(
+                top: insets.top,
+                leading: insets.leading,
+                bottom: insets.bottom,
+                trailing: insets.trailing
+            ))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background {
+                ReservedRegionProbe(insets: $insets).equatable()
+            }
+    }
+}
+
+/// Reads the reserved regions during layout and stores the insets that avoid them (only when
+/// they changed). Equal to every other probe, so its parent's updates don't re-evaluate it; its
+/// GeometryReader still re-runs on every geometry change (a fold, a resize).
+struct ReservedRegionProbe: View, Equatable {
+    @Binding var insets: ReservedRegionLayout.Insets
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool { true }
+
     var body: some View {
         GeometryReader { proxy in
-            let insets = ReservedRegionLayout.insets(
+            let measured = ReservedRegionLayout.insets(
                 container: proxy.size,
                 avoiding: ReservedRegionReader.rects(in: proxy)
             )
-            content
-                .padding(EdgeInsets(
-                    top: insets.top,
-                    leading: insets.leading,
-                    bottom: insets.bottom,
-                    trailing: insets.trailing
-                ))
-                .frame(width: proxy.size.width, height: proxy.size.height)
+            Color.clear
+                .onAppear { if insets != measured { insets = measured } }
+                .onChange(of: measured) { _, value in if insets != value { insets = value } }
         }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 

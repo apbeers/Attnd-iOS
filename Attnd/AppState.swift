@@ -2328,6 +2328,9 @@ extension AppHandover {
     /// The clip, after saving and when it goes to the background.
     static func exportFromClip() {
         guard isAppClip, let shared = sharedDefaults else { return }
+        // The transcript, plan history and conversation are already files in the group
+        // container (AssistantFiles); make sure the queued writes have landed.
+        AssistantFiles.shared.flush()
         export(from: .standard, to: shared, eventFile: eventFile, sharedDirectory: sharedDirectory)
     }
 

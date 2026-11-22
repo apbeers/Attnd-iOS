@@ -92,3 +92,86 @@ enum AppHandover {
         shared?.object(forKey: appInstalledKey) != nil
     }
 }
+
+// MARK: - Assistant files (Nov 22, 2026)
+
+/// The chat transcript, the plan's undo stack and the model's conversation, as files in the App
+/// Group container (`attnd-assistant/<name>`) instead of UserDefaults: they grow to tens of KB
+/// per event, and every UserDefaults write re-encodes the whole domain on the main thread. The
+/// app and the App Clip read the same container, so the handover needs nothing more for them
+/// (the app opens the clip's transcript for the same event). Without the container (tests,
+/// a missing entitlement) Application Support is used.
+///
+/// Reads are synchronous (from memory after the first), writes are queued on one background
+/// queue in order (atomic). The first read of a name moves an older build's UserDefaults value
+/// into the file (written synchronously before the key is removed, so nothing is lost).
+final class AssistantFiles: @unchecked Sendable {
+    static let shared = AssistantFiles()
+
+    let directory: URL?
+    private let lock = NSLock()
+    private var cache: [String: String?] = [:]
+    private let queue = DispatchQueue(label: "com.arcu.Attnd.assistant-files", qos: .utility)
+
+    init(directory: URL? = AssistantFiles.defaultDirectory()) {
+        self.directory = directory
+    }
+
+    static func defaultDirectory() -> URL? {
+        #if canImport(Darwin)
+        let group = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: AppHandover.groupId)
+        #else
+        let group: URL? = nil  // the Linux test harness
+        #endif
+        let base = group ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        return base?.appendingPathComponent("attnd-assistant", isDirectory: true)
+    }
+
+    /// The file's text. `legacyKey`: the UserDefaults key older builds stored it under.
+    func string(_ name: String, legacyKey: String? = nil, defaults: UserDefaults = .standard) -> String? {
+        lock.lock()
+        if let hit = cache[name] { lock.unlock(); return hit }
+        lock.unlock()
+        var value = directory.flatMap { try? String(contentsOf: $0.appendingPathComponent(name), encoding: .utf8) }
+        if value == nil, let legacyKey, let old = defaults.string(forKey: legacyKey) {
+            value = old
+            if write(old, name) { defaults.removeObject(forKey: legacyKey) }
+        }
+        lock.lock()
+        // A write that raced this read wins.
+        if let newer = cache[name] { lock.unlock(); return newer }
+        cache[name] = .some(value)
+        lock.unlock()
+        return value
+    }
+
+    /// Stores (nil = deletes) the file's text; the write happens in the background, in order.
+    func set(_ value: String?, _ name: String) {
+        lock.lock()
+        cache[name] = .some(value)
+        lock.unlock()
+        queue.async { [weak self] in _ = self?.write(value, name) }
+    }
+
+    /// Waits for queued writes (tests, going to the background, the handover export).
+    func flush() {
+        queue.sync {}
+    }
+
+    @discardableResult
+    private func write(_ value: String?, _ name: String) -> Bool {
+        guard let directory else { return false }
+        let file = directory.appendingPathComponent(name)
+        do {
+            if let value {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try Data(value.utf8).write(to: file, options: .atomic)
+            } else if FileManager.default.fileExists(atPath: file.path) {
+                try FileManager.default.removeItem(at: file)
+            }
+            return true
+        } catch {
+            return false
+        }
+    }
+}

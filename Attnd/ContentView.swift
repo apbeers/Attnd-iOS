@@ -397,6 +397,8 @@ extension View {
 private struct LatestUpdateBannerModifier: ViewModifier {
     let enabled: Bool
 
+    @State private var insets = ReservedRegionLayout.Insets()
+
     @Environment(AppState.self) private var appState
 
     func body(content: Content) -> some View {
@@ -406,28 +408,28 @@ private struct LatestUpdateBannerModifier: ViewModifier {
         let notification = enabled && urgent == nil ? appState.latestUpdateBanner() : nil
         // The banner keeps to one side of a vertical fold (iPhone Duo unfolded): the tab's own
         // container decides which side (ReservedRegionLayout), the banner takes its width.
-        GeometryReader { proxy in
-            let insets = ReservedRegionLayout.insets(container: proxy.size, avoiding: ReservedRegionReader.rects(in: proxy))
-            content
-                .safeAreaInset(edge: .top, spacing: 0) {
-                    Group {
-                        if let urgent {
-                            UrgentUpdateBanner(notification: urgent)
-                                .swipeUpToDismiss { appState.dismissUrgent(urgent.id) }
-                                .transition(.move(edge: .top).combined(with: .opacity))
-                        } else if let notification {
-                            LatestUpdateBanner(notification: notification)
-                                .swipeUpToDismiss { appState.dismissLatestUpdate(notification.id) }
-                                .transition(.move(edge: .top).combined(with: .opacity))
-                        }
+        content
+            .safeAreaInset(edge: .top, spacing: 0) {
+                Group {
+                    if let urgent {
+                        UrgentUpdateBanner(notification: urgent)
+                            .swipeUpToDismiss { appState.dismissUrgent(urgent.id) }
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    } else if let notification {
+                        LatestUpdateBanner(notification: notification)
+                            .swipeUpToDismiss { appState.dismissLatestUpdate(notification.id) }
+                            .transition(.move(edge: .top).combined(with: .opacity))
                     }
-                    .padding(.leading, insets.leading)
-                    .padding(.trailing, insets.trailing)
-                    .debugFloatingFrame("banner")
                 }
-                .animation(.easeInOut, value: urgent?.id)
-                .animation(.easeInOut, value: notification?.id)
-        }
+                .padding(.leading, insets.leading)
+                .padding(.trailing, insets.trailing)
+                .debugFloatingFrame("banner")
+            }
+            .animation(.easeInOut, value: urgent?.id)
+            .animation(.easeInOut, value: notification?.id)
+            // The insets come from a probe that re-runs only on geometry changes (hitch audit:
+            // a GeometryReader around every tab re-read the regions on each update).
+            .background { ReservedRegionProbe(insets: $insets).equatable() }
     }
 }
 

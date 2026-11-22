@@ -459,6 +459,27 @@ final class ScreenLayoutTests: XCTestCase {
         XCTAssertEqual(tabs.defaultTab, .home)
     }
 
+    func testAssistantFiles_MoveFromDefaultsOnceAndShareTheContainer() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("assistant-\(UUID().uuidString)", isDirectory: true)
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "test.files.\(UUID().uuidString)"))
+        defaults.set("old transcript", forKey: "pref.assistantTranscript.7")
+        let clip = AssistantFiles(directory: dir)
+        // First read moves the old value into the file and removes the key.
+        XCTAssertEqual(clip.string("transcript-7.json", legacyKey: "pref.assistantTranscript.7", defaults: defaults), "old transcript")
+        XCTAssertNil(defaults.string(forKey: "pref.assistantTranscript.7"))
+        clip.set("new transcript", "transcript-7.json")
+        XCTAssertEqual(clip.string("transcript-7.json"), "new transcript", "reads see the queued write")
+        clip.flush()
+        // Another process on the same group container (the full app after the clip) reads it.
+        let app = AssistantFiles(directory: dir)
+        XCTAssertEqual(app.string("transcript-7.json", legacyKey: "pref.assistantTranscript.7", defaults: defaults), "new transcript")
+        app.set(nil, "transcript-7.json")
+        app.flush()
+        XCTAssertNil(AssistantFiles(directory: dir).string("transcript-7.json"))
+        XCTAssertNil(AssistantFiles(directory: nil).string("x", legacyKey: "missing", defaults: defaults))
+        try? FileManager.default.removeItem(at: dir)
+    }
+
     func testAppHandover_ClipToApp() throws {
         let base = FileManager.default.temporaryDirectory.appendingPathComponent("handover-\(UUID().uuidString)")
         let shared = try XCTUnwrap(UserDefaults(suiteName: "test.shared.\(UUID().uuidString)"))

@@ -176,62 +176,37 @@ final class LiveFollowController {
         let personal = appState.personal
         let planned = appState.plannedItemIds
         let enabled = appState.followsOnLockScreen && activitiesEnabled && !event.isArchived
-        // API-027: what the organizer chose the activity follows by default.
-        let inputs = LiveActivityPlanner.inputs(bundle.liveActivity, bundle: bundle, hearted: personal.heartedScheduleItems,
-                                                planned: planned, places: appState.followPlaces(bundle))
-        let day = enabled
-            ? LiveActivityPlanner.followDay(
-                schedule: inputs.schedule,
-                hearted: inputs.hearted,
-                planned: inputs.planned,
-                places: inputs.places,
-                eventStart: event.startTime,
-                now: now,
-                timeZone: timeZone
-            )
-            : nil
-        let forced = day.map { forcedDay?.eventId == event.id && forcedDay?.dayStart == $0.dayStart } ?? false
-        let decision = LiveActivityPlanner.decision(for: day, now: now, timeZone: timeZone, forced: forced)
         let foreground = UIApplication.shared.applicationState == .active
+        // The planning (follow day, decision, contents) walks the whole schedule: it runs off the
+        // main actor on a copy of what it reads (hitch audit, Nov 22, 2026).
+        let inputs = LiveFollowInputs(
+            bundle: bundle,
+            personal: personal,
+            planned: planned,
+            places: appState.followPlaces(bundle),
+            plan: appState.planner.plan,
+            hasPlan: appState.planner.hasPlan,
+            user: appState.userLocation.location,
+            forcedDayStart: forcedDay?.eventId == event.id ? forcedDay?.dayStart : nil,
+            enabled: enabled,
+            now: now
+        )
+        let computed = await inputs.compute()
+        // The event may have changed while that ran: a newer update follows.
+        guard appState.currentEvent?.id == event.id else { return }
+        let day = computed.day
+        let decision = computed.decision
 
         func state(at date: Date, existing: EventActivityAttributes.Urgent?, for day: FollowDay) -> EventActivityAttributes.ContentState {
-            var content = baseState(at: date, existing: existing, for: day)
-            // Running late for the next planned item (assistant spec §6): "Leave now".
-            if day.followsPlan, let plan = appState.planner.plan, !plan.isEmpty,
-               let late = LiveAssist.runningLate(plan, bundle, now: date, user: appState.userLocation.location,
-                                                 skipped: personal.skippedItems),
-               content.next?.id == late.itemId {
-                content.leaveBy = late.leaveBy
-                content.lateState = late.state == .leaveNow ? "leave_now" : "cant_make_it"
-                content.walkMinutesToNext = late.walkMinutes
-            }
-            return content
-        }
-
-        func baseState(at date: Date, existing: EventActivityAttributes.Urgent?, for day: FollowDay) -> EventActivityAttributes.ContentState {
-            var content = LiveActivityPlanner.content(
-                day: day,
-                locations: bundle.locations,
-                hearted: personal.heartedScheduleItems,
-                skipped: personal.skippedItems,
-                // No direction, distance or walk from the user's position (batch 7, owner): the
-                // activity can't refresh them between app visits, so they were stale on the Lock Screen.
-                user: nil,
-                urgent: LiveActivityPlanner.urgent(
+            var content = (date == now ? computed.stateNow : computed.stateAt) ?? inputs.state(at: date, for: day)
+            // The urgent block keeps what the activity already shows (a pushed announcement).
+            if existing != nil {
+                content.urgent = LiveActivityPlanner.urgent(
                     notifications: bundle.notifications,
                     dismissed: personal.dismissedUrgentIds,
                     existing: existing,
                     now: date
-                ),
-                now: date
-            )
-            // API-027: the organizer's buttons and stale text.
-            let settings = bundle.liveActivity ?? .defaults
-            content.buttons = settings.buttons == nil ? nil : settings.activityButtons
-            content.staleText = settings.staleText
-            // Started on join (batch 7): until something is in My schedule, say how to fill it.
-            if !personal.hasHearts, !appState.planner.hasPlan, content.dayComplete != true {
-                content.hint = LiveActivityPlanner.emptyHint
+                )
             }
             return content
         }
@@ -728,5 +703,96 @@ struct LocalNotificationInfo: Hashable, Sendable {
         case let s as String:   return Int(s)
         default:                return nil
         }
+    }
+}
+
+// MARK: - Planning off the main actor
+
+/// A copy of everything the Live Activity's content is made from, so the planning runs on a
+/// background thread (`compute`); the controller then only talks to ActivityKit.
+struct LiveFollowInputs: Sendable {
+    var bundle: EventBundle
+    var personal: EventPersonalState
+    var planned: Set<Int>
+    var places: [FollowPlace]
+    var plan: Plan?
+    var hasPlan: Bool
+    var user: Coordinate?
+    /// "Start Now" / a "tap to follow" tap for this event: that day skips the 2 h lead.
+    var forcedDayStart: Date?
+    var enabled: Bool
+    var now: Date
+
+    struct Computed: Sendable {
+        var day: FollowDay?
+        var decision: LiveActivityPlanner.Decision
+        /// The content at `now`, and at a scheduled start (`decision`'s date), without an urgent
+        /// block already on an activity.
+        var stateNow: EventActivityAttributes.ContentState?
+        var stateAt: EventActivityAttributes.ContentState?
+    }
+
+    @concurrent
+    nonisolated func compute() async -> Computed {
+        let timeZone = bundle.event.timeZone
+        // API-027: what the organizer chose the activity follows by default.
+        let inputs = LiveActivityPlanner.inputs(bundle.liveActivity, bundle: bundle, hearted: personal.heartedScheduleItems,
+                                                planned: planned, places: places)
+        let day = enabled
+            ? LiveActivityPlanner.followDay(
+                schedule: inputs.schedule,
+                hearted: inputs.hearted,
+                planned: inputs.planned,
+                places: inputs.places,
+                eventStart: bundle.event.startTime,
+                now: now,
+                timeZone: timeZone
+            )
+            : nil
+        let forced = day.map { forcedDayStart == $0.dayStart } ?? false
+        let decision = LiveActivityPlanner.decision(for: day, now: now, timeZone: timeZone, forced: forced)
+        var computed = Computed(day: day, decision: decision)
+        if let day {
+            computed.stateNow = state(at: now, for: day)
+            if case .schedule(let at) = decision { computed.stateAt = state(at: at, for: day) }
+        }
+        return computed
+    }
+
+    /// The content at `date` (no urgent block carried over from an activity).
+    nonisolated func state(at date: Date, for day: FollowDay) -> EventActivityAttributes.ContentState {
+        var content = LiveActivityPlanner.content(
+            day: day,
+            locations: bundle.locations,
+            hearted: personal.heartedScheduleItems,
+            skipped: personal.skippedItems,
+            // No direction, distance or walk from the user's position (batch 7, owner): the
+            // activity can't refresh them between app visits, so they were stale on the Lock Screen.
+            user: nil,
+            urgent: LiveActivityPlanner.urgent(
+                notifications: bundle.notifications,
+                dismissed: personal.dismissedUrgentIds,
+                existing: nil,
+                now: date
+            ),
+            now: date
+        )
+        // API-027: the organizer's buttons and stale text.
+        let settings = bundle.liveActivity ?? .defaults
+        content.buttons = settings.buttons == nil ? nil : settings.activityButtons
+        content.staleText = settings.staleText
+        // Started on join (batch 7): until something is in My schedule, say how to fill it.
+        if !personal.hasHearts, !hasPlan, content.dayComplete != true {
+            content.hint = LiveActivityPlanner.emptyHint
+        }
+        // Running late for the next planned item (assistant spec §6): "Leave now".
+        if day.followsPlan, let plan, !plan.isEmpty,
+           let late = LiveAssist.runningLate(plan, bundle, now: date, user: user, skipped: personal.skippedItems),
+           content.next?.id == late.itemId {
+            content.leaveBy = late.leaveBy
+            content.lateState = late.state == .leaveNow ? "leave_now" : "cant_make_it"
+            content.walkMinutesToNext = late.walkMinutes
+        }
+        return content
     }
 }

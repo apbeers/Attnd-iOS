@@ -43,6 +43,10 @@ final class PlanStore {
     private static func historyKey(_ eventId: Int) -> String { "pref.planHistory.\(eventId)" }
     private static func conversationKey(_ eventId: Int) -> String { "pref.assistantConversation.\(eventId)" }
     private static func sharedKey(_ eventId: Int) -> String { "pref.sharedPlans.\(eventId)" }
+    /// Files in the App Group container (Nov 22, 2026; the keys above are older builds', moved on
+    /// first read): `AssistantFiles`.
+    private static func historyFile(_ eventId: Int) -> String { "plan-history-\(eventId).json" }
+    private static func conversationFile(_ eventId: Int) -> String { "conversation-\(eventId).json" }
 
     /// The plan saved for `eventId` (AppState, with the event's hearts).
     func load(eventId: Int?) {
@@ -56,7 +60,7 @@ final class PlanStore {
             return
         }
         plan = PlanCodec.decode(UserDefaults.standard.data(forKey: Self.key(eventId))).flatMap { $0.eventId == eventId ? $0 : nil }
-        history = PlanHistory.decode(UserDefaults.standard.string(forKey: Self.historyKey(eventId)))
+        history = PlanHistory.decode(AssistantFiles.shared.string(Self.historyFile(eventId), legacyKey: Self.historyKey(eventId)))
     }
 
     /// Stores `plan` as a new version: the plan it replaces goes onto the undo stack (assistant
@@ -90,21 +94,21 @@ final class PlanStore {
         self.history = history
         guard let eventId, !ScreenshotMode.isActive else { return }
         if history.canUndo {
-            UserDefaults.standard.set(history.encode(), forKey: Self.historyKey(eventId))
+            AssistantFiles.shared.set(history.encode(), Self.historyFile(eventId))
         } else {
-            UserDefaults.standard.removeObject(forKey: Self.historyKey(eventId))
+            AssistantFiles.shared.set(nil, Self.historyFile(eventId))
         }
     }
 
     // MARK: Assistant storage (per event, on the device, kept after leaving like the plan)
 
     func conversation(_ eventId: Int) -> AssistantConversation {
-        AssistantConversation.decode(UserDefaults.standard.string(forKey: Self.conversationKey(eventId)))
+        AssistantConversation.decode(AssistantFiles.shared.string(Self.conversationFile(eventId), legacyKey: Self.conversationKey(eventId)))
     }
 
     func setConversation(_ conversation: AssistantConversation, eventId: Int) {
         guard !ScreenshotMode.isActive else { return }
-        UserDefaults.standard.set(conversation.encode(), forKey: Self.conversationKey(eventId))
+        AssistantFiles.shared.set(conversation.encode(), Self.conversationFile(eventId))
     }
 
     /// Shared plans received for the event (for "Merge with mine").

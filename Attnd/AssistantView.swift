@@ -449,25 +449,31 @@ struct ThinkingRing: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// Hitch audit (Nov 22, 2026): a repeating animation the render server runs, instead of a
+    /// TimelineView that re-rendered the ring on every frame.
+    @State private var spinning = false
+
     var body: some View {
-        TimelineView(.animation(minimumInterval: reduceMotion ? 1.0 / 15 : nil)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
-            // The event's tint, faded around the ring by an angular gradient mask.
-            let ring = Circle()
-                .fill(.tint)
-                .mask {
-                    Circle().strokeBorder(
-                        AngularGradient(colors: [.black.opacity(0.05), .black.opacity(0.55), .black], center: .center),
-                        lineWidth: max(2, size / 7)
-                    )
-                }
-                .frame(width: size, height: size)
+        // The event's tint, faded around the ring by an angular gradient mask.
+        let ring = Circle()
+            .fill(.tint)
+            .mask {
+                Circle().strokeBorder(
+                    AngularGradient(colors: [.black.opacity(0.05), .black.opacity(0.55), .black], center: .center),
+                    lineWidth: max(2, size / 7)
+                )
+            }
+            .frame(width: size, height: size)
+        Group {
             if reduceMotion {
-                ring.opacity(0.55 + 0.35 * (0.5 + 0.5 * sin(t * 2 * .pi / 1.6)))
+                ring.opacity(spinning ? 0.9 : 0.55)
+                    .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: spinning)
             } else {
-                ring.rotationEffect(.degrees(t.truncatingRemainder(dividingBy: 1) * 360))
+                ring.rotationEffect(.degrees(spinning ? 360 : 0))
+                    .animation(.linear(duration: 1).repeatForever(autoreverses: false), value: spinning)
             }
         }
+        .onAppear { spinning = true }
         .accessibilityElement()
         .accessibilityLabel(label ?? "")
         .accessibilityHidden(label == nil)

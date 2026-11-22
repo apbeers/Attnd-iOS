@@ -737,11 +737,14 @@ struct UndoToastOverlay: View {
                             appState.undoToast = nil
                         }
                         .font(.subheadline.bold())
+                        .foregroundStyle(appState.tintColor ?? .accentColor)
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
                     .glassEffect(.regular.interactive(), in: .capsule)
-                    .padding(.bottom, 96)
+                    // Batch 7: just above the floating button row and the bottom safe area (the
+                    // tab bar on phones; nothing phantom on the Duo), inside one pane.
+                    .padding(.bottom, FloatingSearchButtonMetrics.reservedHeight + 12)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .debugFloatingFrame("undo_toast")
                 }

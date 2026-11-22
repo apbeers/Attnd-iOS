@@ -746,6 +746,8 @@ struct LocationDetailView: View {
         .navigationTitle(location.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            // The header card shows the name (batch 7): the title stays for Back and VoiceOver.
+            ToolbarItem(placement: .principal) { Color.clear.frame(width: 1, height: 1).accessibilityHidden(true) }
             HeartToolbarItem(target: .location(location.id), appState: appState)
             if location.coordinate != nil, appState.shows(.map) {
                 ToolbarSpacer(.fixed, placement: .topBarTrailing)
@@ -791,18 +793,24 @@ struct LocationDetailView: View {
 
                 if let columns {
                     // Wide (iPhone Duo unfolded): header and walk map leading, details trailing.
-                    HStack(alignment: .top, spacing: 24) {
+                    // Equal margins from the edges and the fold, both columns from the same top (batch 7).
+                    HStack(alignment: .top, spacing: 48) {
                         sectionColumn(columns.leading, now: now)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
                         sectionColumn(columns.trailing, now: now)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
                     .padding(.horizontal)
                     .padding(.vertical, 16)
                     .padding(.bottom, 24)
                 } else {
+                    // Little content on a wide window: one readable column, centred (batch 7).
                     sectionColumn(sections, now: now)
                         .padding(.horizontal)
                         .padding(.vertical, 16)
                         .padding(.bottom, 24)
+                        .frame(maxWidth: width >= 700 ? 680 : .infinity)
+                        .frame(maxWidth: .infinity)
                 }
             }
         }

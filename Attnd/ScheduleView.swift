@@ -396,6 +396,8 @@ struct ScheduleItemDetailView: View {
         .navigationTitle(item.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            // The header card shows the name (batch 7): the title stays for Back and VoiceOver.
+            ToolbarItem(placement: .principal) { Color.clear.frame(width: 1, height: 1).accessibilityHidden(true) }
             HeartToolbarItem(target: .scheduleItem(item.id), appState: appState)
         }
         .task(id: item.id) { appState.track(.scheduleItemView, id: item.id) }
@@ -415,24 +417,32 @@ struct ScheduleItemDetailView: View {
         return Group {
             if let columns = DetailColumns.split(sections, screen: .itemDetail, width: Double(width)) {
                 // Wide (iPhone Duo unfolded): when and where leading, the details trailing.
-                HStack(spacing: 0) {
+                // Each column keeps its own margins from the screen edge and the fold, and both
+                // start at the same height (batch 7).
+                HStack(alignment: .top, spacing: 32) {
                     List {
                         ForEach(columns.leading, id: \.type) { section in
                             self.section(section, now: now)
                         }
                     }
+                    .contentMargins(.top, 8, for: .scrollContent)
                     List {
                         ForEach(columns.trailing, id: \.type) { section in
                             self.section(section, now: now)
                         }
                     }
+                    .contentMargins(.top, 8, for: .scrollContent)
                 }
+                .padding(.horizontal, 16)
             } else {
+                // Little content: one readable column, centred on wide windows.
                 List {
                     ForEach(sections, id: \.type) { section in
                         self.section(section, now: now)
                     }
                 }
+                .frame(maxWidth: width >= 700 ? 680 : .infinity)
+                .frame(maxWidth: .infinity)
             }
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }

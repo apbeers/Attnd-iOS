@@ -52,6 +52,7 @@ struct MapView: View {
     /// The camera's heading, for the user dot's cone (drawn in screen space).
     @State private var cameraHeading: Double = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     private var visibleLocations: [Location] {
         LocationGrouping.filter(appState.locations, category: selectedCategory)
@@ -295,19 +296,38 @@ struct MapView: View {
             }
             // Batch 7 (Duo folded: the trailing column crowded the vertical tab bar and the camera
             // island): one row in the bottom-leading corner, the map buttons then My plan / search.
-            HStack(spacing: 10) {
-                MapButtonStack(
-                    onCenter: recenter,
-                    onLocation: { Task { await cycleTracking() } },
-                    tracking: tracking
-                )
-                if showsFloatingButton {
-                    FloatingTabButton()
+            // Unfolded (regular width): a small vertical group at the map's trailing edge, next
+            // to the tab rail, like the folded layout first had them.
+            if horizontalSizeClass == .regular {
+                HStack {
+                    Spacer(minLength: 0)
+                    VStack(spacing: 10) {
+                        MapButtonStack(
+                            onCenter: recenter,
+                            onLocation: { Task { await cycleTracking() } },
+                            tracking: tracking,
+                            vertical: true
+                        )
+                        if showsFloatingButton { FloatingTabButton() }
+                    }
                 }
-                Spacer(minLength: 0)
+                .padding(.trailing, 16)
+                .padding(.bottom, FloatingSearchButtonMetrics.bottomPadding)
+            } else {
+                HStack(spacing: 10) {
+                    MapButtonStack(
+                        onCenter: recenter,
+                        onLocation: { Task { await cycleTracking() } },
+                        tracking: tracking
+                    )
+                    if showsFloatingButton {
+                        FloatingTabButton()
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.leading, 16)
+                .padding(.bottom, FloatingSearchButtonMetrics.bottomPadding)
             }
-            .padding(.leading, 16)
-            .padding(.bottom, FloatingSearchButtonMetrics.bottomPadding)
         }
         // Clear the floating demo / ended / offline badges (eventStatusBanners(reservesSpace: false)).
         .padding(.top, 8 + EventStatusBadgeKind.reservedTopHeight(appState))
@@ -495,10 +515,12 @@ private struct MapButtonStack: View {
     let onCenter: () -> Void
     let onLocation: () -> Void
     var tracking: MapTracking = .off
+    var vertical = false
 
     var body: some View {
         GlassEffectContainer(spacing: 8) {
-            HStack(spacing: 8) {
+            let layout = vertical ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
+            layout {
                 button("Show the whole event", systemImage: "scope", action: onCenter)
                 button(tracking.title, systemImage: tracking.systemImage, action: onLocation)
                     .contentTransition(.symbolEffect(.replace))

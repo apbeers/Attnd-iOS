@@ -556,7 +556,8 @@ struct HeartToolbarItem: ToolbarContent {
     let appState: AppState
 
     var body: some ToolbarContent {
-        ToolbarItem(placement: .topBarTrailing) {
+        // Pinned (batch 7): with Back in the Duo's vertical bars, never a lone circle by the clock.
+        ToolbarItem(placement: .pinnedTrailing) {
             HeartButton(target: target, titled: true)
                 .environment(appState)
         }

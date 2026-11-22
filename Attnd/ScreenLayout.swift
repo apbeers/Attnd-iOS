@@ -502,7 +502,9 @@ enum DetailColumns {
         guard width >= minWidth, let types = leadingTypes[screen] else { return nil }
         let leading = sections.filter { types.contains($0.type) }
         let trailing = sections.filter { !types.contains($0.type) }
-        guard !leading.isEmpty, !trailing.isEmpty else { return nil }
+        // Two columns only with enough to fill them (batch 7: ≥ 3 sections besides the header's
+        // side); else one centred column.
+        guard !leading.isEmpty, trailing.count >= 3 else { return nil }
         return (leading, trailing)
     }
 }

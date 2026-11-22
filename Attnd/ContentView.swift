@@ -76,6 +76,7 @@ struct AppRootView: View {
             // Usage counts (API-005) go out before the app may be suspended.
             if phase == .background {
                 appState.flushUsage()
+                appState.flushPersonalState()
                 AppLog.flush()
                 // App Clip → full app: settings changed since the last save go into the handover too.
                 AppHandover.exportFromClip()
@@ -369,11 +370,8 @@ private struct EventTabContent: View {
         case .schedule:
             ScheduleTab()
         case .flyer:
-            NavigationStack {
-                FlyerView(flyerUrl: appState.currentEvent?.flyerUrl)
-                    .eventStatusBanners()
-                    .optionsToolbarItem(for: .flyer)
-            }
+            // Unfolded: the flyer and the map side by side (DuoViews.swift).
+            FlyerTab()
         case .notifications:
             NavigationStack {
                 NotificationsView()
@@ -661,6 +659,7 @@ private struct InAppBannerOverlay: View {
                                  in: .rect(cornerRadius: 22))
                     .padding(.horizontal, 16)
                     .padding(.top, 4)
+                    .debugFloatingFrame("in_app_banner")
                     .swipeUpToDismiss { appState.dismissInAppBanner() }
                     .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
                 }
@@ -806,6 +805,7 @@ private struct EventStatusBadge: View {
             .foregroundStyle(kind.tint ?? Color.primary)
             .glassEffect(kind.tint.map { Glass.regular.tint($0.opacity(0.22)) } ?? Glass.regular, in: .capsule)
             .contentShape(.capsule)
+            .debugFloatingFrame("status_\(kind.id)")
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(kind.accessibilityText)
             .accessibilityAddTraits(.isStaticText)

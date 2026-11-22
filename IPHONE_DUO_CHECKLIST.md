@@ -56,6 +56,21 @@ Test each posture **upright and rotated 90° both ways**. Change posture **while
 - [ ] **Onboarding (Tour)**: the cards page horizontally in every posture and rotation, Next / Done stays above the home indicator and off the fold, Skip (icon + title) closes them; permission prompts appear on the active display; reopen from Options → Tour.
 - [ ] **Live Activity**: with an item hearted, the activity starts while the app is open (Options → Lock Screen → Start Now otherwise). Check the Lock Screen on the **cover display (folded) and the inner display (unfolded)**, StandBy, and the Dynamic Island compact / minimal / expanded (long press) on both displays and in landscape (iOS 27 narrows the island: an icon instead of the countdown). Now and Next both show (Now "At the event" while My schedule has a gap, "Free until 3:00 · Next: X at Y", "Gates open 10:00 · First: X"), with "↗ 0.4 mi · 8 min walk" to Next (VoiceOver "Northeast, 0.4 miles") from a position ≤ 30 min old; countdown and progress tick; Skip / Map buttons work from the Lock Screen and the expanded island (no Add / heart button); tapping a region opens the item, the map (with the walking route) or Updates on the display in use; an urgent announcement shows first and its alert lights the screen.
 
+## Batch 7: fold continuity and the Duo screens
+
+- [ ] **Map, fold with a pin selected** (pane open, unfolded): fold → the same pin is selected with its card and route, the camera where it was, chips unchanged; unfold → the pane shows the same set highlighted. Instruments: one `MKMapView` init per Map tab.
+- [ ] **Linked panes** (`secondary_pane: schedule`): tap a set → the map flies to its stage (card + walking route), the row highlighted; tap another pin → the pane scrolls to that place's next set; heart on either side shows on the other at once.
+- [ ] **Time travel** (unfolded Map): drag the scrubber → lit pins / grey pins and the Now playing strip follow, a tick at each set start, the label reads "Sat 7:30 PM", Now resets; VoiceOver adjusts it.
+- [ ] **Scroll positions**: Home, Schedule, Places scrolled halfway → fold, unfold, half-fold: the same section / rows stay in view; the chat stays at the bottom.
+- [ ] **Undo toast** (unfolded / partly folded): heart something in the leading pane → the toast is centred in that pane; in the trailing pane → there; never across the fold, never over the floating button.
+- [ ] **Tabletop Home** with DEMO (happening now): top half Now / Next big with the countdown ticking and the urgent card, nothing on the fold; bottom half the list, with "Propped up at the event?" once; Turn On → the controls (Map, heart, Directions, What's next); Exit returns; the offer never comes back.
+- [ ] **Stage vs stage**: Schedule unfolded with nothing selected → two line-ups side by side, clashing sets marked; switch either stage; tap a set → its detail.
+- [ ] **Planning board**: My plan unfolded → Your Day + Coming Up; drag a set onto the board → the proposal card in the chat; Apply → the day and route redraw; Undo.
+- [ ] **Drag between panes**: drag a schedule row onto the map (shows its stage), onto Home's Up Next (added, Undo toast).
+- [ ] **Flyer + map**: Flyer tab unfolded landscape → flyer leading, map trailing; chips for places printed on the flyer; tap → the map flies there; fold → the flyer alone, not reloaded.
+- [ ] **Empty glass circle** (outer display, Home): with `-AttndDebugRegions YES`, every glass element of ours has a blue label; report the label (or none) next to the circle.
+- [ ] **Vertical Dynamic Island**: compact trailing shows Next's clock in bold rounded digits; urgent shows the red triangle.
+
 ## Sheets and popovers
 
 - [ ] QR scanner sheet: presented as a sheet on compact, a form sheet on wide; Cancel (`xmark` + title) is in the cancellation slot.

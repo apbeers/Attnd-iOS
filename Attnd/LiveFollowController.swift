@@ -124,7 +124,9 @@ final class LiveFollowController {
     }
 
     /// Live Activities are allowed for the app (Settings → Attnd → Live Activities).
-    var activitiesEnabled: Bool { ActivityAuthorizationInfo().areActivitiesEnabled }
+    /// One instance (perf, batch 7: each `ActivityAuthorizationInfo()` cost ~4 ms on the main thread).
+    var activitiesEnabled: Bool { Self.authorization.areActivitiesEnabled }
+    private static let authorization = ActivityAuthorizationInfo()
 
     /// When following starts by itself today (2 h before the first followed item), for Options.
     func nextStart(now: Date = .now) -> Date? {

@@ -405,6 +405,7 @@ struct HeartButton: View {
 
     @Environment(AppState.self) private var appState
     @State private var asksTime = false
+    @State private var globalMidX: CGFloat?
 
     var body: some View {
         let added = appState.isInSchedule(target)
@@ -419,6 +420,8 @@ struct HeartButton: View {
                 .buttonStyle(.borderless)
             } else {
                 Button {
+                    // The Undo toast appears in this pane of an unfolded iPhone Duo.
+                    appState.lastTouchX = globalMidX
                     appState.addToScheduleWithUndo(target)
                 } label: {
                     label(added: false)
@@ -426,6 +429,7 @@ struct HeartButton: View {
                 .buttonStyle(.borderless)
             }
         }
+        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).midX } action: { globalMidX = $0 }
         .sensoryFeedback(.selection, trigger: added)
         .scheduleTimeDialog(target: target, isPresented: $asksTime)
     }
@@ -614,6 +618,7 @@ struct LatestUpdateBanner: View {
         .padding(.vertical, 8)
         // Liquid Glass card floating above the tab, like the app-update banner.
         .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 22))
+        .debugFloatingFrame("update_banner")
         .frame(maxWidth: 560)
         .padding(.horizontal, 12)
         .padding(.top, 4)
@@ -676,6 +681,7 @@ struct UrgentUpdateBanner: View {
         .padding(.vertical, 12)
         // Liquid Glass, tinted red so it stands apart from the ordinary update banner.
         .glassEffect(.regular.tint(.red.opacity(0.25)).interactive(), in: .rect(cornerRadius: 22))
+        .debugFloatingFrame("urgent_banner")
         .frame(maxWidth: 560)
         .padding(.horizontal, 12)
         .padding(.top, 4)

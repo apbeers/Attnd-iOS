@@ -111,14 +111,41 @@ private struct HomeScreen: View {
         }
         GeometryReader { proxy in
             let posture = FoldPosture.of(container: proxy.size, folds: ReservedRegionReader.folds(in: proxy))
-            if case .tabletop(let foldMinY, let foldMaxY) = posture, let halves = TabletopSplit.home(sections) {
-                // Tabletop (iPhone Duo partly folded): viewing on top, the list below the fold.
+            if case .tabletop(let foldMinY, let foldMaxY) = posture, !ScreenshotMode.isActive {
+                // Tabletop (iPhone Duo partly folded, batch 7 fix round): the top half a glance
+                // that never scrolls (Now / Next big, the countdown, the urgent announcement), the
+                // bottom half the rest of Home as a list, or the "at the event" controls. Both halves
+                // stop at the reported fold (`.division`), so nothing sits on it.
+                let bottom = sections.filter { !TabletopSplit.glanceTypes.contains($0.type) }
                 VStack(spacing: 0) {
-                    ScrollView { column(halves.top) }
+                    TabletopGlanceView(now: now, large: appState.tabletopAtEventMode, open: open)
                         .frame(height: max(foldMinY, 0))
-                    Color.clear.frame(height: max(foldMaxY - foldMinY, 0))
-                    ScrollView { column(halves.bottom) }
+                        .clipped()
+                    Spacer(minLength: 0).frame(height: max(foldMaxY - foldMinY, 0))
+                    if appState.tabletopAtEventMode {
+                        TabletopControls(now: now, open: open)
+                    } else {
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 16) {
+                                if TabletopGlance.shouldOffer(
+                                    live: TabletopGlance.isLive(eventStart: appState.currentEvent?.startTime,
+                                                                eventEnd: appState.currentEvent?.endTime,
+                                                                schedule: appState.schedule, now: now),
+                                    alreadyOffered: appState.tabletopModeOffered,
+                                    modeOn: appState.tabletopAtEventMode) {
+                                    TabletopOfferCard()
+                                }
+                                ForEach(bottom, id: \.type) { section in
+                                    ComponentView(component: ComponentCatalogue.component(section), now: now, open: open)
+                                }
+                            }
+                            .scrollTargetLayout()
+                            .padding(.horizontal)
+                            .padding(.vertical, 12)
+                        }
+                        .scrollPosition(id: $topSection, anchor: .top)
                         .contentMargins(.bottom, 88, for: .scrollContent)
+                    }
                 }
             } else {
                 scroll(sections)
@@ -158,6 +185,10 @@ private struct HomeScreen: View {
         .padding(.vertical, 12)
     }
 
+    /// The section at the top of the list, kept across fold / unfold / tabletop (the scroll view
+    /// is rebuilt when the layout changes; it comes back at the same section).
+    @State private var topSection: String?
+
     private func scroll(_ sections: [LayoutSection]) -> some View {
         ScrollView {
             if width >= Self.twoColumnWidth {
@@ -181,6 +212,7 @@ private struct HomeScreen: View {
                             .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
                 }
+                .scrollTargetLayout()
                 .padding(.horizontal)
                 .padding(.vertical, 12)
             } else {
@@ -189,10 +221,12 @@ private struct HomeScreen: View {
                         ComponentView(component: ComponentCatalogue.component(section), now: now, open: open)
                     }
                 }
+                .scrollTargetLayout()
                 .padding(.horizontal)
                 .padding(.vertical, 12)
             }
         }
+        .scrollPosition(id: $topSection, anchor: .top)
         // Columns follow the container's width (never the device).
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         // The last section scrolls clear of the floating button and the tab bar, like the other tabs.
@@ -305,6 +339,10 @@ struct ScreenComponentView: View {
                         }
                         if !performer.bio.isEmpty {
                             Text(performer.bio).font(.subheadline).foregroundStyle(.secondary).lineLimit(3)
+                        }
+                        if let url = performer.appleMusicURL {
+                            ListenOnAppleMusicButton(url: url, artist: performer.name)
+                                .padding(.top, 2)
                         }
                     }
                 }
@@ -543,7 +581,25 @@ struct MyScheduleUpNext: View {
                 .buttonStyle(.plain)
             }
         }
+        // Drag between panes (iPhone Duo unfolded): a set or place dropped here is added (Undo).
+        .padding(dropTargeted ? 6 : 0)
+        .background {
+            if dropTargeted {
+                RoundedRectangle(cornerRadius: 20).strokeBorder(.tint, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
+            }
+        }
+        .dropDestination(for: String.self) { strings, _ in
+            guard let payload = strings.lazy.compactMap(DragPayload.parse).first else { return false }
+            switch payload {
+            case .item(let id): appState.addToScheduleWithUndo(.scheduleItem(id))
+            case .place(let id): appState.addToScheduleWithUndo(.location(id))
+            }
+            return true
+        } isTargeted: { dropTargeted = $0 }
+        .animation(.easeOut(duration: 0.15), value: dropTargeted)
     }
+
+    @State private var dropTargeted = false
 
     @ViewBuilder
     private func card(_ row: MyScheduleRow) -> some View {
@@ -721,36 +777,62 @@ private struct SwipeAwayUrgentCard: View {
     }
 }
 
-/// The Undo toast over the tabs (`AppState.undoToast`), clear of the fold and cameras.
+/// The Undo toast over the tabs (`AppState.undoToast`), clear of the fold and cameras. On an
+/// unfolded iPhone Duo it stays inside one pane — the one where the action was tapped, else the
+/// screen's primary pane — centred in it, never across the fold, just above the floating button
+/// row (`UndoToastPane`).
 struct UndoToastOverlay: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     var body: some View {
-        ReservedRegionAvoiding {
-            VStack {
-                Spacer()
-                if let toast = appState.undoToast {
-                    HStack(spacing: 12) {
-                        Text(toast.message).font(.subheadline).lineLimit(1)
-                        Button("Undo") {
-                            toast.undo()
-                            appState.undoToast = nil
-                        }
-                        .font(.subheadline.bold())
-                        .foregroundStyle(appState.tintColor ?? .accentColor)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .glassEffect(.regular.interactive(), in: .capsule)
-                    // Batch 7: just above the floating button row and the bottom safe area (the
-                    // tab bar on phones; nothing phantom on the Duo), inside one pane.
-                    .padding(.bottom, FloatingSearchButtonMetrics.reservedHeight + 12)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .debugFloatingFrame("undo_toast")
+        GeometryReader { proxy in
+            let frame = proxy.frame(in: .global)
+            let fold = ReservedRegionReader.folds(in: proxy).first { $0.height > $0.width }
+            let span = UndoToastPane.span(
+                containerWidth: proxy.size.width,
+                fold: fold.map { $0.minX...$0.maxX },
+                // A flat-open inner display (portrait) folds down the middle of the window.
+                windowMidX: horizontalSizeClass == .regular && proxy.size.height > proxy.size.width
+                    ? (frame.maxX + proxy.safeAreaInsets.trailing) / 2 - frame.minX : nil,
+                touchX: appState.undoToast?.touchX.map { $0 - frame.minX },
+                primaryIsTrailing: appState.selectedTab == .map
+            )
+            HStack(spacing: 0) {
+                Spacer(minLength: 0).frame(width: span.lowerBound)
+                ReservedRegionAvoiding {
+                    toastColumn
                 }
+                .frame(width: max(span.upperBound - span.lowerBound, 0))
+                Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity)
         }
         .animation(.easeInOut(duration: 0.2), value: appState.undoToast?.id)
+    }
+
+    private var toastColumn: some View {
+        VStack {
+            Spacer()
+            if let toast = appState.undoToast {
+                HStack(spacing: 12) {
+                    Text(toast.message).font(.subheadline).lineLimit(1)
+                    Button("Undo") {
+                        toast.undo()
+                        appState.undoToast = nil
+                    }
+                    .font(.subheadline.bold())
+                    .foregroundStyle(appState.tintColor ?? .accentColor)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .glassEffect(.regular.interactive(), in: .capsule)
+                .padding(.horizontal, 12)
+                // Just above the floating button row and the bottom safe area.
+                .padding(.bottom, FloatingSearchButtonMetrics.reservedHeight + 12)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .debugFloatingFrame("undo_toast")
+            }
+        }
+        .frame(maxWidth: .infinity)
     }
 }

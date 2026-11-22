@@ -537,6 +537,9 @@ enum HomeColumns {
 
 enum TabletopSplit {
     static let topTypes: Set<String> = ["header", "urgent", "countdown", "now_next", "map"]
+    /// What the tabletop glance (DuoViews.swift) already shows on the top half (batch 7 fix round:
+    /// the top half is a glance that never scrolls; the map moved to the list below the fold).
+    static let glanceTypes: Set<String> = ["header", "urgent", "countdown", "now_next", "now_playing"]
 
     static func home(_ sections: [LayoutSection]) -> (top: [LayoutSection], bottom: [LayoutSection])? {
         let top = sections.filter { topTypes.contains($0.type) }

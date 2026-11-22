@@ -763,6 +763,8 @@ final class LogCore: @unchecked Sendable {
 
 enum AppSignpost {
     static let signposter = OSSignposter(subsystem: AppLog.subsystem, category: "perf")
+    /// The same intervals on Points of Interest, so Instruments' Time Profiler shows them by default.
+    static let pointsOfInterest = OSSignposter(subsystem: AppLog.subsystem, category: .pointsOfInterest)
 
     /// The intervals (Instruments name; `perf.signpost` `name` from LOG_EVENTS.md).
     enum Name: String, Sendable {
@@ -792,6 +794,7 @@ enum AppSignpost {
     struct Interval: @unchecked Sendable {
         let name: Name
         let state: OSSignpostIntervalState
+        let poiState: OSSignpostIntervalState
         let started: ContinuousClock.Instant
 
         var elapsedMs: Int { (ContinuousClock.now - started).wholeMilliseconds }
@@ -800,13 +803,18 @@ enum AppSignpost {
     static func begin(_ name: Name) -> Interval {
         MainThreadWatchdog.noteBegin(name.rawValue)
         let id = signposter.makeSignpostID()
-        return Interval(name: name, state: signposter.beginInterval(name.signpostName, id: id), started: .now)
+        let poiID = pointsOfInterest.makeSignpostID()
+        return Interval(name: name,
+                        state: signposter.beginInterval(name.signpostName, id: id),
+                        poiState: pointsOfInterest.beginInterval(name.signpostName, id: poiID),
+                        started: .now)
     }
 
     /// Ends the interval and logs `perf.signpost` (name, ms). Returns the milliseconds.
     @discardableResult
     static func end(_ interval: Interval, _ fields: @autoclosure () -> LogFields = [:]) -> Int {
         signposter.endInterval(interval.name.signpostName, interval.state)
+        pointsOfInterest.endInterval(interval.name.signpostName, interval.poiState)
         MainThreadWatchdog.noteEnd(interval.name.rawValue)
         let ms = interval.elapsedMs
         AppLog.debug(.perf, "perf.signpost", "\(interval.name.rawValue) in \(ms) ms",

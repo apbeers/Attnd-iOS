@@ -1147,10 +1147,20 @@ struct Performer: Hashable, Sendable {
     var bio: String = ""
     /// As sent ("country", "Texas swing"), trimmed, empty ones dropped.
     var genres: [String] = []
+    /// API-030: the performer's artist page in Apple Music (`https://music.apple.com/…`), only
+    /// when the server sent one; anything else (http, another host) is ignored.
+    var appleMusicURL: URL? = nil
 }
 
 extension Performer: Decodable {
-    private enum CodingKeys: String, CodingKey { case name, bio, genres }
+    private enum CodingKeys: String, CodingKey { case name, bio, genres, appleMusicUrl = "apple_music_url" }
+
+    /// Only an absolute https link to Apple Music (music.apple.com or a subdomain).
+    static func appleMusicLink(_ url: URL?) -> URL? {
+        guard let url, url.scheme?.lowercased() == "https", let host = url.host?.lowercased(),
+              host == "music.apple.com" || host.hasSuffix(".music.apple.com") else { return nil }
+        return url
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1162,6 +1172,7 @@ extension Performer: Decodable {
         genres = c.lossyArray(String.self, .genres)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+        appleMusicURL = Self.appleMusicLink(c.httpsURL(.appleMusicUrl))
     }
 }
 

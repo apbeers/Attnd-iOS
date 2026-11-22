@@ -135,6 +135,22 @@ final class AppState {
     /// the split one swap, batch 7).
     @ObservationIgnored var lastMapRegion: MKCoordinateRegion?
 
+    /// Where the last tap landed (window coordinates, x): the Undo toast stays in that pane of an
+    /// unfolded iPhone Duo (batch 7 fix round). Not observed: read when a toast appears.
+    @ObservationIgnored var lastTouchX: CGFloat?
+    /// A personal-state write waiting for its debounce (`savePersonalState`).
+    @ObservationIgnored private var pendingPersonal: (eventId: Int, state: EventPersonalState)?
+    @ObservationIgnored private var personalSaveTask: Task<Void, Never>?
+
+    /// Tabletop "at the event" mode (iPhone Duo half-folded): the top half a big Now / Next with
+    /// the countdown, the bottom half controls. Offered once during a live event.
+    var tabletopAtEventMode: Bool = UserDefaults.standard.bool(forKey: "pref.tabletopAtEvent") {
+        didSet { UserDefaults.standard.set(tabletopAtEventMode, forKey: "pref.tabletopAtEvent") }
+    }
+    var tabletopModeOffered: Bool = UserDefaults.standard.bool(forKey: "pref.tabletopOffered") {
+        didSet { UserDefaults.standard.set(tabletopModeOffered, forKey: "pref.tabletopOffered") }
+    }
+
     /// Status pills swiped away this session ("ended", "refresh", "instant"); Options keeps the info.
     var dismissedStatusBadges: Set<String> = []
     /// API-026: this phone is the event's preview phone and the long-poll runs ("Instant updates on").
@@ -597,6 +613,7 @@ final class AppState {
         enqueueDisk {
             await EventStore.shared.save(saved, contentVersion: version)
             // The App Clip keeps its handover for the full app current (AppHandover.swift).
+            await MainActor.run { self.flushPersonalState() }
             AppHandover.exportFromClip()
         }
     }
@@ -1381,6 +1398,7 @@ final class AppState {
     /// Loads the event's hearts and Updates mark when the event changes (nil clears them).
     private func loadPersonalState(for eventId: Int?) {
         guard personalEventId != eventId else { return }
+        flushPersonalState()
         personalEventId = eventId
         walkingRoutes.clear()
         // Screenshot mode starts clean and never writes.
@@ -1414,10 +1432,29 @@ final class AppState {
         assistant.load(eventId: eventId)
     }
 
+    /// Coalesced (perf, batch 7: every heart, "Updates seen" and dismissal encoded the whole
+    /// per-event JSON into UserDefaults at once): the in-memory `personal` is the source of truth,
+    /// written ~0.6 s after the last change, and at once before it is read back (another event
+    /// loads), on background and before the App Clip's handover export.
     func savePersonalState() {
-        guard let eventId = personalEventId, !ScreenshotMode.isActive,
-              let data = try? JSONEncoder().encode(personal) else { return }
-        UserDefaults.standard.set(data, forKey: Keys.personal(eventId))
+        guard let eventId = personalEventId, !ScreenshotMode.isActive else { return }
+        pendingPersonal = (eventId, personal)
+        personalSaveTask?.cancel()
+        personalSaveTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled else { return }
+            self?.flushPersonalState()
+        }
+    }
+
+    /// Writes a pending personal-state change now (no-op without one).
+    func flushPersonalState() {
+        personalSaveTask?.cancel()
+        personalSaveTask = nil
+        guard let pending = pendingPersonal else { return }
+        pendingPersonal = nil
+        guard let data = try? JSONEncoder().encode(pending.state) else { return }
+        UserDefaults.standard.set(data, forKey: Keys.personal(pending.eventId))
     }
 
     func isHearted(_ target: SearchTarget) -> Bool {
@@ -1591,7 +1628,8 @@ final class AppState {
     /// Shows the Undo toast for ~6 s (a newer one replaces it).
     func showUndo(_ message: String, undo: @escaping @MainActor () -> Void) {
         let token = UUID()
-        undoToast = UndoToast(id: token, message: message, undo: undo)
+        undoToast = UndoToast(id: token, message: message, undo: undo, touchX: lastTouchX)
+        lastTouchX = nil
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(6))
             if self?.undoToast?.id == token { self?.undoToast = nil }
@@ -2198,6 +2236,8 @@ struct UndoToast: Identifiable {
     var id: UUID
     var message: String
     var undo: @MainActor () -> Void
+    /// Where the action was tapped (window x), so the toast stays in that pane; nil = the primary pane.
+    var touchX: CGFloat? = nil
 }
 
 #if DEBUG
@@ -2211,6 +2251,13 @@ enum LayoutAudit {
 
 private extension String {
     var nilIfEmptyAudit: String? { isEmpty ? nil : self }
+}
+
+extension AppState {
+    /// Previews only (DuoViews.swift `PreviewFixture`): shows a bundle as if it had just arrived.
+    func applyForPreview(_ bundle: EventBundle) {
+        apply(bundle)
+    }
 }
 #endif
 

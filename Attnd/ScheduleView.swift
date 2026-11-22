@@ -34,7 +34,9 @@ struct ScheduleTab: View {
                         // Show the latest copy after a bundle refresh.
                         ScheduleItemDetailView(item: appState.schedule.first { $0.id == selection.id } ?? selection)
                     } else {
-                        ContentUnavailableView("Select an Item", systemImage: "calendar")
+                        // Unfolded with nothing selected: two stages' line-ups side by side, to
+                        // choose between clashing sets (iPhone Duo, batch 7).
+                        StageVsStageView { item in selection = item }
                     }
                 }
                 .navigationDestination(for: Location.self) { location in
@@ -61,6 +63,12 @@ struct ScheduleView: View {
     /// Bound in a split view's sidebar. nil when used inside a plain NavigationStack,
     /// where rows push their own destinations.
     var selection: Binding<ScheduleItem?>? = nil
+    /// Linked panes (the map's schedule pane, iPhone Duo unfolded): a tap calls this instead of
+    /// pushing the detail (the map flies to the stage); the row with `highlightedItemId` is marked
+    /// and a change of `scrollToLocationId` (a pin tapped on the map) scrolls to that place's next set.
+    var onSelect: ((ScheduleItem) -> Void)? = nil
+    var highlightedItemId: Int? = nil
+    var scrollToLocationId: Int? = nil
 
     @Environment(AppState.self) private var appState
     @State private var searchText = ""
@@ -88,19 +96,27 @@ struct ScheduleView: View {
     }
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 30)) { context in
-            let now = context.date
-            let sections = ScheduleGrouping.sections(
-                for: visibleItems(now: now),
-                style: resolvedStyle,
-                now: now,
-                timeZone: appState.timeZone,
-                locations: appState.locations
-            )
-            list(sections: sections, now: now)
-                .overlay {
-                    if sections.isEmpty { emptyState }
-                }
+        ScrollViewReader { proxy in
+            TimelineView(.periodic(from: .now, by: 30)) { context in
+                let now = context.date
+                let sections = ScheduleGrouping.sections(
+                    for: visibleItems(now: now),
+                    style: resolvedStyle,
+                    now: now,
+                    timeZone: appState.timeZone,
+                    locations: appState.locations
+                )
+                list(sections: sections, now: now)
+                    .overlay {
+                        if sections.isEmpty { emptyState }
+                    }
+            }
+            // A pin tapped on the map: that place's next set (else its last one) comes into view.
+            .onChange(of: scrollToLocationId) { _, locationId in
+                guard let locationId,
+                      let target = LinkedPanes.nextItem(at: locationId, in: visibleItems(now: .now), now: .now) else { return }
+                withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(target.id, anchor: .top) }
+            }
         }
         .navigationTitle(title)
         .modifier(SearchableIf(enabled: appState.display.enableSearch, text: $searchText, prompt: "Search schedule"))
@@ -140,7 +156,8 @@ struct ScheduleView: View {
     @ViewBuilder
     private func listContent(sections: [ScheduleSection], now: Date) -> some View {
         let layout = appState.scheduleTabLayout
-        if searchText.isEmpty, selectedLocationId == nil {
+        // The map's linked pane lists the event's schedule only (My schedule stays on its tab).
+        if onSelect == nil, searchText.isEmpty, selectedLocationId == nil {
             if layout?.showsMySchedule ?? true {
                 MyScheduleSection(now: now, open: open)
             }
@@ -167,15 +184,27 @@ struct ScheduleView: View {
         ForEach(sections) { section in
             Section {
                 ForEach(section.items) { item in
-                    NavigationLink(value: item) {
-                        ScheduleRowView(
-                            item: item,
-                            showLocation: selectedLocationId == nil && resolvedStyle != .byLocation,
-                            now: now,
-                            timeZone: appState.timeZone
-                        )
+                    let row = ScheduleRowView(
+                        item: item,
+                        showLocation: selectedLocationId == nil && resolvedStyle != .byLocation,
+                        now: now,
+                        timeZone: appState.timeZone
+                    )
+                    Group {
+                        if let onSelect {
+                            Button { onSelect(item) } label: { row.contentShape(Rectangle()) }
+                                .buttonStyle(.plain)
+                                .listRowBackground(item.id == highlightedItemId ? Color.accentColor.opacity(0.14) : nil)
+                                .accessibilityAddTraits(item.id == highlightedItemId ? .isSelected : [])
+                                .accessibilityHint("Shows it on the map.")
+                        } else {
+                            NavigationLink(value: item) { row }
+                        }
                     }
                     .scheduleItemPeek(item, now: now) { open(item) }
+                    // Drag between panes (iPhone Duo unfolded): onto the map, My schedule or the plan.
+                    .draggable(DragPayload.item(item.id).string)
+                    .id(item.id)
                 }
             } header: {
                 if !section.title.isEmpty {

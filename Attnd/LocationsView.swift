@@ -1001,6 +1001,9 @@ private struct PlaceWalkMapCard: View {
                 UserAnnotation { user in HeadingUserDot(heading: user.heading) }
             }
             .mapStyle(.standard(pointsOfInterest: .excludingAll))
+            // No system map controls on small maps (their Liquid Glass compass / scale could
+            // float as an empty glass circle over the card).
+            .mapControls { }
             .frame(height: 190)
             .clipShape(RoundedRectangle(cornerRadius: 16))
             .contentShape(RoundedRectangle(cornerRadius: 16))

@@ -56,6 +56,8 @@ struct MiniMap: View {
                     mapContent(stops: stops, others: others)
                 }
                 .mapStyle(.standard(pointsOfInterest: .excludingAll))
+                // No system map controls on small maps (an empty glass circle on Home, batch 7).
+                .mapControls { }
                 .allowsHitTesting(false)
                 // A new set of pins frames itself again.
                 .id((stops + others).map(\.id))
@@ -69,6 +71,7 @@ struct MiniMap: View {
                         .background(.regularMaterial, in: .circle)
                         .padding(8)
                         .accessibilityHidden(true)
+                        .debugFloatingFrame("mini_map_open")
                 }
             }
             .buttonStyle(.plain)

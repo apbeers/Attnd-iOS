@@ -103,6 +103,8 @@ struct ItemCard: View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
             card(now: context.date)
         }
+        // Drag between panes (iPhone Duo unfolded): onto the map, My schedule or the plan.
+        .draggable(DragPayload.item(item.id).string)
     }
 
     private func card(now: Date) -> some View {
@@ -221,6 +223,7 @@ struct PlaceCard: View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
             card(now: context.date)
         }
+        .draggable(DragPayload.place(location.id).string)
     }
 
     private func card(now: Date) -> some View {

@@ -80,9 +80,31 @@ private struct PerformerRow: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
+            if let url = performer.appleMusicURL {
+                ListenOnAppleMusicButton(url: url, artist: performer.name)
+                    .padding(.top, 2)
+            }
         }
         .padding(.vertical, 2)
-        .accessibilityElement(children: .combine)
+        // Not `.combine`: the Apple Music button stays its own control for VoiceOver.
+        .accessibilityElement(children: .contain)
+    }
+}
+
+/// API-030 "Listen on Apple Music" (Apple's wording): opens the artist page (a universal link,
+/// so the Music app when installed, else Safari). No MusicKit, no account; nothing without a link.
+struct ListenOnAppleMusicButton: View {
+    let url: URL
+    var artist: String = ""
+
+    var body: some View {
+        Link(destination: url) {
+            Label("Listen on Apple Music", systemImage: "music.note")
+                .font(.subheadline.weight(.semibold))
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .accessibilityLabel(artist.isEmpty ? "Listen on Apple Music" : "Listen to \(artist) on Apple Music")
     }
 }
 

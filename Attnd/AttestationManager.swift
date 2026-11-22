@@ -60,7 +60,9 @@ actor AttestationManager {
     // MARK: - Public API
 
     /// Whether this device supports App Attest. False on simulators and macOS.
-    nonisolated var isSupported: Bool { DCAppAttestService.shared.isSupported }
+    /// Read once per run (it never changes while the app runs; ~5 ms each time on the main thread).
+    nonisolated var isSupported: Bool { Self.supported }
+    nonisolated private static let supported = DCAppAttestService.shared.isSupported
 
     /// Returns a valid JWT.
     /// - If a non-expired token is already stored, returns it immediately.

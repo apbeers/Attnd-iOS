@@ -702,20 +702,33 @@ private struct CompactTrailingView: View {
         let attributes = context.attributes
         let palette = ActivityPalette(attributes, dark: true)
         if state.urgent != nil {
-            Text(narrow ? "!" : "Urgent")
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(.red)
+            if narrow {
+                // iPhone Duo's vertical island: one bold symbol reads at a glance.
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.callout.weight(.bold))
+                    .foregroundStyle(.red)
+                    .accessibilityLabel("Urgent")
+            } else {
+                Text("Urgent")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.red)
+            }
         } else if let start = state.next?.start {
             Group {
                 if narrow {
+                    // Batch 7 polish: rounded, bold, tabular digits, shrinking rather than truncating.
                     Text(ActivityStyle.shortClock(start, attributes))
+                        .font(.system(.callout, design: .rounded).weight(.bold))
+                        .monospacedDigit()
+                        .minimumScaleFactor(0.7)
+                        .lineLimit(1)
                 } else {
                     Countdown(date: start)
                         .frame(maxWidth: 52)
                         .multilineTextAlignment(.trailing)
+                        .font(.caption.weight(.semibold))
                 }
             }
-            .font(.caption.weight(.semibold))
             .foregroundStyle(palette.highlight)
             .accessibilityLabel("Next: \(state.next?.name ?? "") at \(ActivityStyle.clock(start, attributes))")
         } else if let current = state.current {

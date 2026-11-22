@@ -28,17 +28,31 @@ struct MapView: View {
     @Binding var cameraPosition: MapCameraPosition
     /// Whether the initial framing has been applied (owned by MapTab so it survives layout changes).
     @Binding var hasPositioned: Bool
+    /// The selected pin and the chips, owned by MapTab (`MapUIState`) so they survive fold /
+    /// unfold: the folded map and the unfolded split one are different views (batch 7 fix round).
+    @Binding var ui: MapUIState
     /// The tab's floating button at the bottom of the map's trailing column (no side pane).
     var showsFloatingButton = false
+    /// The time-travel scrubber (unfolded, regular width).
+    var showsTimeTravel = false
 
     @Environment(AppState.self) private var appState
     @StateObject private var locationManager = LocationPermissionManager()
     @State private var showLocationDeniedAlert = false
 
-    @State private var selectedLocationId: Int?
-    @State private var selectedCategory: String?
-    /// The "Liked" chip: only liked (hearted) pins.
-    @State private var heartedOnly = false
+    private var selectedLocationId: Int? {
+        get { ui.selectedLocationId }
+        nonmutating set { ui.selectedLocationId = newValue }
+    }
+    private var selectedCategory: String? {
+        get { ui.selectedCategory }
+        nonmutating set { ui.selectedCategory = newValue }
+    }
+    /// The "My Schedule" chip: only places in My schedule.
+    private var heartedOnly: Bool {
+        get { ui.heartedOnly }
+        nonmutating set { ui.heartedOnly = newValue }
+    }
     /// Refreshed every 30 s for the live dots, "Next 7:30" and the now-playing strip.
     @State private var now = Date.now
     /// Visible span, for clustering. Updated when the camera stops moving.
@@ -103,14 +117,17 @@ struct MapView: View {
         let allClusters = self.clusters
         let walk = currentWalk
         let glances = showsGlance ? LocationGlance.all(schedule: appState.schedule, now: now) : [:]
-        let badges = allClusters.filter(\.isSingle).compactMap { cluster -> PinBadge? in
+        // Time travel: the pins of what's on at the scrubber's time light up, the others dim.
+        let travelTime = showsTimeTravel ? ui.timeTravel : nil
+        let lit = travelTime.map { TimeTravel.litLocationIds(at: $0, in: appState.schedule) }
+        let badges = travelTime != nil ? [] : allClusters.filter(\.isSingle).compactMap { cluster -> PinBadge? in
             let location = cluster.locations[0]
             guard let glance = glances[location.id] else { return nil }
             let subtitle = glance.pinSubtitle(now: now, timeZone: appState.timeZone)
             guard glance.isLive || subtitle != nil else { return nil }
             return PinBadge(locationId: location.id, coordinate: cluster.coordinate, isLive: glance.isLive, subtitle: subtitle)
         }
-        Map(position: $cameraPosition, selection: $selectedLocationId) {
+        Map(position: $cameraPosition, selection: $ui.selectedLocationId) {
             if let walk {
                 if walk.isEstimate {
                     MapPolyline(coordinates: walk.linePoints.map(\.clCoordinate))
@@ -121,8 +138,14 @@ struct MapView: View {
                 }
             }
             ForEach(allClusters.filter(\.isSingle)) { cluster in
-                Marker(cluster.locations[0].name, coordinate: cluster.coordinate.clCoordinate)
-                    .tag(cluster.locations[0].id)
+                if let lit {
+                    Marker(cluster.locations[0].name, coordinate: cluster.coordinate.clCoordinate)
+                        .tint(lit.contains(cluster.locations[0].id) ? Color.accentColor : Color.gray)
+                        .tag(cluster.locations[0].id)
+                } else {
+                    Marker(cluster.locations[0].name, coordinate: cluster.coordinate.clCoordinate)
+                        .tag(cluster.locations[0].id)
+                }
             }
             // Live dot / "Next 7:30" floating just above the pin's balloon (not selectable).
             ForEach(badges) { badge in
@@ -216,6 +239,27 @@ struct MapView: View {
             guard requested != nil, let id = appState.mapNavigation.takeFocus() else { return }
             focus(on: id)
         }
+        // Linked panes: a pin tapped here scrolls the schedule pane to that place's next set (not
+        // when the pane's own pick moved the selection).
+        .onChange(of: ui.selectedLocationId) { _, id in
+            if let picked = ui.paneItemId, appState.schedule.first(where: { $0.id == picked })?.locationId == id { return }
+            ui.paneScrollLocationId = id
+        }
+        // Drag between panes: a set or place dropped on the map shows where it is.
+        .dropDestination(for: String.self) { strings, _ in
+            guard let payload = strings.lazy.compactMap(DragPayload.parse).first else { return false }
+            switch payload {
+            case .place(let id):
+                guard appState.location(id: id)?.coordinate != nil else { return false }
+                focus(on: id)
+            case .item(let id):
+                guard let locationId = appState.schedule.first(where: { $0.id == id })?.locationId,
+                      appState.location(id: locationId)?.coordinate != nil else { return false }
+                ui.paneItemId = id
+                focus(on: locationId)
+            }
+            return true
+        }
         .onChange(of: selectedCategory) { dropHiddenSelection() }
         .onChange(of: heartedOnly) { dropHiddenSelection() }
         .task {
@@ -257,16 +301,18 @@ struct MapView: View {
         let overlay = Set(appState.screenSections(.mapOverlay, now: now) { bundle, state in
             ScreenFacts.common(bundle, state).union(["now_playing"])
         }.map(\.type))
+        let travelTime = showsTimeTravel ? ui.timeTravel : nil
         let nowPlaying = showsGlance && overlay.contains("now_playing")
-            ? NowPlayingItem.items(schedule: appState.schedule, locations: visibleLocations, now: now) : []
+            ? NowPlayingItem.items(schedule: appState.schedule, locations: visibleLocations, now: travelTime ?? now) : []
+        let travelRange = showsTimeTravel && showsGlance ? TimeTravel.range(appState.schedule, now: now) : nil
         let selected = overlay.contains("selected_place") ? selectedLocation : nil
         // The Liked chip is always there, so the chip row always is.
         return VStack(spacing: 0) {
             CategoryChips(
                 categories: appState.filterCategories,
-                selection: $selectedCategory,
+                selection: $ui.selectedCategory,
                 floating: true,
-                heartedOnly: $heartedOnly
+                heartedOnly: $ui.heartedOnly
             )
             if !nowPlaying.isEmpty {
                 NowPlayingStrip(items: nowPlaying) { locationId in
@@ -284,6 +330,19 @@ struct MapView: View {
                     .padding(.horizontal, 24)
                     .allowsHitTesting(false)
                 Spacer(minLength: 0)
+            }
+            if let travelRange {
+                TimeTravelScrubber(
+                    range: travelRange,
+                    points: TimeTravel.snapPoints(appState.schedule, in: travelRange),
+                    now: now,
+                    timeZone: appState.timeZone,
+                    time: $ui.timeTravel
+                )
+                .frame(maxWidth: 480)
+                .padding(.horizontal)
+                .padding(.bottom, 8)
+                .debugFloatingFrame("time_travel")
             }
             if let location = selected {
                 LocationInfoCard(location: location, walkText: walkCardText) {
@@ -539,6 +598,7 @@ private struct MapButtonStack: View {
         .buttonStyle(.plain)
         .foregroundStyle(.tint)
         .glassEffect(.regular.interactive(), in: .circle)
+        .debugFloatingFrame("map_\(systemImage)")
     }
 }
 
@@ -607,7 +667,7 @@ private struct LocationInfoCard: View {
 
 #Preview {
     NavigationStack {
-        MapView(cameraPosition: .constant(.automatic), hasPositioned: .constant(false), showsFloatingButton: true)
+        MapView(cameraPosition: .constant(.automatic), hasPositioned: .constant(false), ui: .constant(MapUIState()), showsFloatingButton: true)
     }
     .environment(AppState())
 }

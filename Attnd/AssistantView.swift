@@ -179,17 +179,31 @@ private struct LastComponentPane: View {
             guard let index = turn.blocks.lastIndex(where: { !$0.isChips && $0.type != "text" && $0.type != "confirm" }) else { return nil }
             return (turn, index, turn.blocks[index])
         }.first
-        ScrollView {
-            Group {
-                if let last {
+        VStack(spacing: 0) {
+            if last != nil {
+                Picker("Show", selection: $showsBoard) {
+                    Text("Your Day").tag(true)
+                    Text("Last Answer").tag(false)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+            }
+            if showsBoard || last == nil {
+                // The planning board (iPhone Duo unfolded): the day, its route, and drop to add.
+                PlanningBoard()
+            } else if let last {
+                ScrollView {
                     AssistantBlockView(block: last.2, turn: last.0, index: last.1)
-                } else {
-                    ComponentView(component: Component(type: "my_day"))
+                        .padding(16)
                 }
             }
-            .padding(16)
         }
+        // A new answer with a component shows it; the board is one tap away.
+        .onChange(of: last?.0.id) { _, id in if id != nil { showsBoard = false } }
     }
+
+    @State private var showsBoard = true
 }
 
 

@@ -510,6 +510,29 @@ enum DetailColumns {
 /// Home in tabletop posture (iPhone Duo partly folded, the fold across the middle): the top half
 /// for viewing (header, urgent, countdown, now / next, the map), the bottom half the rest as a
 /// list. nil = nothing for one of the halves (one scroll view as usual).
+/// Home's two columns (iPhone Duo unfolded, batch 7): each section goes to the column that is
+/// shorter so far (rough heights by type), keeping the order within each column, so both
+/// columns start at the top and end near the same height. Pure.
+enum HomeColumns {
+    static func weight(_ type: String) -> Int {
+        switch type {
+        case "map", "my_schedule", "my_day", "faq", "whats_on", "places": return 3
+        case "updates", "getting_there", "amenities", "about": return 2
+        default: return 1
+        }
+    }
+
+    static func split(_ sections: [LayoutSection]) -> (leading: [LayoutSection], trailing: [LayoutSection]) {
+        var leading: [LayoutSection] = [], trailing: [LayoutSection] = []
+        var left = 0, right = 0
+        for section in sections {
+            if left <= right { leading.append(section); left += weight(section.type) }
+            else { trailing.append(section); right += weight(section.type) }
+        }
+        return (leading, trailing)
+    }
+}
+
 enum TabletopSplit {
     static let topTypes: Set<String> = ["header", "urgent", "countdown", "now_next", "map"]
 
@@ -712,5 +735,37 @@ struct LiveActivitySettings: Hashable, Sendable, Decodable {
     /// the Live Activity on Nov 21, 2026, so `add` is accepted and not drawn).
     var activityButtons: [String] {
         (buttons ?? ["skip", "map"]).filter { $0 == "skip" || $0 == "map" }
+    }
+}
+
+// MARK: - Fold continuity (batch 7)
+
+/// What each screen keeps across fold ↔ unfold (a resize and trait change, never a rebuild):
+/// which pane is primary, and what the folded layout shows for a given unfolded state. Pure.
+enum FoldRules {
+    enum Screen: String, Sendable { case map, schedule, places, home, chat, detail }
+
+    /// The pane that is the screen when folded.
+    static func primary(_ screen: Screen) -> String {
+        switch screen {
+        case .map: return "map"
+        case .schedule, .places: return "list"
+        case .home: return "sections"
+        case .chat: return "chat"
+        case .detail: return "detail"
+        }
+    }
+
+    /// Folded: a list screen with a selection shows that detail pushed over the list (Back
+    /// returns to the list); without one, the list. The map shows the pane's item as the
+    /// selected pin. Unfolded: list + the same detail.
+    enum Folded: Equatable, Sendable { case list, pushedDetail(Int), map(selectedPin: Int?), same }
+
+    static func folded(_ screen: Screen, selected: Int?) -> Folded {
+        switch screen {
+        case .schedule, .places: return selected.map(Folded.pushedDetail) ?? .list
+        case .map: return .map(selectedPin: selected)
+        case .home, .chat, .detail: return .same
+        }
     }
 }

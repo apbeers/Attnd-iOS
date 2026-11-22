@@ -46,8 +46,12 @@ private struct PlanButtonModifier: ViewModifier {
                     Spacer(minLength: 0)
                     HStack(spacing: 0) {
                         Spacer(minLength: 0)
-                        FloatingPlanButton(peek: appState.planButtonPeek) {
-                            appState.openPlanPage()
+                        // One glass container (batch 7: an empty glass circle showed beside the
+                        // button on the Duo's outer display; the shape is now drawn in one place).
+                        GlassEffectContainer {
+                            FloatingPlanButton(peek: appState.planButtonPeek) {
+                                appState.openPlanPage()
+                            }
                         }
                         .debugFloatingFrame("plan_button")
                         .padding(.trailing, FloatingSearchButtonMetrics.trailingPadding)

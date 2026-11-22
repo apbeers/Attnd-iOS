@@ -30,12 +30,14 @@ struct MapTab: View {
         let showsPane = horizontalSizeClass == .regular || ScreenshotMode.current?.screen == .mapPane
         if showsPane, pane != .none {
             // The floating button over the whole arrangement (bottom-trailing, on the pane).
+            // Batch 7 (owner): the pane leads, the map trails next to the tab rail, and they meet
+            // exactly on the fold with no gutter.
             MapArrangement {
-                mapStack(showsFloatingButton: false)
-            } secondary: {
                 NavigationStack {
                     SecondaryPaneView(pane: pane)
                 }
+            } secondary: {
+                mapStack(showsFloatingButton: false)
             }
             .floatingActionButton()
         } else {
@@ -90,13 +92,13 @@ private struct FallbackArrangement<Primary: View, Secondary: View>: View {
             let isWide = proxy.size.width >= proxy.size.height
             let layout = isWide ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
             layout {
+                // The pane (primary) takes its share; the map fills the rest right to its edge.
                 primary
-                Divider()
-                secondary
                     .frame(
                         width: isWide ? min(400, proxy.size.width * 0.4) : nil,
                         height: isWide ? nil : proxy.size.height * 0.45
                     )
+                secondary
             }
         }
     }

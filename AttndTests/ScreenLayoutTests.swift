@@ -510,4 +510,22 @@ final class ScreenLayoutTests: XCTestCase {
         XCTAssertEqual(ActionName.switchServer.confirm, .chip)
         XCTAssertTrue(ActionName.neverAvailable.contains("leave_event"), "the shared never-available name stays refused")
     }
+
+    func testHomeColumns_BalancedAndInOrder() {
+        let sections = ["my_schedule", "map", "updates", "faq", "getting_there", "about", "website"].map { LayoutSection($0) }
+        let columns = HomeColumns.split(sections)
+        XCTAssertEqual(columns.leading.map(\.type), ["my_schedule", "updates", "getting_there", "website"])
+        XCTAssertEqual(columns.trailing.map(\.type), ["map", "faq", "about"])
+        XCTAssertEqual(columns.leading.count + columns.trailing.count, sections.count)
+        XCTAssertTrue(HomeColumns.split([]).leading.isEmpty)
+    }
+
+    func testFoldRules() {
+        XCTAssertEqual(FoldRules.primary(.map), "map")
+        XCTAssertEqual(FoldRules.primary(.chat), "chat")
+        XCTAssertEqual(FoldRules.folded(.schedule, selected: 12), .pushedDetail(12))
+        XCTAssertEqual(FoldRules.folded(.places, selected: nil), .list)
+        XCTAssertEqual(FoldRules.folded(.map, selected: 5), .map(selectedPin: 5))
+        XCTAssertEqual(FoldRules.folded(.home, selected: nil), .same)
+    }
 }

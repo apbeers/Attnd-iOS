@@ -159,7 +159,19 @@ struct MapView: View {
             }
         }
         .mapStyle(.standard)
-        .onGeometryChange(for: CGSize.self) { $0.size } action: { mapSize = $0 }
+        // Edge to edge (batch 7): up under the status bar / camera, and to the fold or the pane's
+        // edge on an unfolded Duo; the overlays below keep to the safe area.
+        .ignoresSafeArea(.container, edges: [.top, .horizontal])
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
+            // A fold / unfold or rotation is a resize: keep the region the map shows (the
+            // binding may hold a user-moved position Map can't restore by itself).
+            let resized = abs(size.width - mapSize.width) > 1 || abs(size.height - mapSize.height) > 1
+            mapSize = size
+            if resized, hasPositioned, cameraPosition.region == nil, cameraPosition.camera == nil,
+               !cameraPosition.followsUserLocation, let saved = appState.lastMapRegion {
+                cameraPosition = .region(saved)
+            }
+        }
         .task(id: walk.map { "\($0.linePoints.count)-\($0.isEstimate)" } ?? "none") {
             guard walk != nil, !reduceMotion else { return }
             let start = Date.now
@@ -174,11 +186,14 @@ struct MapView: View {
         }
         .onMapCameraChange(frequency: .onEnd) { context in
             visibleSpan = context.region.span
+            appState.lastMapRegion = context.region
             // A pan or pinch ends following, like Apple Maps.
             if tracking != .off, !cameraPosition.followsUserLocation { tracking = .off }
             MapRenderTiming.cameraSettled(pins: allClusters.count, clustered: appState.display.mapClustering)
         }
         .navigationTitle(appState.currentEvent?.name ?? "Map")
+        // Batch 7: no bar on the map; it runs edge to edge (the chips float in the safe area).
+        .toolbar(.hidden, for: .navigationBar)
         .navigationBarTitleDisplayMode(.inline)
         // Place details pushed over the map (`AppState.mapNavigation.path`, location ids).
         .navigationDestination(for: Int.self) { locationId in
@@ -269,16 +284,6 @@ struct MapView: View {
                     .allowsHitTesting(false)
                 Spacer(minLength: 0)
             }
-            HStack {
-                Spacer()
-                MapButtonStack(
-                    onCenter: recenter,
-                    onLocation: { Task { await cycleTracking() } },
-                    tracking: tracking
-                )
-                .padding(.horizontal)
-                .padding(.vertical, showsFloatingButton ? 8 : 16)
-            }
             if let location = selected {
                 LocationInfoCard(location: location, walkText: walkCardText) {
                     appState.mapNavigation.open(location.id)
@@ -288,16 +293,21 @@ struct MapView: View {
                 .padding(.bottom, 8)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-            if showsFloatingButton {
-                // One trailing column: map buttons, (card), then My plan / search, centred
-                // under the 44 pt map buttons.
-                HStack(spacing: 0) {
-                    Spacer(minLength: 0)
+            // Batch 7 (Duo folded: the trailing column crowded the vertical tab bar and the camera
+            // island): one row in the bottom-leading corner, the map buttons then My plan / search.
+            HStack(spacing: 10) {
+                MapButtonStack(
+                    onCenter: recenter,
+                    onLocation: { Task { await cycleTracking() } },
+                    tracking: tracking
+                )
+                if showsFloatingButton {
                     FloatingTabButton()
-                        .padding(.trailing, FloatingSearchButtonMetrics.trailingPadding)
                 }
-                .padding(.bottom, FloatingSearchButtonMetrics.bottomPadding)
+                Spacer(minLength: 0)
             }
+            .padding(.leading, 16)
+            .padding(.bottom, FloatingSearchButtonMetrics.bottomPadding)
         }
         // Clear the floating demo / ended / offline badges (eventStatusBanners(reservesSpace: false)).
         .padding(.top, 8 + EventStatusBadgeKind.reservedTopHeight(appState))
@@ -328,6 +338,16 @@ struct MapView: View {
 
     /// Frames the map once; re-frames when the pins first arrive with the bundle.
     private func positionInitiallyIfNeeded() {
+        // Folding / unfolding swaps the full-screen map for the split one (a new Map): keep the
+        // region the map last showed, never the world camera (batch 7).
+        if hasPositioned, cameraPosition.region == nil, cameraPosition.camera == nil, !cameraPosition.followsUserLocation {
+            if let saved = appState.lastMapRegion {
+                cameraPosition = .region(saved)
+            } else if let region = initialRegion {
+                cameraPosition = .region(region.mkRegion)
+            }
+            return
+        }
         guard !hasPositioned, let region = initialRegion else { return }
         cameraPosition = .region(region.mkRegion)
         hasPositioned = !appState.locations.isEmpty
@@ -478,7 +498,7 @@ private struct MapButtonStack: View {
 
     var body: some View {
         GlassEffectContainer(spacing: 8) {
-            VStack(spacing: 8) {
+            HStack(spacing: 8) {
                 button("Show the whole event", systemImage: "scope", action: onCenter)
                 button(tracking.title, systemImage: tracking.systemImage, action: onLocation)
                     .contentTransition(.symbolEffect(.replace))

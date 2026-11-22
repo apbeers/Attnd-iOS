@@ -122,6 +122,28 @@ private struct HomeScreen: View {
                 }
             } else {
                 scroll(sections)
+                    .onAppear { foldSplit = Self.split(proxy) }
+                    .onChange(of: proxy.size) { foldSplit = Self.split(proxy) }
+            }
+        }
+    }
+
+    /// A vertical fold across the middle: the leading column ends at the fold (minus the page
+    /// padding), the gap is the fold itself.
+    struct FoldSplit: Equatable { var leadingWidth: CGFloat; var gap: CGFloat }
+    @State private var foldSplit: FoldSplit?
+
+    private static func split(_ proxy: GeometryProxy) -> FoldSplit? {
+        guard let fold = ReservedRegionReader.folds(in: proxy).first(where: { $0.height > $0.width }),
+              fold.minX > 0, fold.maxX < proxy.size.width else { return nil }
+        return FoldSplit(leadingWidth: fold.minX, gap: fold.width + 32)
+    }
+
+    /// One of the wide layout's columns (not lazy: both columns measure fully, nothing starts cut).
+    private func homeColumn(_ sections: [LayoutSection]) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            ForEach(sections, id: \.type) { section in
+                ComponentView(component: ComponentCatalogue.component(section), now: now, open: open)
             }
         }
     }
@@ -146,11 +168,17 @@ private struct HomeScreen: View {
                     ForEach(wide, id: \.type) { section in
                         ComponentView(component: ComponentCatalogue.component(section), now: now, open: open)
                     }
-                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 16, alignment: .top), GridItem(.flexible(), spacing: 16, alignment: .top)],
-                              alignment: .leading, spacing: 16) {
-                        ForEach(rest, id: \.type) { section in
-                            ComponentView(component: ComponentCatalogue.component(section), now: now, open: open)
-                        }
+                    // Two independent columns, both from the top (batch 7: a grid paired the
+                    // sections row by row, so a tall one pushed its neighbour down), split on the
+                    // fold when the system reports one.
+                    let columns = HomeColumns.split(rest)
+                    HStack(alignment: .top, spacing: 0) {
+                        homeColumn(columns.leading)
+                            .frame(width: foldSplit.map { max($0.leadingWidth - 32, 0) }, alignment: .topLeading)
+                            .frame(maxWidth: foldSplit == nil ? .infinity : nil, alignment: .topLeading)
+                        Color.clear.frame(width: foldSplit?.gap ?? 16)
+                        homeColumn(columns.trailing)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
                 }
                 .padding(.horizontal)

@@ -5,8 +5,10 @@
 // in the navigation bar of the Updates tab's root screen, or the first tab's when the event hides
 // Updates (ContentView `optionsToolbarItem(for:)`, `TabLayout.optionsTab`).
 
+import CoreLocation
 import SwiftUI
 import UIKit
+import UserNotifications
 
 /// Options in its own navigation stack, with a Close button. Leaving the event dismisses it
 /// with the event screens.
@@ -79,24 +81,10 @@ struct SettingsView: View {
                 }
             }
 
-            // MARK: - Location
-            Section("Location") {
-                Toggle("Show My Location on Map", isOn: $state.showUserLocation)
-            }
-
-            // MARK: - Notifications
-            Section {
-                Toggle("Event Notifications", isOn: $wantsNotifications)
-                    .disabled(isUpdatingNotifications)
-            } header: {
-                Text("Notifications")
-            } footer: {
-                if notificationPermissionDenied {
-                    Text("Notification permission was denied. Enable it in Settings → Attnd.")
-                } else {
-                    Text("Organizer updates, and a reminder before anything in your schedule (15 minutes unless you change it).")
-                }
-            }
+            // MARK: - Permissions (batch 7): the system's answer, and Attnd's own switch when allowed
+            PermissionsSection(showUserLocation: $state.showUserLocation,
+                               wantsNotifications: $wantsNotifications,
+                               isUpdatingNotifications: isUpdatingNotifications)
 
             // MARK: - Follow on Lock Screen (Live Activity)
             LiveFollowSection()
@@ -460,5 +448,88 @@ struct EventWebsiteLink: View {
     NavigationStack {
         SettingsView()
             .environment(AppState())
+    }
+}
+
+// MARK: - Permissions (batch 7)
+
+/// Location and Notifications with the system's status. Allowed: a switch for Attnd (location =
+/// the dot and walk times; notifications = the event's opt-in, sent as `subscribed`). Denied or
+/// never asked: a button to the right Settings page. Refreshed whenever the scene becomes active.
+private struct PermissionsSection: View {
+    @Binding var showUserLocation: Bool
+    @Binding var wantsNotifications: Bool
+    let isUpdatingNotifications: Bool
+
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.openURL) private var openURL
+    @State private var location = CLLocationManager().authorizationStatus
+    @State private var notifications: UNAuthorizationStatus = .notDetermined
+
+    private var locationAllowed: Bool { location == .authorizedWhenInUse || location == .authorizedAlways }
+    private var notificationsAllowed: Bool { [.authorized, .provisional, .ephemeral].contains(notifications) }
+
+    var body: some View {
+        Section {
+            if locationAllowed {
+                Toggle(isOn: $showUserLocation) {
+                    Label("Location", systemImage: "location")
+                    Text("Allowed · your dot on the map and walk times")
+                }
+            } else {
+                settingsRow("Location", systemImage: "location.slash",
+                            status: location == .notDetermined ? "Not asked yet" : "Off in Settings",
+                            url: UIApplication.openSettingsURLString)
+            }
+            if notificationsAllowed {
+                Toggle(isOn: $wantsNotifications) {
+                    Label("Notifications", systemImage: "bell")
+                    Text("Allowed · organizer updates and reminders")
+                }
+                .disabled(isUpdatingNotifications)
+            } else if notifications == .notDetermined {
+                // Never asked: the switch asks the system (the opt-in flow).
+                Toggle(isOn: $wantsNotifications) {
+                    Label("Notifications", systemImage: "bell")
+                    Text("Not asked yet · turning this on asks once")
+                }
+                .disabled(isUpdatingNotifications)
+            } else {
+                settingsRow("Notifications", systemImage: "bell.slash", status: "Off in Settings",
+                            url: UIApplication.openNotificationSettingsURLString)
+            }
+        } header: {
+            Text("Permissions")
+        } footer: {
+            Text("When iOS already allows them, Attnd turns both on for every event you join.")
+        }
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            await refresh()
+        }
+    }
+
+    private func settingsRow(_ title: String, systemImage: String, status: String, url: String) -> some View {
+        Button {
+            if let target = URL(string: url) { openURL(target) }
+        } label: {
+            HStack {
+                Label {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title).foregroundStyle(.primary)
+                        Text(status).font(.footnote).foregroundStyle(.secondary)
+                    }
+                } icon: {
+                    Image(systemName: systemImage)
+                }
+                Spacer()
+                Text("Open Settings").font(.subheadline)
+            }
+        }
+    }
+
+    private func refresh() async {
+        location = CLLocationManager().authorizationStatus
+        notifications = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
     }
 }

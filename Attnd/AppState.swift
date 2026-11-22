@@ -18,7 +18,9 @@
 // prefetched into `ImageStore`. Only a 404 for the event, leaving or switching
 // events deletes the saved copy; network and server errors never do.
 
+import CoreLocation
 import Foundation
+import MapKit
 import Observation
 import SwiftUI
 import UIKit
@@ -128,6 +130,10 @@ final class AppState {
         inAppBannerTask?.cancel()
         inAppBanner = nil
     }
+
+    /// The region the Map tab last showed (kept across fold / unfold, when the full-screen map and
+    /// the split one swap, batch 7).
+    @ObservationIgnored var lastMapRegion: MKCoordinateRegion?
 
     /// Status pills swiped away this session ("ended", "refresh", "instant"); Options keeps the info.
     var dismissedStatusBadges: Set<String> = []
@@ -725,6 +731,10 @@ final class AppState {
 
     /// `via` says how (`lifecycle.event.joined`): "qr", "link", "search", "nearby", "rejoin".
     func joinEvent(_ event: Event, via: String = "search") async {
+        // A new join (not the relaunch's rejoin): what iOS already allows is on (batch 7).
+        if via != "rejoin" {
+            Task { await self.applySystemPermissionsOnJoin() }
+        }
         if currentEvent?.id != event.id {
             if let old = currentEvent {
                 AppLog.notice(.lifecycle, "lifecycle.event.left", "Switching events", ["event_id": .int(old.id), "reason": "switch"])
@@ -856,6 +866,7 @@ final class AppState {
         schedule = []
         notifications = []
         screenLayouts = nil
+        lastMapRegion = nil
         liveActivitySettings = nil
         loadError = nil
         refreshProblem = nil
@@ -1186,6 +1197,20 @@ final class AppState {
         }
         await joinEvent(event, via: via)
         return true
+    }
+
+    /// Batch 7 (owner): when iOS already allows them, notifications (subscribed) and the location
+    /// dot are on for every event joined; never a prompt here.
+    func applySystemPermissionsOnJoin() async {
+        guard !ScreenshotMode.isActive else { return }
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        if [.authorized, .provisional, .ephemeral].contains(settings.authorizationStatus), !notificationsEnabled {
+            notificationsEnabled = true
+            liveFollowNeedsUpdate()
+            await syncDevice()
+        }
+        let location = CLLocationManager().authorizationStatus
+        if location == .authorizedWhenInUse || location == .authorizedAlways { showUserLocation = true }
     }
 
     // MARK: - Push notifications

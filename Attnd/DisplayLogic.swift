@@ -542,3 +542,18 @@ enum RoutePulse {
         return line.last
     }
 }
+
+// MARK: - Swipe up to dismiss (batch 7)
+
+/// The drag rule for top pills and banners (`SwipeUpToDismiss`).
+enum SwipeDismissRule {
+    /// Up follows the finger; down rubber-bands (a fifth of the pull, at most 24 pt).
+    static func offset(for translation: Double) -> Double {
+        translation <= 0 ? translation : min(translation * 0.2, 24)
+    }
+
+    /// Past 30 % of the height up, or a flick whose predicted end is a full height up.
+    static func dismisses(translation: Double, predicted: Double, height: Double) -> Bool {
+        -translation > height * 0.3 || -predicted > height
+    }
+}

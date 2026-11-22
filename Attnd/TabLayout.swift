@@ -32,7 +32,14 @@ struct TabLayout: Hashable, Sendable {
             if display.defaultTab == .home { display.defaultTab = nil }
         }
         let layout = TabLayout(tabs: display.resolvedTabs(hasFlyer: hasFlyer), defaultTab: display.resolvedDefaultTab(hasFlyer: hasFlyer))
-        return screenshotMode ? layout : layout.withHome()
+        if screenshotMode { return layout }
+        // Home's rule sees the whole list, so the five-tab cut drops Flyer / Places, never a tab
+        // that happens to be listed sixth (Schedule added back last, batch 7).
+        if let listed = display.tabs, !listed.isEmpty {
+            var seen = Set<EventTab>()
+            return TabLayout(tabs: listed.filter { seen.insert($0).inserted }, defaultTab: layout.defaultTab).withHome()
+        }
+        return layout.withHome()
     }
 
     /// Home is always on, first and the default tab (owner, Nov 21, 2026), whatever the bundle

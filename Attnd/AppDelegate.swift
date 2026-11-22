@@ -38,6 +38,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         }
         // MetricKit: crash / hang and other diagnostic reports (API-013); launch times are LaunchTiming's.
         MetricKitReporter.shared.start()
+        // Debug / Dev builds: log main-thread stalls over 100 ms (perf.hang).
+        if !ScreenshotMode.isActive { MainThreadWatchdog.start() }
         UNUserNotificationCenter.current().delegate = self
         // Live Activity and reminders; also handles Live Activity buttons, which
         // may launch the app in the background.

@@ -750,23 +750,29 @@ struct PinGlanceBadge: View {
     let subtitle: String?
 
     var body: some View {
+        // Batch 7 (owner): something on now reads "● Happening now" in a small capsule under the
+        // place's name; otherwise "Next 7:30" as before.
         HStack(spacing: 4) {
             if isLive {
                 Circle()
                     .fill(.red)
-                    .frame(width: 8, height: 8)
-                    .overlay(Circle().stroke(.white, lineWidth: 1.5))
-            }
-            if let subtitle {
+                    .frame(width: 7, height: 7)
+                Text("Happening now")
+                    .font(.caption2.weight(.semibold))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            } else if let subtitle {
                 Text(subtitle)
                     .font(.caption2.weight(.semibold))
                     .monospacedDigit()
             }
         }
-        .padding(.horizontal, subtitle == nil ? 2 : 6)
+        .frame(maxWidth: 120)
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.horizontal, 6)
         .padding(.vertical, 2)
         .background {
-            if subtitle != nil { Capsule().fill(.background.opacity(0.9)) }
+            if isLive || subtitle != nil { Capsule().fill(.background.opacity(0.92)) }
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
@@ -962,5 +968,59 @@ private struct HeadingCone: Shape {
                     startAngle: .degrees(-90 - 35), endAngle: .degrees(-90 + 35), clockwise: false)
         path.closeSubpath()
         return path
+    }
+}
+
+// MARK: - Swipe up to dismiss (batch 7)
+
+/// Top pills and banners follow the finger: dragged up they move up with it, pulled down they
+/// rubber-band; released past 30 % of their height or flicked up, they slide off the top and then
+/// `onDismiss` runs; otherwise they spring back. Reduce Motion: a shorter slide, no spring.
+struct SwipeUpToDismiss: ViewModifier {
+    let onDismiss: () -> Void
+
+    @State private var offset: CGFloat = 0
+    @State private var height: CGFloat = 44
+    @State private var leaving = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = max($0, 1) }
+            .offset(y: offset)
+            .opacity(leaving ? 0 : 1 - min(1, max(0, -offset) / (height * 2)))
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 8)
+                    .onChanged { value in
+                        guard !leaving else { return }
+                        offset = SwipeDismissRule.offset(for: value.translation.height)
+                    }
+                    .onEnded { value in
+                        guard !leaving else { return }
+                        if SwipeDismissRule.dismisses(translation: value.translation.height,
+                                                      predicted: value.predictedEndTranslation.height, height: height) {
+                            leaving = true
+                            let travel = reduceMotion ? -height * 0.5 : -(height + 80)
+                            withAnimation(.easeIn(duration: reduceMotion ? 0.12 : 0.22)) { offset = travel }
+                            Task { @MainActor in
+                                try? await Task.sleep(for: .milliseconds(reduceMotion ? 130 : 230))
+                                onDismiss()
+                                leaving = false
+                                offset = 0
+                            }
+                        } else {
+                            withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.35, dampingFraction: 0.75)) {
+                                offset = 0
+                            }
+                        }
+                    }
+            )
+            .accessibilityAction(named: "Dismiss") { onDismiss() }
+    }
+}
+
+extension View {
+    func swipeUpToDismiss(_ onDismiss: @escaping () -> Void) -> some View {
+        modifier(SwipeUpToDismiss(onDismiss: onDismiss))
     }
 }

@@ -95,6 +95,8 @@ final class AppState {
     private(set) var notifications: [AppNotification] = []
     /// API-024: the bundle's screen layouts (nil: none sent, or screenshot mode → the built-in ones).
     private(set) var screenLayouts: ScreenLayouts?
+    /// API-027 `bundle.live_activity` (part of `currentBundle`; it was missing there before batch 7).
+    @ObservationIgnored private var liveActivitySettings: LiveActivitySettings?
 
     // MARK: - Loading
 
@@ -854,6 +856,7 @@ final class AppState {
         schedule = []
         notifications = []
         screenLayouts = nil
+        liveActivitySettings = nil
         loadError = nil
         refreshProblem = nil
         lastRefreshed = nil
@@ -863,6 +866,7 @@ final class AppState {
         searchPath = NavigationPath()
         focusRequest = nil
         presentedSheet = nil
+        searchIndexTask?.cancel()
         searchIndex = nil
         pendingTour = false
         pendingSharedPlan = nil
@@ -949,7 +953,10 @@ final class AppState {
     }
 
     private func apply(_ bundle: EventBundle) {
+        let signpost = AppSignpost.begin(.bundleApply)
+        defer { AppSignpost.end(signpost, ["items": .int(bundle.schedule.count)]) }
         let isFirstApply = !hasAppliedDefaultTab
+        liveActivitySettings = bundle.liveActivity
         currentEvent = bundle.event
         loadPersonalState(for: bundle.event.id)
         contentVersion = bundle.contentVersion
@@ -983,13 +990,36 @@ final class AppState {
         }
         // New images download first; files the new content no longer uses are deleted after.
         scheduleImageSync()
-        searchIndex = EventSearchIndex(bundle)
+        rebuildSearchIndex(bundle)
         // The onboarding cards after the first join on this device (never in screenshot mode).
         if isFirstApply, !ScreenshotMode.isActive, !UserDefaults.standard.bool(forKey: Keys.onboardingSeen) {
             pendingTour = true
         }
         assistant.refreshLive()
         liveFollowNeedsUpdate()
+    }
+
+    /// The search index is built off the main actor (main-thread audit, batch 7: thousands of
+    /// tokens for a big event) and assigned in one go when it still matches the content shown.
+    @ObservationIgnored private var searchIndexTask: Task<Void, Never>?
+
+    private func rebuildSearchIndex(_ bundle: EventBundle) {
+        searchIndexTask?.cancel()
+        let version = bundle.contentVersion
+        let eventId = bundle.event.id
+        searchIndexTask = Task { [weak self] in
+            let index = await Self.buildSearchIndex(bundle)
+            guard !Task.isCancelled, let self, self.currentEvent?.id == eventId,
+                  (self.contentVersion ?? version) == version else { return }
+            self.searchIndex = index
+        }
+    }
+
+    @concurrent
+    nonisolated private static func buildSearchIndex(_ bundle: EventBundle) async -> EventSearchIndex {
+        let signpost = AppSignpost.begin(.searchIndex)
+        defer { AppSignpost.end(signpost, ["items": .int(bundle.schedule.count + bundle.locations.count)]) }
+        return EventSearchIndex(bundle)
     }
 
     /// The content shown, as one bundle (nil outside an event). For search and the assistant.
@@ -1003,7 +1033,8 @@ final class AppState {
             locations: locations,
             schedule: schedule,
             notifications: notifications,
-            layout: screenLayouts
+            layout: screenLayouts,
+            liveActivity: liveActivitySettings
         )
     }
 
@@ -1893,6 +1924,8 @@ actor EventStore {
     func save(_ saved: SavedEvent, contentVersion: Int? = nil) {
         guard let fileURL else { return }
         let started = ContinuousClock.now
+        let signpost = AppSignpost.begin(.bundleSave)
+        defer { AppSignpost.end(signpost) }
         do {
             let data = try SavedEvent.encode(saved)
             let directory = fileURL.deletingLastPathComponent()

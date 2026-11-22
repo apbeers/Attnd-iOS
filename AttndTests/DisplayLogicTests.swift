@@ -435,4 +435,14 @@ final class DisplayLogicTests: XCTestCase {
         XCTAssertEqual(RoutePulse.opacity(0), 0)
         XCTAssertEqual(RoutePulse.opacity(0.5), 1)
     }
+
+    func testSwipeDismissRule() {
+        XCTAssertEqual(SwipeDismissRule.offset(for: -30), -30)
+        XCTAssertEqual(SwipeDismissRule.offset(for: 50), 10)
+        XCTAssertEqual(SwipeDismissRule.offset(for: 500), 24)
+        XCTAssertTrue(SwipeDismissRule.dismisses(translation: -20, predicted: -20, height: 60))
+        XCTAssertFalse(SwipeDismissRule.dismisses(translation: -10, predicted: -20, height: 60))
+        XCTAssertTrue(SwipeDismissRule.dismisses(translation: -5, predicted: -90, height: 60), "a fast flick")
+        XCTAssertFalse(SwipeDismissRule.dismisses(translation: 20, predicted: 40, height: 60))
+    }
 }

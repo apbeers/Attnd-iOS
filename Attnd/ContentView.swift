@@ -415,9 +415,11 @@ private struct LatestUpdateBannerModifier: ViewModifier {
                     Group {
                         if let urgent {
                             UrgentUpdateBanner(notification: urgent)
+                                .swipeUpToDismiss { appState.dismissUrgent(urgent.id) }
                                 .transition(.move(edge: .top).combined(with: .opacity))
                         } else if let notification {
                             LatestUpdateBanner(notification: notification)
+                                .swipeUpToDismiss { appState.dismissLatestUpdate(notification.id) }
                                 .transition(.move(edge: .top).combined(with: .opacity))
                         }
                     }
@@ -659,10 +661,7 @@ private struct InAppBannerOverlay: View {
                                  in: .rect(cornerRadius: 22))
                     .padding(.horizontal, 16)
                     .padding(.top, 4)
-                    .simultaneousGesture(DragGesture(minimumDistance: 12).onEnded { value in
-                        if value.translation.height < -16 { appState.dismissInAppBanner() }
-                    })
-                    .accessibilityAction(named: "Dismiss") { appState.dismissInAppBanner() }
+                    .swipeUpToDismiss { appState.dismissInAppBanner() }
                     .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
                 }
                 Spacer(minLength: 0)
@@ -783,13 +782,8 @@ private struct EventStatusBadgeModifier: ViewModifier {
             VStack(spacing: 0) {
                 ForEach(kinds, id: \.title) { kind in
                     EventStatusBadge(kind: kind)
-                        // Swipe up dismisses (batch 7); Options → Status keeps the same info.
-                        .gesture(DragGesture(minimumDistance: 12).onEnded { value in
-                            if value.translation.height < -16 {
-                                withAnimation(.easeOut(duration: 0.2)) { _ = appState.dismissedStatusBadges.insert(kind.id) }
-                            }
-                        })
-                        .accessibilityAction(named: "Dismiss") { appState.dismissedStatusBadges.insert(kind.id) }
+                        // Follows the finger up and slides off (batch 7); Options → Status keeps the info.
+                        .swipeUpToDismiss { _ = appState.dismissedStatusBadges.insert(kind.id) }
                         .padding(.top, 6)
                 }
             }

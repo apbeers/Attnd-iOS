@@ -71,6 +71,9 @@ fi
 configuration=${CONFIGURATION:-Release}
 case "$configuration" in Dev|Release) ;; *) echo "CONFIGURATION must be Dev or Release" >&2; exit 2 ;; esac
 echo "Archiving $MARKETING_VERSION ($BUILD_NUMBER), $configuration, for server ${ATTND_SERVER:-attnd.app}"
+# A clean build every time (batch 7): no DerivedData of an earlier archive on this machine can
+# carry old App Intents metadata (the removed App Shortcuts) into the new one.
+rm -rf "$HOME/Library/Developer/Xcode/DerivedData"/Attnd-* build/Attnd.xcarchive
 xcodebuild archive -project Attnd.xcodeproj -scheme Attnd -configuration "$configuration" \
   -destination 'generic/platform=iOS' -archivePath build/Attnd.xcarchive "${auth[@]}" "${signing[@]}" \
   CURRENT_PROJECT_VERSION="$BUILD_NUMBER" MARKETING_VERSION="$MARKETING_VERSION" \
@@ -117,6 +120,11 @@ echo "Distribution signature OK (no get-task-allow) for $configuration"
 # 1b. Size report (informational, never fails the build): what is in the .ipa and how big each part is.
 #     Apple's App Thinning Size Report would need an ad hoc (release-testing) profile, which CI doesn't have.
 python3 scripts/ci/size_report.py "$ipa" build/ipa-check/Payload "$configuration" || true
+# App Intents each bundle declares (batch 7: Spotlight still showed "Happening now" / "Up next"
+# from the removed AppShortcutsProvider). Informational: every Metadata.appintents in the archive
+# (app, App Clip, both widget extensions) with its actions (identifier, title) and App Shortcuts
+# phrases; only the two non-discoverable Live Activity buttons should be there, no shortcuts.
+python3 scripts/ci/appintents_report.py build/Attnd.xcarchive || true
 
 # 2. destination=upload sends the build straight to App Store Connect.
 write_export_options upload

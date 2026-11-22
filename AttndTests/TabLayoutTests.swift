@@ -16,6 +16,22 @@ final class TabLayoutTests: XCTestCase {
         return TabLayout.resolve(display, hasFlyer: flyer, screenshotMode: !home)
     }
 
+    func testRemoveThenReAddATab() {
+        // The preview phone (batch 7 report): Schedule removed in the console, then added back.
+        let full = layout([.home, .map, .locations, .schedule, .notifications], home: true)
+        XCTAssertEqual(full.tabs, [.home, .map, .locations, .schedule, .notifications])
+        let removed = layout([.home, .map, .locations, .notifications], home: true)
+        XCTAssertFalse(removed.tabs.contains(.schedule))
+        let readded = layout([.home, .map, .locations, .notifications, .schedule], home: true)
+        XCTAssertTrue(readded.tabs.contains(.schedule), "a tab added back shows again, wherever it is listed")
+        // Five tabs without Home listed: Home is added and Flyer, not Schedule, makes room.
+        let withFlyer = layout([.map, .schedule, .locations, .flyer, .notifications], home: true)
+        XCTAssertEqual(withFlyer.tabs, [.home, .map, .schedule, .locations, .notifications])
+        // Six listed: Home's rule cuts Flyer, so Schedule listed last stays.
+        XCTAssertEqual(layout([.home, .map, .locations, .flyer, .notifications, .schedule], home: true).tabs,
+                       [.home, .map, .locations, .notifications, .schedule])
+    }
+
     func testHomeAlwaysFirstAndDefault() {
         // A bundle without Home (older catalogue, organizer's list) still gets it: Home doesn't come and go.
         let l = layout([.map, .locations, .schedule, .notifications], default: .schedule, home: true)

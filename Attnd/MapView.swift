@@ -125,9 +125,11 @@ struct MapView: View {
             }
             // Live dot / "Next 7:30" floating just above the pin's balloon (not selectable).
             ForEach(badges) { badge in
-                Annotation("", coordinate: badge.coordinate.clCoordinate, anchor: .bottom) {
+                // "Happening now" sits under the pin's name; "Next 7:30" stays above the balloon.
+                Annotation("", coordinate: badge.coordinate.clCoordinate, anchor: badge.isLive ? .top : .bottom) {
                     PinGlanceBadge(isLive: badge.isLive, subtitle: badge.subtitle)
-                        .padding(.bottom, badge.locationId == selectedLocationId ? 66 : 42)
+                        .padding(badge.isLive ? .top : .bottom,
+                                 badge.isLive ? 22 : (badge.locationId == selectedLocationId ? 66 : 42))
                 }
                 .annotationTitles(.hidden)
             }

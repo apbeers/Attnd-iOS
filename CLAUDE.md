@@ -228,7 +228,7 @@ Everything here is local: it reads the bundle already on the device, works offli
 
 ## My schedule (iOS, owner Nov 21, 2026; iOS diverges from Android)
 
-Spec: `ios-my-schedule.md` (owner-approved). Android keeps likes and the separate plan for now (attnd-web ROADMAP). Every phone, with or without Apple Intelligence; never in screenshot mode (nothing is stored there, so no section, chip or hint appears).
+Spec: the code and its tests (`MySchedule.swift`, `MyScheduleTests`; the `ios-my-schedule.md` spec it was built from was never committed). Android keeps likes and the separate plan for now (attnd-web ROADMAP). Every phone, with or without Apple Intelligence; never in screenshot mode (nothing is stored there, so no section, chip or hint appears).
 - **One list replaces likes and the stored plan** (`MySchedule.swift`, stored in `EventPersonalState.mySchedule`, `pref.event.<id>`): schedule items, places at a chosen time (default 45 min) and saved places without a time. The hearted sets mirror the entries (`updateSchedule`), so everything that read hearts (search's "My Schedule" list, Places / Map filter, the planner's must-includes, Live Activity, reminders) follows My schedule. Keys, prefs and API-009 names keep "heart".
 - **Migration** once per event (`migrateSchedule`, at load): hearted items + the stored plan's items → item entries, hearted places → saved places, the plan's meal breaks with a food place → place entries at the break. Old keys stay readable; no metrics. Fingerprints for migrated items are taken from the first bundle.
 - **Metrics**: `schedule_item_heart` / `_unheart` / `location_heart` / `_unheart` only when membership changes (`MyScheduleChange.metric`); never for a time / reminder change, restore, migration or rejoin.

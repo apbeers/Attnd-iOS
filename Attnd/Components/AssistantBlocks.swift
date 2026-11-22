@@ -56,6 +56,8 @@ struct MiniMap: View {
                     mapContent(stops: stops, others: others)
                 }
                 .mapStyle(.standard(pointsOfInterest: .excludingAll))
+                // No system map controls on small maps (an empty glass circle on Home, batch 7).
+                .mapControls { }
                 .allowsHitTesting(false)
                 // A new set of pins frames itself again.
                 .id((stops + others).map(\.id))
@@ -69,6 +71,7 @@ struct MiniMap: View {
                         .background(.regularMaterial, in: .circle)
                         .padding(8)
                         .accessibilityHidden(true)
+                        .debugFloatingFrame("mini_map_open")
                 }
             }
             .buttonStyle(.plain)
@@ -99,7 +102,7 @@ struct MiniMap: View {
                 .tint(Color.accentColor)
         }
         if showsUser, appState.userLocation.isAuthorized, !ScreenshotMode.isActive {
-            UserAnnotation()
+            UserAnnotation { user in HeadingUserDot(heading: user.heading) }
         }
     }
 
@@ -184,18 +187,9 @@ struct Gallery: View {
         if !images.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 BlockTitle(title: title)
-                ScrollView(.horizontal) {
-                    LazyHStack(alignment: .top, spacing: 12) {
-                        ForEach(images) { image in
-                            tile(image)
-                                .containerRelativeFrame(.horizontal) { width, _ in images.count == 1 ? width : width * 0.65 }
-                        }
-                    }
-                    .scrollTargetLayout()
+                CarouselRow(items: images, id: \.id, fraction: images.count == 1 ? 1 : 0.65, maxCardWidth: 520) { image in
+                    tile(image)
                 }
-                .scrollTargetBehavior(.viewAligned)
-                .scrollIndicators(.hidden)
-                .scrollClipDisabled()
             }
         }
     }
@@ -381,7 +375,7 @@ enum PlanDiffStatus: Hashable, Sendable {
 /// preview) or Undo (applied).
 struct PlanDiffView: View {
     let rows: [PlanDiffRow]
-    var title: String = "Changes to Your Plan"
+    var title: String = "Changes to Your Schedule"
     var summary: String? = nil
     var status: PlanDiffStatus = .preview
     var onApply: (() -> Void)? = nil
@@ -396,7 +390,7 @@ struct PlanDiffView: View {
                 Text(summary).font(.subheadline).foregroundStyle(.secondary)
             }
             if rows.isEmpty {
-                Text("No changes to your plan.")
+                Text("No changes to your schedule.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -464,9 +458,9 @@ enum SettingCardKind: String, CaseIterable, Hashable, Sendable {
     var detail: String {
         switch self {
         case .followLockScreen:
-            return "What's on now and next from your plan or your likes, on the Lock Screen and in the Dynamic Island."
+            return "What's on now and next from your schedule, on the Lock Screen and in the Dynamic Island."
         case .reminders:
-            return "A reminder 15 minutes before anything you've liked or planned. Comes with notifications."
+            return "A reminder before anything in your schedule (15 minutes unless you change it). Comes with notifications."
         case .notifications:
             return "Set-time changes and urgent news from the organizers."
         }

@@ -77,19 +77,74 @@ extension Notification.Name {
     static let attndUpdateRequired = Notification.Name("com.arcu.attnd.updateRequired")
 }
 
+// MARK: - Server switch
+
+/// TestFlight (and Xcode) installs can switch between the production and dev servers in Options
+/// (owner, Nov 19, 2026: testing on the Release build that TestFlight installs after a release).
+/// App Store installs always use the build's server. App Review installs look exactly like TestFlight
+/// ones (a sandbox receipt), so a Release build still starts on production there: the build decides
+/// the default, the switch only overrides it.
+enum ServerSwitch {
+    static let productionHost = "attnd.app"
+    static let devHost = "dev.attnd.app"
+    static let choiceKey = "pref.serverChoice"
+
+    enum Choice: String, CaseIterable, Sendable {
+        case production, dev
+        var host: String { self == .production ? ServerSwitch.productionHost : ServerSwitch.devHost }
+        var title: String { self == .production ? "Production" : "Dev" }
+    }
+
+    /// A TestFlight or Xcode install. `appStoreReceiptURL` ends in `sandboxReceipt` outside the App
+    /// Store; it is read through KVC because the property is deprecated (iOS 18) and its replacement,
+    /// `AppTransaction`, is async, while the host must be known before the first request.
+    static let isSwitchable: Bool = {
+        #if DEBUG
+        return true
+        #else
+        return (Bundle.main.value(forKey: "appStoreReceiptURL") as? URL)?.lastPathComponent == "sandboxReceipt"
+        #endif
+    }()
+
+    static var storedChoice: Choice? {
+        UserDefaults.standard.string(forKey: choiceKey).flatMap(Choice.init(rawValue:))
+    }
+
+    /// Pure (unit-tested): the build's host unless the install is switchable and a choice was made.
+    static func host(buildHost: String, switchable: Bool, choice: Choice?) -> String {
+        guard switchable, let choice else { return buildHost }
+        return choice.host
+    }
+
+    /// The domain of the join / shared-plan links this launch builds: dev.attnd.app on the dev server
+    /// (the app and the clip open both as Universal Links), attnd.app otherwise.
+    static var linkHost: String { APIClient.serverHost == devHost ? devHost : productionHost }
+
+    /// The choice the current host corresponds to (what Options shows).
+    static func current(host: String) -> Choice { host == productionHost ? .production : .dev }
+}
+
 // MARK: - APIClient
 
 final class APIClient: Sendable {
 
     static let shared = APIClient()
 
-    /// Host of the Attnd server, from the ATTND_SERVER build setting (Info.plist).
-    /// Builds from the develop branch point at the dev server; everything else uses attnd.app.
-    static let serverHost: String = {
+    /// The build's own server, from the ATTND_SERVER build setting (Info.plist): Dev builds (develop)
+    /// the dev server, Release builds (main) attnd.app.
+    static let buildServerHost: String = {
         let host = (Bundle.main.object(forInfoDictionaryKey: "ATTND_SERVER") as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return host.isEmpty || host.hasPrefix("$(") ? "attnd.app" : host
+        return host.isEmpty || host.hasPrefix("$(") ? ServerSwitch.productionHost : host
     }()
+
+    /// The server this launch talks to: the build's, unless a test install chose another one in
+    /// Options (`ServerSwitch`). Fixed for the process; a switch applies at the next launch.
+    static let serverHost: String = ServerSwitch.host(
+        buildHost: buildServerHost,
+        switchable: ServerSwitch.isSwitchable,
+        choice: ServerSwitch.storedChoice
+    )
 
     /// The API version this build speaks.
     static let apiVersion = 2
@@ -175,6 +230,8 @@ final class APIClient: Sendable {
         var headers: [String: String] = [:]
         if let etag { headers["If-None-Match"] = etag }
         if let deviceId { headers["X-Device-Id"] = deviceId }
+        // API-024: the layout section types this build draws (the server sends only those).
+        headers["X-Attnd-Sections"] = String(SectionCatalogue.version)
         let (data, http) = try await send("events/\(eventId)/bundle/", headers: headers)
         if http.statusCode == 304 { return .notModified }
         let bundle: EventBundle = try decode(data)
@@ -185,10 +242,18 @@ final class APIClient: Sendable {
 
     /// POST events/<id>/join/
     @discardableResult
-    func joinEvent(eventId: Int, deviceId: String, pushToken: String?) async throws -> StatusResponse {
+    func joinEvent(eventId: Int, deviceId: String, pushToken: String?, previewToken: String? = nil) async throws -> StatusResponse {
         let body = JoinRequest(deviceId: deviceId, pushToken: Self.nonEmpty(pushToken), appVersion: appVersion,
-                               appClip: isAppClip)
+                               appClip: isAppClip, previewToken: Self.nonEmpty(previewToken))
         return try await post("events/\(eventId)/join/", body: body)
+    }
+
+    /// GET events/<id>/changes/?since= (API-026, preview phones only): answered at once on a change,
+    /// else after about 25 s (inside the 30 s request timeout).
+    func changes(eventId: Int, since: Int?, deviceId: String) async throws -> ChangesResponse {
+        let path = "events/\(eventId)/changes/" + (since.map { "?since=\($0)" } ?? "")
+        let (data, _) = try await send(path, headers: ["X-Device-Id": deviceId])
+        return try decode(data)
     }
 
     /// POST events/<id>/leave/

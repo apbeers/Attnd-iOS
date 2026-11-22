@@ -57,6 +57,8 @@ final class AssistantController {
         var answered: [Int: Bool] = [:]
         /// The model is still writing this turn.
         var streaming = false
+        /// The working line's last stage, shown as done ("✓ Added Taco Row") once answered.
+        var status: String? = nil
     }
 
     /// "Undo" for ~8 s after a plan change was applied.
@@ -75,9 +77,11 @@ final class AssistantController {
             appState?.openPlanPage()
         }
     }
-    /// This session's turns for the wide layout's chat column (≤ 30, not stored).
+    /// The chat's turns (My plan is one continuous chat; ≤ 40, stored per event, ChatTranscript).
     private(set) var transcript: [Turn] = []
-    private static let maxTranscript = 30
+    private static let maxTranscript = ChatTranscript.maxTurns
+    /// The working line's current stage ("Searching…", "Adding Taco Row…"), nil when idle.
+    private(set) var stage: String?
     /// The Undo pill after a plan change (nil: none).
     private(set) var undoPill: UndoPill?
     /// The path of the turn being worked on (busy indicator in the input bar).
@@ -134,10 +138,12 @@ final class AssistantController {
         transcript = []
         focusPending = false
         draft = ""
-        guard eventId != nil, appState != nil, !ScreenshotMode.isActive else {
+        stage = nil
+        guard let eventId, appState != nil, !ScreenshotMode.isActive else {
             live = LiveHints()
             return
         }
+        restoreTranscript(eventId)
         refreshLive()
     }
 
@@ -155,7 +161,9 @@ final class AssistantController {
             modelAvailable: AppState.modelReady,
             history: appState.planner.history,
             units: DistanceText.usesImperial() ? .imperial : .metric,
-            locale: .current
+            locale: .current,
+            schedule: appState.mySchedule,
+            memory: appState.planner.conversation(bundle.event.id).memory
         )
     }
 
@@ -246,6 +254,11 @@ final class AssistantController {
             }
             return
         }
+        // "Let's do music, food, then more music": one proposal with the steps filled in.
+        if path != .search && path != .ask, let sequence = PlanProposals.sequence(text, ctx) {
+            propose(sequence, input: text, started, ctx)
+            return
+        }
         let routed = AssistantRouter.route(text, ctx)
         switch AssistantFlow.path(routed.intent, text, modelAvailable: ctx.modelAvailable, forced: path) {
         case .search:
@@ -293,40 +306,50 @@ final class AssistantController {
         nextId += 1
         answer = Turn(id: id, input: text, blocks: [], source: .model, streaming: true)
         busy = .ask
+        stage = "Thinking…"
         let retrieved = AssistantModel.retrieve(text, ctx)
-        let prompt = AssistantModel.prompt(text, ctx, appState.planner.conversation(eventId), retrieved)
+        let conversation = appState.planner.conversation(eventId)
         modelTask = Task { [weak self] in
-            var raw: String?
-            var toolCalls = 0
+            var output: ModelTurnOutput?
             do {
-                let reply = try await EventAssistant.assistantTurn(prompt, bundle: ctx.bundle, now: ctx.now) { [weak self] partial in
+                output = try await EventAssistant.assistantTurn(text, ctx, conversation: conversation, retrieved: retrieved) { [weak self] partial, shown, stage in
                     guard let self, self.answer?.id == id else { return }
-                    let shown = AssistantModel.completeBlocks(partial, ctx).filter { !$0.isChips }
-                    if shown != self.answer?.blocks { self.answer?.blocks = shown }
+                    // No token streaming (owner, Nov 21, 2026): only the working line's stage
+                    // changes; the answer (text + components) appears at once when the turn is done.
+                    _ = partial
+                    _ = shown
+                    if let stage, stage != self.stage { self.stage = stage }
                 }
-                raw = reply.raw
-                toolCalls = reply.toolCalls
             } catch is CancellationError {
                 if self?.answer?.id == id { self?.answer = nil }
                 self?.busy = nil
+                self?.stage = nil
                 return
             } catch {
+                // Never silent: logged, and the router answers this turn.
                 AppLog.warning(.assistant, "assistant.error", "Assistant turn failed", [
                     "kind": "turn", "error": .string(String(describing: type(of: error))),
                     "domain": .string((error as NSError).domain), "code": .int((error as NSError).code),
                 ])
-                raw = nil
+                output = nil
             }
             guard let self, !Task.isCancelled, self.eventId == eventId else { return }
-            let resolved = AssistantModel.resolve(text, raw: raw, ctx)
             if self.answer?.id == id { self.answer = nil }
-            if let p = PlanProposals.from(actions: resolved.turn.actions, ctx)
-                ?? resolved.routed.flatMap({ PlanProposals.from(routed: $0, ctx) }) {
-                self.propose(p, input: text, started, ctx, source: resolved.source)
+            let turn = output.map { AssistantModel.assemble(text: $0.text, shown: $0.shown, actions: $0.actions, ctx) }
+            if let turn, !turn.blocks.isEmpty || !turn.actions.isEmpty {
+                if let p = PlanProposals.from(actions: turn.actions, ctx) {
+                    self.propose(p, input: text, started, ctx, source: .model)
+                    return
+                }
+                self.finish(text, turn, .model, .question, started, ctx, modelTried: true, toolCalls: output?.toolCalls ?? 0)
                 return
             }
-            self.finish(text, resolved.turn, resolved.source, resolved.routed?.intent ?? .question, started, ctx,
-                        fallback: resolved.source == .rules, modelTried: true, toolCalls: toolCalls)
+            let routed = AssistantRouter.route(text, ctx)
+            if let p = PlanProposals.from(routed: routed, ctx) {
+                self.propose(p, input: text, started, ctx, source: .rules)
+                return
+            }
+            self.finish(text, routed.turn, .rules, routed.intent, started, ctx, fallback: true, modelTried: true, toolCalls: output?.toolCalls ?? 0)
         }
     }
 
@@ -356,6 +379,7 @@ final class AssistantController {
         }
         if proposal != nil { blocks = blocks.map(Self.withoutPlanChips).filter(Self.isNotEmptyChips) }
         let validated = context().map { BlockValidator.validate(blocks, $0.blockContext) } ?? blocks
+        if stage == nil || stage == "Thinking…", input != nil { stage = Self.stageText(for: intent, turn.actions, ctx.bundle) ?? stage }
         show(input, validated, source: source, applied: applied)
         if [.search, .question, .noMatch].contains(intent), input != nil { appState?.track(.search) }
         let ms = (ContinuousClock.now - started).wholeMilliseconds
@@ -369,7 +393,7 @@ final class AssistantController {
         if modelTried { fields["tool_calls"] = .int(toolCalls) }
         if let input { fields.merge(LogRedaction.textFields(input)) { _, new in new } }
         AppLog.info(.assistant, "assistant.turn", "Assistant turn (\(source == .model ? "model" : "rules"))", fields)
-        remember(ctx.bundle.event.id, input, AssistantTurn(blocks: validated))
+        remember(ctx.bundle.event.id, input, AssistantTurn(blocks: validated, actions: turn.actions))
     }
 
     /// A like-clash chip in the turn ("Add to plan instead of X?") as a proposal.
@@ -407,10 +431,56 @@ final class AssistantController {
 
     /// Adds a turn to the chat column (replacing one with the same id).
     private func record(_ turn: Turn) {
+        var turn = turn
+        if turn.status == nil, !turn.streaming { turn.status = AssistantFlow.doneLine(stage: stage, blocks: turn.blocks) }
         transcript.removeAll { $0.id == turn.id }
         transcript.append(turn)
         if transcript.count > Self.maxTranscript { transcript.removeFirst(transcript.count - Self.maxTranscript) }
+        if !turn.streaming {
+            stage = nil
+            saveTranscript()
+        }
     }
+
+    /// The working line of a router turn, by what it did.
+    static func stageText(for intent: AssistantIntent, _ actions: [AssistantAction], _ bundle: EventBundle) -> String? {
+        if let action = actions.first {
+            let name = action.scheduleTarget()?.name(bundle) ?? "it"
+            switch action.name {
+            case .scheduleAdd, .like: return "Adding \(name)…"
+            case .scheduleRemove, .unlike: return "Removing \(name)…"
+            case .scheduleMove: return "Moving \(name)…"
+            case .scheduleReminder: return "Setting a reminder for \(name)…"
+            case .planMake: return "Planning your day…"
+            default: break
+            }
+        }
+        switch intent {
+        case .search, .question, .noMatch, .nearMe, .whatsOn: return "Searching…"
+        case .schedule, .liked: return "Checking your schedule…"
+        default: return nil
+        }
+    }
+
+    /// Older builds' UserDefaults key (moved into `AssistantFiles` on first read).
+    private static func transcriptKey(_ eventId: Int) -> String { "pref.assistantTranscript.\(eventId)" }
+
+    private func saveTranscript() {
+        guard let eventId, !ScreenshotMode.isActive else { return }
+        let entries = transcript.filter { !$0.streaming }.map {
+            ChatTranscript.Entry(id: $0.id, input: $0.input, blocks: $0.blocks, fromModel: $0.source == .model, status: $0.status)
+        }
+        AssistantFiles.shared.set(ChatTranscript(entries: entries).encode(), "transcript-\(eventId).json")
+    }
+
+    private func restoreTranscript(_ eventId: Int) {
+        let stored = ChatTranscript.decode(AssistantFiles.shared.string("transcript-\(eventId).json", legacyKey: Self.transcriptKey(eventId)))
+        transcript = stored.entries.map { Turn(id: $0.id, input: $0.input, blocks: $0.blocks, source: $0.fromModel ? .model : .rules, status: $0.status) }
+        nextId = (transcript.map(\.id).max() ?? 0) + 1
+    }
+
+    /// Starts the working line ("Searching…") for a turn.
+    func setStage(_ text: String?) { stage = text }
 
     /// The model's conversation: the user's text and what the assistant answered (text only).
     private func remember(_ eventId: Int, _ input: String?, _ turn: AssistantTurn) {
@@ -418,6 +488,7 @@ final class AssistantController {
         var conversation = appState.planner.conversation(eventId)
         if let input { conversation = conversation.with(ConversationTurn(fromUser: true, text: input)) }
         conversation = conversation.with(ConversationTurn(fromUser: false, text: AssistantFlow.replyText(turn, bundle)))
+        conversation = conversation.remembering(turn)
         appState.planner.setConversation(conversation, eventId: eventId)
     }
 
@@ -445,21 +516,21 @@ final class AssistantController {
                 show(nil, [confirm])
             }
         case .newPlan(let plan):
-            appState.planner.apply(plan)
+            let applied = appState.applyPlan(plan)
             AppLog.info(.planner, "plan.edit", "New plan from an inline action", [
-                "ops": "add", "source": "plan", "applied": true, "removed": 0,
-                "added": .int(plan.itemIds.count), "moved": 0,
+                "ops": "add", "source": "plan", "applied": true, "removed": .int(applied.removes.count),
+                "added": .int(applied.adds.count), "moved": 0,
             ])
             refreshLive()
-            showUndo("Here's your plan: \(Planner.summary(plan, timeZone: appState.timeZone)).")
+            showUndo(applied.isEmpty ? "Your schedule already has all of that." : "Updated your schedule: \(applied.pillText).")
         case .plan(let plan):
-            appState.planner.apply(plan)
+            appState.applyPlan(plan, source: .shared, records: false)
             AppLog.notice(.ui, "share.opened", "Shared plan applied", [
                 "target": "plan", "items": .int(plan.itemIds.count), "known": .int(plan.itemIds.count),
                 "action": .string(index == 0 ? "use" : "merge"), "joined": false,
             ])
             refreshLive()
-            showUndo(index == 0 ? "Using the shared plan." : "Merged with your plan.")
+            showUndo(index == 0 ? "Added the shared plan to your schedule." : "Merged the shared plan into your schedule.")
         }
     }
 
@@ -468,7 +539,7 @@ final class AssistantController {
         nextId += 1
     }
 
-    /// The Undo pill: the previous plan version back.
+    /// The Undo pill: My schedule as it was before the last change (one Undo history).
     func undoLastChange() {
         undoPill = nil
         guard let ctx = context() else { return }
@@ -696,6 +767,50 @@ final class AssistantController {
 
     // MARK: - Executor (only validated, confirmed actions arrive here)
 
+    /// My schedule's actions (router, model tools, chips): add (a place at "HH:MM" or saved,
+    /// replacing a clashing entry), remove, move a place's time, an entry's reminder.
+    private func executeSchedule(_ action: AssistantAction, _ bundle: EventBundle, now: Date) -> ActionOutcome {
+        guard let appState else { return .failed("No event.") }
+        guard let ref = action.scheduleTarget() else { return .failed("That can't go in your schedule.") }
+        let target = AssistantRouter.target(ref)
+        let name = ref.name(bundle) ?? "it"
+        let zone = bundle.event.timeZone
+        func date(_ key: String) -> Date? {
+            action.string(key).flatMap(PlanClock.parse).map { clock in
+                MySchedule.date(clock, near: appState.mySchedule.entry(for: target)?.at, now: now, timeZone: zone)
+            }
+        }
+        defer { refreshLive() }
+        switch action.name {
+        case .scheduleAdd:
+            if let replaced = action.scheduleTarget("replace") {
+                appState.removeFromSchedule(AssistantRouter.target(replaced))
+            }
+            let at = ref.kind == .location ? action.string("time").flatMap(PlanClock.parse).map {
+                MySchedule.date($0, near: nil, now: now, timeZone: zone)
+            } : nil
+            appState.addToSchedule(target, at: at, minutes: action.params["minutes"]?.intValue)
+            let when = at.map { " at " + EventTimeFormat.time($0, in: zone) } ?? ""
+            return .done(message: "Added \(name) to your schedule\(when).", blocks: [BlockValidator.card(ref)])
+        case .scheduleRemove:
+            guard appState.isInSchedule(target) else { return .failed("\(name) isn't in your schedule.") }
+            appState.removeFromSchedule(target)
+            return .done(message: "Removed \(name) from your schedule.")
+        case .scheduleMove:
+            guard ref.kind == .location else { return .failed("\(name) is at a set time; the organizer decides when it is.") }
+            guard let at = date("time") else { return .failed("What time?") }
+            if appState.isInSchedule(target) { appState.moveEntry(target, to: at) } else { appState.addToSchedule(target, at: at) }
+            return .done(message: "Moved \(name) to \(EventTimeFormat.time(at, in: zone)).", blocks: [BlockValidator.card(ref)])
+        case .scheduleReminder:
+            guard appState.isInSchedule(target) else { return .failed("Add \(name) to your schedule first.") }
+            let minutes = MySchedule.nearestReminder(action.params["minutes"]?.intValue ?? MySchedule.defaultReminder)
+            appState.setReminder(target, minutes: minutes)
+            return .done(message: minutes == 0 ? "No reminder for \(name)." : "I'll remind you \(MyScheduleTitle.reminder(minutes)) \(name).")
+        default:
+            return .failed("I can't do that here.")
+        }
+    }
+
     fileprivate func execute(_ action: AssistantAction) -> ActionOutcome {
         guard let appState, let bundle = appState.currentBundle else { return .failed("No event.") }
         let now = Date.now
@@ -712,7 +827,9 @@ final class AssistantController {
                 blocks.append(.chips([clash]))
             }
             refreshLive()
-            return .done(message: liked ? "Liked \(name)." : "Unliked \(name).", blocks: blocks)
+            return .done(message: liked ? "Added \(name) to your schedule." : "Removed \(name) from your schedule.", blocks: blocks)
+        case .scheduleAdd, .scheduleRemove, .scheduleMove, .scheduleReminder:
+            return executeSchedule(action, bundle, now: now)
         case .planEdit:
             guard let plan else { return .failed(AssistantRouter.noPlanText) }
             guard let ops = action.ops(bundle, now: now) else { return .failed("I couldn't read that change.") }
@@ -722,19 +839,19 @@ final class AssistantController {
             guard let kind = PlanVersionKind.of(action.string("kind")) else { return .failed("I don't know that version.") }
             return applyEdit(PlanVersions.make(kind, plan, bundle, appState.likeSet, now: now), ops: ["constraint"], prefix: "\(kind.label): ")
         case .planUndo:
-            let restored = appState.planner.undo()
-            AppLog.info(.planner, "plan.undo", "Plan undo", ["depth": .int(appState.planner.history.plans.count), "ok": .bool(restored != nil)])
+            let restored = appState.undoScheduleChange()
+            AppLog.info(.planner, "plan.undo", "Plan undo", ["depth": .int(appState.planner.history.snapshots.count), "ok": .bool(restored)])
             refreshLive()
-            return restored == nil ? .failed("There's nothing to undo.") : .done(message: "Undid your last plan change.", blocks: [.plan()])
+            return !restored ? .failed("There's nothing to undo.") : .done(message: "Undid your last schedule change.", blocks: [.plan()])
         case .planMake:
             guard let request = action.string("request") else { return .failed("What should the plan be about?") }
             makePlan(request)
             return .done()
         case .checkoff:
-            guard let plan else { return .failed(AssistantRouter.noPlanText) }
+            guard plan != nil else { return .failed(AssistantRouter.noPlanText) }
             guard let id = action.id("item", prefix: "s") else { return .failed("I couldn't find that.") }
             let done = action.bool("done") != false
-            setCheckedOff(plan, id, done, source: "tap")
+            setCheckedOff(id, done, source: "tap")
             let name = bundle.scheduleItem(id)?.name ?? "It"
             return .done(message: done ? "Checked off \(name)." : "\(name) isn't checked off any more.")
         case .followLockScreen:
@@ -754,7 +871,7 @@ final class AssistantController {
             }
             let text: String
             if name == .reminders {
-                text = on ? "Reminders are on: 15 minutes before liked and planned items." : "Reminders are off."
+                text = on ? "Reminders are on: 15 minutes before everything in your schedule." : "Reminders are off."
             } else {
                 text = on ? "Notifications from the organizer are on." : "Notifications from the organizer are off."
             }
@@ -768,6 +885,18 @@ final class AssistantController {
         case .open:
             appState.openAssistantScreen(action.string("screen") ?? "", EntityRef.of(action.params["id"]))
             return .done()
+        case .location:
+            let on = action.bool("on") != false
+            appState.showUserLocation = on
+            return .done(message: on ? "Your location shows on the map." : "Your location is hidden on the map.")
+        case .leave:
+            Task { await appState.leaveEvent() }
+            return .done(message: "Left the event.")
+        case .switchServer:
+            guard ServerSwitch.isSwitchable else { return .failed("Only test builds can switch servers.") }
+            let choice: ServerSwitch.Choice = action.string("server") == "dev" ? .dev : .production
+            Task { await appState.switchServer(to: choice) }
+            return .done(message: "Switched to the \(choice == .dev ? "dev" : "production") server. Open Attnd again to use it.")
         case .directions:
             guard let location = action.id("location", prefix: "l").flatMap({ appState.location(id: $0) }), location.coordinate != nil else {
                 return .failed("That place has no map position.")
@@ -795,7 +924,9 @@ final class AssistantController {
     private func applyEdit(_ edit: PlanEdit, ops: [String], prefix: String = "") -> ActionOutcome {
         guard let appState, let bundle = appState.currentBundle else { return .failed("No event.") }
         let started = ContinuousClock.now
-        appState.planner.apply(edit.after)
+        // One list: the edit's result becomes edits to My schedule; what the request removed
+        // (excluded) leaves even when the person added it.
+        appState.applyPlan(edit.after, explicit: edit.after.constraints.excluded)
         AppLog.info(.planner, "plan.edit", "Plan edit applied", [
             "ops": .string(ops.joined(separator: ",")), "source": .string(planSource), "applied": true,
             "removed": .int(edit.diff.removed.count), "added": .int(edit.diff.added.count), "moved": .int(edit.diff.moved.count),
@@ -804,13 +935,14 @@ final class AssistantController {
         refreshLive()
         return .done(message: prefix + AssistantRouter.describe(edit, bundle), blocks: [
             .planDiff(edit.diff),
-            .chips([AssistantChip(label: "Show my plan", action: AssistantAction(name: .plan))]),
+            .chips([AssistantChip(label: "Show my schedule", action: AssistantAction(name: .plan))]),
         ])
     }
 
     // MARK: - Plans
 
-    /// Makes a plan in place (progress in the timeline; the model reads the request when available).
+    /// Plans for a request (the model reads it when available) and previews the result as a
+    /// proposal: Apply adds it to My schedule (one list §3), Cancel / "no" / another turn drops it.
     func makePlan(_ request: String) {
         guard let appState else { return }
         busy = .plan
@@ -823,9 +955,13 @@ final class AssistantController {
                 self.show(nil, [.text(appState.planner.error ?? AppState.nothingFitsMessage)])
                 return
             }
+            let preview = appState.mySchedule.proposal(for: plan, bundle)
+            let before = appState.planner.plan ?? PlanProposals.emptyPlan(eventId: bundle.event.id, createdAt: plan.createdAt)
+            let edit = PlanEdit(before: before, after: plan, diff: PlanDiff.between(before, plan, bundle), notes: [])
             self.answer = nil
-            self.showUndo("Here's your plan: \(Planner.summary(plan, timeZone: bundle.event.timeZone)).")
-            self.remember(bundle.event.id, nil, AssistantTurn(blocks: [.text("Made a plan: \(Planner.summary(plan, timeZone: bundle.event.timeZone)).")]))
+            self.proposal = PlanProposal(kind: .change, text: "\(preview.title). \(Planner.summary(plan, timeZone: bundle.event.timeZone)).",
+                                         options: [ProposalOption(label: "Add to My Schedule", apply: .newPlan(plan), edit: edit)])
+            self.remember(bundle.event.id, nil, AssistantTurn(blocks: [.text("Proposed: \(preview.title.lowercased()) (\(preview.pillText)).")]))
             self.refreshLive()
         }
     }
@@ -873,29 +1009,30 @@ final class AssistantController {
     /// The link of a `share` block ("plan" or "item:s12"), logged as `share.created` once shown.
     func shareLink(_ target: String) -> (url: URL, title: String, items: Int)? {
         guard let appState, let bundle = appState.currentBundle else { return nil }
+        if target == "schedule" {
+            // My schedule's items in time order (batch 7: share My schedule by QR / link, API-015).
+            let ids = bundle.schedule
+                .filter { appState.personal.heartedScheduleItems.contains($0.id) }
+                .sorted { ($0.startTime ?? .distantFuture, $0.id) < ($1.startTime ?? .distantFuture, $1.id) }
+                .map(\.id)
+            guard !ids.isEmpty, let url = URL(string: PlanShare.link(bundle.event.eventCode, ids, host: ServerSwitch.linkHost)) else { return nil }
+            return (url, "My schedule at \(bundle.event.name)", ids.count)
+        }
         if target == "plan" {
-            guard let plan = appState.planner.plan, !plan.isEmpty, let url = URL(string: PlanShare.planLink(plan, bundle)) else { return nil }
-            let day = plan.days.first { !$0.items.isEmpty }.map { "My plan for \($0.date.weekdayName)" } ?? "My plan"
+            guard let plan = appState.planner.plan, !plan.isEmpty, let url = URL(string: PlanShare.planLink(plan, bundle, host: ServerSwitch.linkHost)) else { return nil }
+            let day = plan.days.first { !$0.items.isEmpty }.map { "My schedule for \($0.date.weekdayName)" } ?? "My schedule"
             return (url, day, plan.itemIds.count)
         }
         guard let ref = EntityRef.parse(String(target.dropFirst(5))), ref.kind == .schedule,
-              let url = URL(string: PlanShare.itemLink(ref.id, bundle)) else { return nil }
+              let url = URL(string: PlanShare.itemLink(ref.id, bundle, host: ServerSwitch.linkHost)) else { return nil }
         return (url, ref.name(bundle) ?? bundle.event.name, 1)
     }
 
     func logShare(_ target: String, url: URL, items: Int) {
         AppLog.info(.ui, "share.created", "Share link made", [
-            "target": .string(target == "plan" ? "plan" : "item"), "items": .int(items),
+            "target": .string(target == "plan" || target == "schedule" ? "plan" : "item"), "items": .int(items),
             "payload_len": .int(url.lastPathComponent.count), "via": "share_sheet",
         ])
-    }
-
-    /// "Ask about this" from a detail screen: "Tell me about X", put to the model, in the
-    /// answer card.
-    func askAbout(_ ref: EntityRef) {
-        guard let ctx = context(), let text = AssistantFlow.askAbout(ref, ctx.bundle) else { return }
-        proposal = nil
-        submit(text, forced: .ask)
     }
 
     /// Puts the keyboard up on the plan page's text box (now, or as soon as the page is shown).
@@ -913,21 +1050,18 @@ final class AssistantController {
 
     // MARK: - Live (spec §6)
 
-    private func setCheckedOff(_ plan: Plan, _ itemId: Int, _ done: Bool, source: String, minutesNear: Int? = nil) {
-        guard let appState else { return }
-        var updated = plan
-        if done { updated.checkedOff.insert(itemId) } else { updated.checkedOff.remove(itemId) }
-        guard updated != plan else { return }
-        appState.planner.update(updated)
+    private func setCheckedOff(_ itemId: Int, _ done: Bool, source: String, minutesNear: Int? = nil) {
+        guard let appState, appState.personal.checkedOff.contains(itemId) != done else { return }
+        appState.setCheckedOff(itemId, done)
         var fields: LogFields = ["item_id": .int(itemId), "source": .string(source), "done": .bool(done)]
         if let minutesNear { fields["minutes_near"] = .int(minutesNear) }
         AppLog.info(.live, "live.checkoff", done ? "Checked off" : "Check-off removed", fields)
     }
 
-    /// A check toggle on a plan row (My plan, the assistant's plan block).
+    /// A check toggle on a schedule row (Your Day, the assistant's plan block).
     func toggleCheckOff(_ itemId: Int) {
-        guard let plan = appState?.planner.plan else { return }
-        setCheckedOff(plan, itemId, !plan.checkedOff.contains(itemId), source: "tap")
+        guard let appState else { return }
+        setCheckedOff(itemId, !appState.personal.checkedOff.contains(itemId), source: "tap")
         refreshLive()
     }
 
@@ -938,10 +1072,9 @@ final class AssistantController {
         let cutoff = at.addingTimeInterval(-Self.sampleWindow)
         samples.removeAll { $0.at < cutoff }
         if samples.count > Self.maxSamples { samples.removeFirst(samples.count - Self.maxSamples) }
-        if let appState, let bundle = appState.currentBundle, var plan = appState.planner.plan, !plan.isEmpty {
+        if let appState, let bundle = appState.currentBundle, let plan = appState.planner.plan, !plan.isEmpty {
             for id in LiveAssist.checkOffs(plan, bundle, samples: samples, now: at).sorted() {
-                setCheckedOff(plan, id, true, source: "auto", minutesNear: Int(LiveAssist.checkoffDwell / 60))
-                plan = appState.planner.plan ?? plan
+                setCheckedOff(id, true, source: "auto", minutesNear: Int(LiveAssist.checkoffDwell / 60))
             }
         }
         refreshLive(at)

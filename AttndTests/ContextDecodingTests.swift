@@ -101,6 +101,22 @@ final class ContextDecodingTests: XCTestCase {
         XCTAssertEqual(context.links.first?.title, "Band")
     }
 
+    /// API-030: `apple_music_url` only as an https Apple Music link; anything else is ignored.
+    func testPerformerAppleMusicURL() throws {
+        let performers = try decode([Performer].self, """
+        [{"name":"Juniper Lane","apple_music_url":"https://music.apple.com/us/artist/juniper-lane/123"},
+         {"name":"Old Link","apple_music_url":"http://music.apple.com/us/artist/x/1"},
+         {"name":"Elsewhere","apple_music_url":"https://open.example.com/artist/1"},
+         {"name":"Blank","apple_music_url":""},
+         {"name":"Number","apple_music_url":42},
+         {"name":"None"}]
+        """)
+        XCTAssertEqual(performers.map(\.appleMusicURL?.absoluteString),
+                       ["https://music.apple.com/us/artist/juniper-lane/123", nil, nil, nil, nil, nil])
+        XCTAssertNil(Performer.appleMusicLink(URL(string: "https://music.apple.com.evil.example/x")))
+        XCTAssertNotNil(Performer.appleMusicLink(URL(string: "https://beta.music.apple.com/x")))
+    }
+
     func testBundleWithContextRoundTripsFromRawJSON() throws {
         // The offline copy stores the raw bundle JSON, so context comes back from disk unchanged.
         let json = """

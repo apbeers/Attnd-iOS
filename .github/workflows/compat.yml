@@ -1,0 +1,53 @@
+# iOS 26 + 27 compatibility (batch 7): the app's deployment target is iOS 26, but every push builds
+# and tests on the newest simulator only. This manual workflow builds once per iOS major with Xcode
+# 27.2 (the JSON project needs 27.2, so the iOS 26 SDK itself can't build it) and runs the unit tests
+# on an iOS 26 and an iOS 27 iPhone simulator; the iOS 26 runtime is downloaded when the image lacks it.
+# Manual runs need this file on the default branch (main).
+name: iOS 26 / 27 check
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: compat-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Unit tests · iOS ${{ matrix.os }}
+    runs-on: ${{ vars.MACOS_RUNNER || 'xcode-27' }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ['26', '27']
+    steps:
+      - uses: actions/checkout@v7
+      - name: Select Xcode ${{ vars.XCODE_VERSION || '27.2' }}
+        env:
+          XCODE_VERSION: ${{ vars.XCODE_VERSION || '27.2' }}
+        run: bash scripts/ci/select_xcode.sh
+      - name: iOS ${{ matrix.os }} simulator runtime
+        run: |
+          if ! xcrun simctl list runtimes | grep -q "iOS ${{ matrix.os }}\."; then
+            echo "Downloading the iOS ${{ matrix.os }} runtime"
+            xcodebuild -downloadPlatform iOS -buildVersion "${{ matrix.os }}.0" || xcodebuild -downloadPlatform iOS
+          fi
+          xcrun simctl list runtimes
+          runtime=$(xcrun simctl list runtimes -j | python3 -c '
+          import json, sys
+          rts = [r for r in json.load(sys.stdin)["runtimes"] if r.get("platform") == "iOS" and r["version"].startswith("${{ matrix.os }}.") and r.get("isAvailable")]
+          print(sorted(rts, key=lambda r: [int(x) for x in r["version"].split(".")])[-1]["identifier"] if rts else "")')
+          [ -n "$runtime" ] || { echo "::error::No iOS ${{ matrix.os }} runtime"; exit 1; }
+          if ! xcrun simctl list devices available | grep -A50 "iOS ${{ matrix.os }}\." | grep -q iPhone; then
+            type=$(xcrun simctl list devicetypes -j | python3 -c 'import json,sys; t=[d for d in json.load(sys.stdin)["devicetypes"] if d["name"].startswith("iPhone") and "Pro" in d["name"]]; print(t[-1]["identifier"])')
+            xcrun simctl create "iPhone (iOS ${{ matrix.os }})" "$type" "$runtime"
+          fi
+      - name: Build for testing
+        env:
+          ATTND_SIM_OS_MAJOR: ${{ matrix.os }}
+        run: bash scripts/ci/test.sh build "Build · iOS ${{ matrix.os }}"
+      - name: Unit tests
+        env:
+          ATTND_SIM_OS_MAJOR: ${{ matrix.os }}
+        run: bash scripts/ci/test.sh unit "Unit tests · iOS ${{ matrix.os }}"

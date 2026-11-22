@@ -27,7 +27,26 @@ enum ISODate {
 
     /// Parses "2026-11-14T13:29:44+00:00", "…44Z", "…44.5Z" and Python's
     /// microsecond form "…44.123456+00:00". Returns nil for anything else.
+    /// Parsed strings (perf, batch 7: the same set times repeat across bundles and refreshes).
+    private static let cacheLock = NSLock()
+    nonisolated(unsafe) private static var cache: [String: Date] = [:]
+
     static func parse(_ string: String) -> Date? {
+        cacheLock.lock()
+        let hit = cache[string]
+        cacheLock.unlock()
+        if let hit { return hit }
+        let date = parseUncached(string)
+        if let date {
+            cacheLock.lock()
+            if cache.count > 4096 { cache.removeAll(keepingCapacity: true) }
+            cache[string] = date
+            cacheLock.unlock()
+        }
+        return date
+    }
+
+    private static func parseUncached(_ string: String) -> Date? {
         if let date = plain.date(from: string) ?? fractional.date(from: string) {
             return date
         }
@@ -167,6 +186,44 @@ enum DeepLink {
         }
         return trimmed
     }
+
+    /// The website's "Open in Attnd" button on iPhone (attnd-web `live_on_phone`): Safari doesn't open a Universal
+    /// Link to the domain it is showing, so the button uses the app's own scheme. `attnd://join/<code>` and
+    /// `attnd://p/<code>/<payload>` become the equivalent `https://attnd.app/…` link, which `AppState.handleDeepLink`
+    /// reads by its path. nil for anything else (the App Clip doesn't register the scheme).
+    static func httpsURL(fromAppScheme url: URL) -> URL? {
+        guard url.scheme?.lowercased() == "attnd", let host = url.host?.lowercased(),
+              host == "join" || host == "p" else { return nil }
+        let rest = url.pathComponents.filter { $0 != "/" && !$0.isEmpty }
+        guard let code = rest.first,
+              code.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }) else { return nil }
+        if host == "p", rest.count >= 2,
+           rest[1].allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }) {
+            return URL(string: "https://attnd.app/p/\(code)/\(rest[1])")
+        }
+        // API-026: a "Preview on my phone" link keeps its `?preview=` token.
+        if let token = previewToken(from: url) {
+            return URL(string: "https://attnd.app/join/\(code)/?preview=\(token)")
+        }
+        return URL(string: "https://attnd.app/join/\(code)/")
+    }
+
+    /// API-026: the organizer's preview token of a join link (`?preview=<token>`), only plain
+    /// token characters (letters, digits, `-_.:`), ≤ 512; nil otherwise.
+    static func previewToken(from url: URL) -> String? {
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        guard let raw = items.first(where: { $0.name == "preview" })?.value?.trimmingCharacters(in: .whitespaces),
+              !raw.isEmpty, raw.count <= 512,
+              raw.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "-_.:".contains($0)) }) else { return nil }
+        return raw
+    }
+
+    /// A scanned QR string's preview token (a join link with `?preview=`), nil otherwise.
+    static func previewToken(fromScanned raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed), url.scheme != nil else { return nil }
+        return previewToken(from: url)
+    }
 }
 
 // MARK: - Live updates (API-007)
@@ -212,8 +269,11 @@ enum ContentUpdatePolicy {
         return pushedVersion > currentVersion
     }
 
-    static func jitter() -> Duration {
-        .milliseconds(Int.random(in: 0...maxJitterMilliseconds))
+    /// 0…`jitter_ms` when the push says (API-026: smaller events wait less, a preview phone 0),
+    /// else 0–10 s.
+    static func jitter(maxMilliseconds: Int? = nil) -> Duration {
+        let limit = maxMilliseconds.map { min(max($0, 0), 60_000) } ?? maxJitterMilliseconds
+        return .milliseconds(limit == 0 ? 0 : Int.random(in: 0...limit))
     }
 }
 
@@ -257,7 +317,9 @@ enum LastUpdatedText {
     ) -> String {
         let state = problem == .offline ? "Offline" : "Can't update"
         guard let lastRefreshed else { return state }
-        return "\(state) · Updated \(time(lastRefreshed, now: now, timeZone: timeZone, locale: locale))"
+        // Reassuring (batch 7): the saved copy keeps everything working.
+        let still = problem == .offline ? " · everything still works" : ""
+        return "\(state) · Updated \(time(lastRefreshed, now: now, timeZone: timeZone, locale: locale))\(still)"
     }
 
     static func accessibilityText(
@@ -268,8 +330,8 @@ enum LastUpdatedText {
         locale: Locale = .current
     ) -> String {
         let state = problem == .offline ? "You're offline." : "Attnd can't reach the server right now."
-        guard let lastRefreshed else { return state }
-        return "\(state) Showing content last updated \(time(lastRefreshed, now: now, timeZone: timeZone, locale: locale))."
+        guard let lastRefreshed else { return state + " Everything still works." }
+        return "\(state) Showing content last updated \(time(lastRefreshed, now: now, timeZone: timeZone, locale: locale)). Everything still works."
     }
 }
 
@@ -316,8 +378,17 @@ enum MediaCache {
         var seen = Set<String>()
         return candidates.compactMap { $0 }.filter { url in
             guard let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http" else { return false }
+            // API-031: live Google photos are never kept for offline use (Google's terms).
+            guard !isLivePlacePhoto(url) else { return false }
             return seen.insert(url.absoluteString).inserted
         }
+    }
+
+    /// API-031: Attnd's live Google Places photo redirect (`/img/places/<id>/`). Loaded per view
+    /// with the HTTP cache only (its `max-age`), never written to the image directory.
+    static func isLivePlacePhoto(_ url: URL) -> Bool {
+        let parts = url.path.split(separator: "/")
+        return parts.count == 3 && parts[0] == "img" && parts[1] == "places" && parts[2].allSatisfy(\.isNumber)
     }
 
     /// Whether a URL must be downloaded: never cached, or cached long enough ago to re-check.
@@ -365,6 +436,33 @@ enum MediaCache {
 
 /// Build, device and event details shown in Options → About & support and copied
 /// as plain text for support requests. Pure: the caller gathers the values.
+/// The device id (a random UUID made by the app, never a system identifier) and where it is kept.
+/// UserDefaults holds the live copy; the Keychain keeps one on this phone only
+/// (`AfterFirstUnlockThisDeviceOnly`, not synced to iCloud, not restored onto another phone), which
+/// survives deleting and reinstalling the app, so a reinstall rejoins as the same phone.
+/// Order: the app's own copy (an existing install, or the one the App Clip handed over), else the
+/// Keychain's (a reinstall), else a new one; whichever store lacks it gets it.
+enum DeviceIdentity {
+    static let keychainKey = "com.arcu.attnd.deviceId"
+
+    struct Resolution: Equatable {
+        var id: String
+        var saveDefaults: Bool
+        var saveKeychain: Bool
+    }
+
+    static func resolve(defaults: String?, keychain: String?, make: () -> String) -> Resolution {
+        let stored = valid(defaults), kept = valid(keychain)
+        let id = stored ?? kept ?? make()
+        return Resolution(id: id, saveDefaults: stored != id, saveKeychain: kept != id)
+    }
+
+    private static func valid(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+        return value
+    }
+}
+
 struct SupportInfo: Hashable, Sendable {
     var appVersion: String
     var buildNumber: String

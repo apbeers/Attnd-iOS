@@ -67,8 +67,8 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: build/CompilationCache
-          key: ios-cas-test-${{ steps.xcode.outputs.build }}-${{ github.sha }}
-          restore-keys: ios-cas-test-${{ steps.xcode.outputs.build }}-
+          key: ios-cas-test-v2-${{ steps.xcode.outputs.build }}-${{ github.sha }}
+          restore-keys: ios-cas-test-v2-${{ steps.xcode.outputs.build }}-
       - name: Build for testing
         id: build
         run: bash scripts/ci/test.sh build
@@ -109,7 +109,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: build/CompilationCache
-          key: ios-cas-test-${{ steps.xcode.outputs.build }}-${{ github.sha }}
+          key: ios-cas-test-v2-${{ steps.xcode.outputs.build }}-${{ github.sha }}
 
   archive:
     name: Archive & upload
@@ -138,8 +138,8 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: build/CompilationCache
-          key: ios-cas-archive-${{ steps.xcode.outputs.build }}-${{ github.sha }}
-          restore-keys: ios-cas-archive-${{ steps.xcode.outputs.build }}-
+          key: ios-cas-archive-v2-${{ steps.xcode.outputs.build }}-${{ github.sha }}
+          restore-keys: ios-cas-archive-v2-${{ steps.xcode.outputs.build }}-
       - name: Version
         run: |
           echo "MARKETING_VERSION=$(tr -d '[:space:]' < VERSION).${{ github.run_number }}" >> "$GITHUB_ENV"
@@ -175,7 +175,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: build/CompilationCache
-          key: ios-cas-archive-${{ steps.xcode.outputs.build }}-${{ github.sha }}
+          key: ios-cas-archive-v2-${{ steps.xcode.outputs.build }}-${{ github.sha }}
 
   # Releases only. Waiting on Apple's processing and submitting for review needs no Mac.
   publish:

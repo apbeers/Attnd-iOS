@@ -45,6 +45,8 @@ struct Event: Identifiable, Hashable, Sendable {
     var websiteUrl: URL? = nil
     /// API-018: what an assistant needs to know offline (about, FAQ, amenities, policies…); nil when none.
     var context: EventContext? = nil
+    /// API-023: the event's own colours (light / dark), nil without a theme (then `accent_color`).
+    var theme: EventTheme? = nil
 
     /// The event's own time zone. All event times are displayed in it.
     var timeZone: TimeZone {
@@ -68,6 +70,7 @@ extension Event: Decodable {
         case contentVersion = "content_version"
         case joinUrl = "join_url"
         case websiteUrl = "website_url"
+        case theme
         case context
     }
 
@@ -95,6 +98,69 @@ extension Event: Decodable {
         joinUrl = c.url(.joinUrl)
         websiteUrl = c.httpsURL(.websiteUrl)
         context = c.lenient(EventContext.self, .context).flatMap { $0.isEmpty ? nil : $0 }
+        theme = c.lenient(EventTheme.self, .theme).flatMap { $0.isEmpty ? nil : $0 }
+    }
+}
+
+// MARK: - Theme (API-023)
+
+/// The three colours of one appearance, each "#RRGGBB" (anything else → nil: the default for it).
+/// `primary` = the tint (buttons, selected tabs and chips, links), `secondary` = soft surfaces
+/// (used at low opacity), `tertiary` = highlights (progress, badges). The server already adjusted
+/// them for contrast.
+struct ThemeColors: Hashable, Sendable, Decodable {
+    var primary: String? = nil
+    var secondary: String? = nil
+    var tertiary: String? = nil
+
+    init(primary: String? = nil, secondary: String? = nil, tertiary: String? = nil) {
+        self.primary = primary
+        self.secondary = secondary
+        self.tertiary = tertiary
+    }
+
+    private enum CodingKeys: String, CodingKey { case primary, secondary, tertiary }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        primary = Self.hex(c.lenient(String.self, .primary))
+        secondary = Self.hex(c.lenient(String.self, .secondary))
+        tertiary = Self.hex(c.lenient(String.self, .tertiary))
+    }
+
+    var isEmpty: Bool { primary == nil && secondary == nil && tertiary == nil }
+
+    /// "#RRGGBB" (upper-cased), else nil.
+    static func hex(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              value.range(of: #"^#[0-9A-Fa-f]{6}$"#, options: .regularExpression) != nil else { return nil }
+        return value.uppercased()
+    }
+}
+
+/// `event.theme` (API-023): light and dark colours; a missing mode or role uses the defaults.
+struct EventTheme: Hashable, Sendable, Decodable {
+    var light: ThemeColors? = nil
+    var dark: ThemeColors? = nil
+
+    init(light: ThemeColors? = nil, dark: ThemeColors? = nil) {
+        self.light = light
+        self.dark = dark
+    }
+
+    private enum CodingKeys: String, CodingKey { case light, dark }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        light = c.lenient(ThemeColors.self, .light).flatMap { $0.isEmpty ? nil : $0 }
+        dark = c.lenient(ThemeColors.self, .dark).flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    var isEmpty: Bool { light == nil && dark == nil }
+
+    /// One role's colour for an appearance; nil = the default (`accent_color`, else the brand).
+    func hex(_ role: KeyPath<ThemeColors, String?>, dark isDark: Bool) -> String? {
+        (isDark ? dark : light)?[keyPath: role]
     }
 }
 
@@ -149,6 +215,11 @@ struct Location: Identifiable, Hashable, Sendable {
     var category: String? = nil
     var website: URL? = nil
     var imageUrl: URL? = nil
+    /// API-022 / API-031: who the automatically found photo is by ("Photo: Google Maps" for a
+    /// live Google photo); nil for the organizer's own images.
+    var imageCredit: String? = nil
+    /// API-031: JSON with the photo's authors (`PhotoAttribution`), only for live Google photos.
+    var imageAttributionUrl: URL? = nil
     var address: String = ""
     var latitude: Double? = nil
     var longitude: Double? = nil
@@ -165,6 +236,8 @@ extension Location: Decodable {
     private enum CodingKeys: String, CodingKey {
         case id, name, snippet, description, category, website, address, latitude, longitude, tags, context
         case imageUrl = "image_url"
+        case imageCredit = "image_credit"
+        case imageAttributionUrl = "image_attribution_url"
         case sortOrder = "sort_order"
     }
 
@@ -177,12 +250,57 @@ extension Location: Decodable {
         category = c.nonEmptyString(.category)
         website = c.url(.website)
         imageUrl = c.url(.imageUrl)
+        imageCredit = c.nonEmptyString(.imageCredit)
+        imageAttributionUrl = c.httpsURL(.imageAttributionUrl)
         address = c.lenient(String.self, .address) ?? ""
         latitude = c.lenient(Double.self, .latitude)
         longitude = c.lenient(Double.self, .longitude)
         sortOrder = c.lenient(Int.self, .sortOrder) ?? 0
         tags = c.lenient([String].self, .tags) ?? []
         context = c.lenient(LocationContext.self, .context).flatMap { $0.isEmpty ? nil : $0 }
+    }
+}
+
+// MARK: - Photo attribution (API-031)
+
+/// The answer of a live Google photo's `image_attribution_url`: the authors, and the line to show
+/// under the photo ("Photo: Ana Ruiz · Google Maps"). Lenient: authors without a name are
+/// dropped, non-https links ignored; no usable credit = nil (keep `image_credit`).
+struct PhotoAttribution: Hashable, Sendable {
+    struct Author: Hashable, Sendable {
+        var name: String
+        var uri: URL?
+    }
+
+    var credit: String
+    var authors: [Author]
+
+    static func decode(_ data: Data) -> PhotoAttribution? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let authors: [Author] = ((object["attributions"] as? [Any]) ?? []).compactMap { entry in
+            guard let entry = entry as? [String: Any],
+                  let name = (entry["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !name.isEmpty else { return nil }
+            let uri = (entry["uri"] as? String).flatMap(URL.init(string:)).flatMap { $0.scheme?.lowercased() == "https" ? $0 : nil }
+            return Author(name: name, uri: uri)
+        }
+        var credit = ((object["credit"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if credit.isEmpty, !authors.isEmpty {
+            credit = "Photo: " + authors.map(\.name).joined(separator: ", ") + " · Google Maps"
+        }
+        guard !credit.isEmpty else { return nil }
+        return PhotoAttribution(credit: credit, authors: authors)
+    }
+
+    /// The credit as Markdown with each author's name linked (for a `Text` with room for links);
+    /// names not found in the credit stay plain.
+    var linkedCredit: AttributedString {
+        var text = AttributedString(credit)
+        for author in authors {
+            guard let uri = author.uri, let range = text.range(of: author.name) else { continue }
+            text[range].link = uri
+        }
+        return text
     }
 }
 
@@ -265,12 +383,14 @@ extension AppNotification: Decodable {
 /// A tab the server can show. These are the only tabs in the tab bar: Options and search
 /// are sheets (ContentView), never tabs.
 enum EventTab: String, CaseIterable, Identifiable, Hashable, Sendable {
-    case map, locations, schedule, flyer, notifications
+    /// `home` (API-024): a screen made of the event's layout sections. Older builds drop it as unknown.
+    case home, map, locations, schedule, flyer, notifications
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
+        case .home:          return "Home"
         case .map:           return "Map"
         case .locations:     return "Locations"
         case .schedule:      return "Schedule"
@@ -281,6 +401,7 @@ enum EventTab: String, CaseIterable, Identifiable, Hashable, Sendable {
 
     var systemImage: String {
         switch self {
+        case .home:          return "house"
         case .map:           return "map"
         // A list, not a pin: Map and Locations must not look alike in the tab bar
         // (Android uses a list icon for Locations too).
@@ -404,11 +525,16 @@ struct EventBundle: Hashable, Sendable {
     var locations: [Location] = []
     var schedule: [ScheduleItem] = []
     var notifications: [AppNotification] = []
+    /// API-024: the screens' sections (nil when the server sent none: the built-in layouts).
+    var layout: ScreenLayouts? = nil
+    /// API-027: the Live Activity's content choices (nil from older servers: today's behaviour).
+    var liveActivity: LiveActivitySettings? = nil
 }
 
 extension EventBundle: Decodable {
     private enum CodingKeys: String, CodingKey {
-        case event, display, categories, locations, schedule, notifications
+        case event, display, categories, locations, schedule, notifications, layout
+        case liveActivity = "live_activity"
         case schemaVersion = "schema_version"
         case contentVersion = "content_version"
         case updatedAt = "updated_at"
@@ -425,6 +551,8 @@ extension EventBundle: Decodable {
         locations = c.lossyArray(Location.self, .locations)
         schedule = c.lossyArray(ScheduleItem.self, .schedule)
         notifications = c.lossyArray(AppNotification.self, .notifications)
+        layout = c.lenient(ScreenLayouts.self, .layout)
+        liveActivity = c.lenient(LiveActivitySettings.self, .liveActivity)
     }
 }
 
@@ -444,6 +572,12 @@ struct SavedEvent: Codable, Hashable, Sendable {
     var lastRefreshed: Date?
     /// The bundle response body (base64 in the file).
     var bundleJSON: Data
+    /// The screens catalogue (`X-Attnd-Sections`) this body was fetched with; nil in older files.
+    var sections: Int? = nil
+
+    /// The ETag to send with the next `bundle/` request: only for a body of this build's
+    /// catalogue, so a 304 never keeps a body made for another one (the Home tab came and went).
+    var usableETag: String? { sections == SectionCatalogue.version ? etag : nil }
 
     /// Decodes the saved bundle with the normal lenient decoder. Fails when the file is
     /// from an unknown format or belongs to a different event than its metadata says.
@@ -483,6 +617,8 @@ struct JoinRequest: Encodable, Sendable {
     var appVersion: String?
     /// API-019: `true` from the App Clip (its pushes use the clip's APNs topic), `false` from the app.
     var appClip = false
+    /// API-026: the organizer's preview token from a "Preview on my phone" link (sent once, never shown).
+    var previewToken: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case platform
@@ -490,6 +626,61 @@ struct JoinRequest: Encodable, Sendable {
         case pushToken = "push_token"
         case appVersion = "app_version"
         case appClip = "app_clip"
+        case previewToken = "preview_token"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(deviceId, forKey: .deviceId)
+        try c.encode(platform, forKey: .platform)
+        try c.encodeIfPresent(pushToken, forKey: .pushToken)
+        try c.encodeIfPresent(appVersion, forKey: .appVersion)
+        try c.encode(appClip, forKey: .appClip)
+        try c.encodeIfPresent(previewToken, forKey: .previewToken)
+    }
+}
+
+/// `GET events/<id>/changes/?since=` (API-026, preview phones only).
+struct ChangesResponse: Hashable, Sendable {
+    var contentVersion: Int? = nil
+    var changed = false
+    /// false: not (or no longer) a preview phone — stop.
+    var preview = true
+    /// Seconds to wait before the next call (0 = at once).
+    var retryAfter = 0
+}
+
+extension ChangesResponse: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case changed, preview
+        case contentVersion = "content_version"
+        case retryAfter = "retry_after"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        contentVersion = c.lenient(Int.self, .contentVersion)
+        changed = c.lenient(Bool.self, .changed) ?? false
+        preview = c.lenient(Bool.self, .preview) ?? true
+        retryAfter = max(0, min(c.lenient(Int.self, .retryAfter) ?? 0, 3600))
+    }
+}
+
+/// The preview long-poll's next step (pure; BusinessLogicTests-style rules in ScreenLayoutTests).
+enum PreviewPoll {
+    enum Next: Hashable, Sendable {
+        /// Refetch the bundle now, then poll again from the new version.
+        case refresh
+        /// Call again after this many seconds (0 = at once).
+        case wait(Int)
+        /// Not a preview phone (any more): back to the normal polling.
+        case stop
+    }
+
+    static func next(_ answer: ChangesResponse, since: Int?) -> Next {
+        if !answer.preview { return .stop }
+        if answer.changed || (answer.contentVersion.map { v in since.map { v > $0 } ?? true } ?? false) { return .refresh }
+        return .wait(answer.retryAfter)
     }
 }
 
@@ -702,11 +893,13 @@ struct StatusResponse: Hashable, Sendable {
     var contentVersion: Int? = nil
     var subscribed: Bool? = nil
     var eventId: Int? = nil
+    /// API-026: the join made this device the event's preview phone.
+    var preview: Bool? = nil
 }
 
 extension StatusResponse: Decodable {
     private enum CodingKeys: String, CodingKey {
-        case status, subscribed
+        case status, subscribed, preview
         case contentVersion = "content_version"
         case eventId = "event_id"
     }
@@ -717,6 +910,7 @@ extension StatusResponse: Decodable {
         contentVersion = c.lenient(Int.self, .contentVersion)
         subscribed = c.lenient(Bool.self, .subscribed)
         eventId = c.lenient(Int.self, .eventId)
+        preview = c.lenient(Bool.self, .preview)
     }
 }
 
@@ -734,12 +928,15 @@ struct PushPayload: Hashable, Sendable {
     var eventId: Int?
     var notificationId: Int?
     var contentVersion: Int?
+    /// API-026: the longest random wait before refetching, in ms (0 on a preview phone).
+    var jitterMilliseconds: Int?
 
-    init(kind: Kind?, eventId: Int?, notificationId: Int? = nil, contentVersion: Int? = nil) {
+    init(kind: Kind?, eventId: Int?, notificationId: Int? = nil, contentVersion: Int? = nil, jitterMilliseconds: Int? = nil) {
         self.kind = kind
         self.eventId = eventId
         self.notificationId = notificationId
         self.contentVersion = contentVersion
+        self.jitterMilliseconds = jitterMilliseconds
     }
 
     init(userInfo: [AnyHashable: Any]) {
@@ -752,6 +949,7 @@ struct PushPayload: Hashable, Sendable {
         eventId = Self.int(userInfo["event_id"])
         notificationId = Self.int(userInfo["notification_id"])
         contentVersion = Self.int(userInfo["content_version"])
+        jitterMilliseconds = Self.int(userInfo["jitter_ms"]).map { min(max($0, 0), 60_000) }
     }
 
     /// The push's `type` for logs ("notification", "content_updated", …, "none").
@@ -1001,10 +1199,20 @@ struct Performer: Hashable, Sendable {
     var bio: String = ""
     /// As sent ("country", "Texas swing"), trimmed, empty ones dropped.
     var genres: [String] = []
+    /// API-030: the performer's artist page in Apple Music (`https://music.apple.com/…`), only
+    /// when the server sent one; anything else (http, another host) is ignored.
+    var appleMusicURL: URL? = nil
 }
 
 extension Performer: Decodable {
-    private enum CodingKeys: String, CodingKey { case name, bio, genres }
+    private enum CodingKeys: String, CodingKey { case name, bio, genres, appleMusicUrl = "apple_music_url" }
+
+    /// Only an absolute https link to Apple Music (music.apple.com or a subdomain).
+    static func appleMusicLink(_ url: URL?) -> URL? {
+        guard let url, url.scheme?.lowercased() == "https", let host = url.host?.lowercased(),
+              host == "music.apple.com" || host.hasSuffix(".music.apple.com") else { return nil }
+        return url
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1016,6 +1224,7 @@ extension Performer: Decodable {
         genres = c.lossyArray(String.self, .genres)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+        appleMusicURL = Self.appleMusicLink(c.httpsURL(.appleMusicUrl))
     }
 }
 

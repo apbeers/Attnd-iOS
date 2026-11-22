@@ -201,6 +201,40 @@ enum LocationGrouping {
     }
 }
 
+// MARK: - A place's events (Places list disclosure)
+
+/// What a place row's disclosure lists: the place's schedule items that haven't ended (in
+/// progress first by start, then upcoming; no start time last), or — when nothing is ahead —
+/// its ended items, shown greyed as "Ended". nil when the place has no items (no disclosure).
+struct PlaceEvents: Hashable, Sendable {
+    var items: [ScheduleItem]
+    /// Every item has ended (they are listed greyed).
+    var allEnded: Bool
+
+    static func make(locationId: Int, schedule: [ScheduleItem], now: Date) -> PlaceEvents? {
+        let here = schedule.filter { $0.locationId == locationId }
+        guard !here.isEmpty else { return nil }
+        let ahead = here.filter { !ScheduleTiming.hasEnded($0, at: now) }
+        let listed = ahead.isEmpty ? here : ahead
+        let sorted = listed.sorted { a, b in
+            switch (a.startTime, b.startTime) {
+            case let (x?, y?) where x != y: return x < y
+            case (nil, _?): return false
+            case (_?, nil): return true
+            default: return a.id < b.id
+            }
+        }
+        return PlaceEvents(items: sorted, allEnded: ahead.isEmpty)
+    }
+
+    /// The disclosure's label: "1 event", "3 events", "2 ended".
+    var toggleTitle: String {
+        let count = items.count
+        if allEnded { return "\(count) ended" }
+        return count == 1 ? "1 event" : "\(count) events"
+    }
+}
+
 // MARK: - Search
 
 enum SearchMatching {
@@ -269,6 +303,40 @@ enum MapClustering {
         }
     }
 
+    /// Clusters only pins that would really overlap on screen (batch 7, owner: "cluster much
+    /// less"): two pins merge when they are closer than `minSeparation` points in both
+    /// directions for a map of `mapSize` points showing the span. In the organizer's order;
+    /// each pin joins the first cluster it overlaps (by that cluster's first pin).
+    static func overlapping(
+        for locations: [Location],
+        latitudeDelta: Double,
+        longitudeDelta: Double,
+        mapWidth: Double = 400,
+        mapHeight: Double = 700,
+        minSeparation: Double = 24
+    ) -> [MapCluster] {
+        let thresholdLat = max(latitudeDelta, 0.000_001) * minSeparation / max(mapHeight, 1)
+        let thresholdLng = max(longitudeDelta, 0.000_001) * minSeparation / max(mapWidth, 1)
+        var groups: [[(Location, Coordinate)]] = []
+        for location in locations {
+            guard let point = location.coordinate else { continue }
+            if let i = groups.firstIndex(where: { group in
+                abs(group[0].1.latitude - point.latitude) < thresholdLat && abs(group[0].1.longitude - point.longitude) < thresholdLng
+            }) {
+                groups[i].append((location, point))
+            } else {
+                groups.append([(location, point)])
+            }
+        }
+        return groups.map { group in
+            let lat = group.map { $0.1.latitude }.reduce(0, +) / Double(group.count)
+            let lng = group.map { $0.1.longitude }.reduce(0, +) / Double(group.count)
+            let ids = group.map { $0.0.id }
+            let id = ids.count == 1 ? "loc-\(ids[0])" : "cluster-" + ids.sorted().map(String.init).joined(separator: "-")
+            return MapCluster(id: id, coordinate: Coordinate(latitude: lat, longitude: lng), locations: group.map { $0.0 })
+        }
+    }
+
     /// Every valid location as its own (single) cluster — used when clustering is off.
     static func unclustered(_ locations: [Location]) -> [MapCluster] {
         locations.compactMap { loc in
@@ -305,6 +373,18 @@ enum MapRegionMath {
         )
     }
 
+    /// The region for a filtered map (a category or My Schedule chip): one pin at street level,
+    /// several fitted with a little more padding (the chips and the bottom card cover the edges)
+    /// and never closer than street level's minimum. nil when nothing is left to show.
+    static func filterRegion(_ coordinates: [Coordinate]) -> MapRegionSpec? {
+        guard let first = coordinates.first else { return nil }
+        if coordinates.count == 1 || coordinates.allSatisfy({ $0 == first }) { return streetLevel(first) }
+        guard let fitted = fitting(coordinates, padding: 1.6) else { return nil }
+        return MapRegionSpec(center: fitted.center,
+                             latitudeDelta: max(fitted.latitudeDelta, minimumDelta * 1.5),
+                             longitudeDelta: max(fitted.longitudeDelta, minimumDelta * 1.5))
+    }
+
     /// Street-level region centred on a coordinate.
     static func streetLevel(_ center: Coordinate) -> MapRegionSpec {
         MapRegionSpec(center: center, latitudeDelta: streetLevelDelta, longitudeDelta: streetLevelDelta)
@@ -328,6 +408,23 @@ enum MapRegionMath {
             latitudeDelta: max(lat, minimumDelta / 4),
             longitudeDelta: max(lng, minimumDelta / 4)
         )
+    }
+}
+
+// MARK: - Walking map (place detail)
+
+/// The small walking map on a place's detail (instead of the big "Get Walking Directions"
+/// button): only with a position (permission), the user more than "here" and within walking range
+/// (8 km), never in screenshot mode. It frames the user, the place and the route's line.
+enum PlaceWalkMap {
+    static func shows(distanceMeters: Double?, screenshotMode: Bool) -> Bool {
+        guard !screenshotMode, let meters = distanceMeters else { return false }
+        return meters >= DistanceText.hereMeters && WalkTime.isWithinWalkingRange(meters)
+    }
+
+    /// The region showing the user, the place and the drawn line (route or straight line).
+    static func region(user: Coordinate, destination: Coordinate, line: [Coordinate]) -> MapRegionSpec? {
+        MapRegionMath.fitting([user, destination] + line, padding: 1.6)
     }
 }
 
@@ -384,5 +481,93 @@ enum ReservedRegionLayout {
             bottom: size.height - band.maxY,
             trailing: size.width - band.maxX
         )
+    }
+}
+
+// MARK: - Fold posture (iPhone Duo)
+
+/// The fold as the app sees it, from the active `.division` regions (there is no pose API; the
+/// fold region is active only while the device is partly folded): none (flat or folded shut), a
+/// vertical fold (book: side by side), or a horizontal fold across the middle (tabletop: the top
+/// half for viewing, the bottom half for the list / controls).
+enum FoldPosture: Hashable, Sendable {
+    case flat
+    case book(foldMinX: CGFloat, foldMaxX: CGFloat)
+    case tabletop(foldMinY: CGFloat, foldMaxY: CGFloat)
+
+    static func of(container size: CGSize, folds: [CGRect]) -> FoldPosture {
+        let bounds = CGRect(origin: .zero, size: size)
+        for raw in folds {
+            let rect = raw.intersection(bounds)
+            guard !rect.isNull, !rect.isEmpty else { continue }
+            if rect.width > rect.height, rect.width >= size.width * 0.5,
+               rect.midY > size.height * 0.25, rect.midY < size.height * 0.75 {
+                return .tabletop(foldMinY: rect.minY, foldMaxY: rect.maxY)
+            }
+            if rect.height > rect.width, rect.height >= size.height * 0.5,
+               rect.midX > size.width * 0.25, rect.midX < size.width * 0.75 {
+                return .book(foldMinX: rect.minX, foldMaxX: rect.maxX)
+            }
+        }
+        return .flat
+    }
+}
+
+// MARK: - Route pulse (batch 7)
+
+/// The dot that flows along a walking line from the user to the place: one pass every
+/// `period` seconds, fading in at the start and out at the end.
+enum RoutePulse {
+    static let period: Double = 2
+    /// Passes shown when a route appears (then it stops; opacity 0 at the ends).
+    static let passes = 3
+
+    static func fraction(elapsed: Double) -> Double {
+        let t = elapsed.truncatingRemainder(dividingBy: period) / period
+        return t < 0 ? t + 1 : t
+    }
+
+    static func opacity(_ fraction: Double) -> Double {
+        min(1, min(fraction, 1 - fraction) * 6)
+    }
+
+    /// The point `fraction` of the way along the line (by length, flat-earth segments).
+    static func point(along line: [Coordinate], fraction: Double) -> Coordinate? {
+        guard let first = line.first else { return nil }
+        guard line.count > 1 else { return first }
+        func length(_ a: Coordinate, _ b: Coordinate) -> Double {
+            let dLat = b.latitude - a.latitude
+            let dLng = (b.longitude - a.longitude) * cos(a.latitude * .pi / 180)
+            return (dLat * dLat + dLng * dLng).squareRoot()
+        }
+        let segments = zip(line, line.dropFirst()).map { length($0, $1) }
+        let total = segments.reduce(0, +)
+        guard total > 0 else { return first }
+        var remaining = min(max(fraction, 0), 1) * total
+        for (i, segment) in segments.enumerated() {
+            if remaining <= segment || i == segments.count - 1 {
+                let t = segment > 0 ? min(remaining / segment, 1) : 0
+                let a = line[i], b = line[i + 1]
+                return Coordinate(latitude: a.latitude + (b.latitude - a.latitude) * t,
+                                  longitude: a.longitude + (b.longitude - a.longitude) * t)
+            }
+            remaining -= segment
+        }
+        return line.last
+    }
+}
+
+// MARK: - Swipe up to dismiss (batch 7)
+
+/// The drag rule for top pills and banners (`SwipeUpToDismiss`).
+enum SwipeDismissRule {
+    /// Up follows the finger; down rubber-bands (a fifth of the pull, at most 24 pt).
+    static func offset(for translation: Double) -> Double {
+        translation <= 0 ? translation : min(translation * 0.2, 24)
+    }
+
+    /// Past 30 % of the height up, or a flick whose predicted end is a full height up.
+    static func dismisses(translation: Double, predicted: Double, height: Double) -> Bool {
+        -translation > height * 0.3 || -predicted > height
     }
 }

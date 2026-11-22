@@ -2,10 +2,13 @@
 // Attnd
 //
 // Options for the joined event, shown as a sheet (`OptionsSheet`) from the "Options" item
-// in the navigation bar of every tab's root screen (ContentView `optionsToolbarItem`).
+// in the navigation bar of the Updates tab's root screen, or the first tab's when the event hides
+// Updates (ContentView `optionsToolbarItem(for:)`, `TabLayout.optionsTab`).
 
+import CoreLocation
 import SwiftUI
 import UIKit
+import UserNotifications
 
 /// Options in its own navigation stack, with a Close button. Leaving the event dismisses it
 /// with the event screens.
@@ -52,41 +55,36 @@ struct SettingsView: View {
             }
 
             // MARK: - Event
+            // API-024: the event's `options_event` layout (header, website, the info page link).
             if let event = appState.currentEvent {
                 Section {
-                    EventHeader(event: event, logoUrl: appState.logoUrl)
-                    if let website = event.websiteUrl {
-                        EventWebsiteLink(url: website)
+                    OptionsEventRows(event: event)
+                }
+            }
+
+            // MARK: - Status (what the swiped-away pills said)
+            if appState.currentEvent != nil {
+                Section("Status") {
+                    if let refresh = EventStatusBadgeKind.refresh(appState) {
+                        Label(refresh.title, systemImage: refresh.systemImage)
+                    } else {
+                        Label(appState.lastRefreshed.map { "Up to date · Updated \(LastUpdatedText.time($0))" } ?? "Up to date",
+                              systemImage: "checkmark.icloud")
                     }
-                    // API-018: FAQ, amenities, getting there… (the event's info page).
-                    if event.context != nil {
-                        NavigationLink {
-                            EventInfoView()
-                        } label: {
-                            Label("FAQ, Amenities & Getting There", systemImage: "info.circle")
-                        }
+                    if appState.instantUpdates {
+                        Label("Instant updates on: the organizer's changes appear as they make them", systemImage: "bolt.fill")
+                            .foregroundStyle(.green)
+                    }
+                    if let ended = EventStatusBadgeKind.current(appState) {
+                        Label(ended.title, systemImage: ended.systemImage)
                     }
                 }
             }
 
-            // MARK: - Location
-            Section("Location") {
-                Toggle("Show My Location on Map", isOn: $state.showUserLocation)
-            }
-
-            // MARK: - Notifications
-            Section {
-                Toggle("Event Notifications", isOn: $wantsNotifications)
-                    .disabled(isUpdatingNotifications)
-            } header: {
-                Text("Notifications")
-            } footer: {
-                if notificationPermissionDenied {
-                    Text("Notification permission was denied. Enable it in Settings → Attnd.")
-                } else {
-                    Text("Organizer updates, and a reminder 15 minutes before anything you've liked.")
-                }
-            }
+            // MARK: - Permissions (batch 7): the system's answer, and Attnd's own switch when allowed
+            PermissionsSection(showUserLocation: $state.showUserLocation,
+                               wantsNotifications: $wantsNotifications,
+                               isUpdatingNotifications: isUpdatingNotifications)
 
             // MARK: - Follow on Lock Screen (Live Activity)
             LiveFollowSection()
@@ -103,37 +101,9 @@ struct SettingsView: View {
             }
 
             // MARK: - About & support (API-004)
+            // Copy Support Info always visible right under the header; the details folded (owner,
+            // Nov 21, 2026: saves space).
             Section {
-                LabeledContent("Support code") {
-                    Text(info.supportCode)
-                        .font(.body.monospaced())
-                        .textSelection(.enabled)
-                }
-                LabeledContent("App version", value: "\(info.appVersion) (\(info.buildNumber))")
-                if info.isAppClip {
-                    LabeledContent("Edition", value: "App Clip")
-                }
-                LabeledContent("Server", value: info.serverHost)
-                LabeledContent("API version", value: String(info.apiVersion))
-                LabeledContent("iOS", value: info.osVersion)
-                LabeledContent("Device", value: info.deviceModel)
-                if let eventId = info.eventId {
-                    LabeledContent("Event", value: info.eventName ?? "")
-                    LabeledContent("Event code", value: info.eventCode ?? "")
-                    LabeledContent("Event ID", value: String(eventId))
-                    if let contentVersion = info.contentVersion {
-                        LabeledContent("Content version", value: String(contentVersion))
-                    }
-                }
-                LabeledContent("Last refresh") {
-                    if let refreshed = info.lastRefreshed {
-                        Text(refreshed, format: .dateTime.month(.abbreviated).day().hour().minute().second())
-                    } else {
-                        Text("Never")
-                    }
-                }
-                // Logs viewer and debug logging (API-013; not in screenshot mode).
-                DiagnosticsRows()
                 Button {
                     copySupportInfo(info)
                 } label: {
@@ -141,6 +111,41 @@ struct SettingsView: View {
                         didCopySupportInfo ? "Copied" : "Copy Support Info",
                         systemImage: didCopySupportInfo ? "checkmark" : "doc.on.doc"
                     )
+                }
+                DisclosureGroup("Details") {
+                    LabeledContent("Support code") {
+                        Text(info.supportCode)
+                            .font(.body.monospaced())
+                            .textSelection(.enabled)
+                    }
+                    LabeledContent("App version", value: "\(info.appVersion) (\(info.buildNumber))")
+                    if info.isAppClip {
+                        LabeledContent("Edition", value: "App Clip")
+                    }
+                    LabeledContent("Server", value: info.serverHost)
+                    if ServerSwitch.isSwitchable {
+                        ServerSwitchRow()
+                    }
+                    LabeledContent("API version", value: String(info.apiVersion))
+                    LabeledContent("iOS", value: info.osVersion)
+                    LabeledContent("Device", value: info.deviceModel)
+                    if let eventId = info.eventId {
+                        LabeledContent("Event", value: info.eventName ?? "")
+                        LabeledContent("Event code", value: info.eventCode ?? "")
+                        LabeledContent("Event ID", value: String(eventId))
+                        if let contentVersion = info.contentVersion {
+                            LabeledContent("Content version", value: String(contentVersion))
+                        }
+                    }
+                    LabeledContent("Last refresh") {
+                        if let refreshed = info.lastRefreshed {
+                            Text(refreshed, format: .dateTime.month(.abbreviated).day().hour().minute().second())
+                        } else {
+                            Text("Never")
+                        }
+                    }
+                    // Logs viewer and debug logging (API-013; not in screenshot mode).
+                    DiagnosticsRows()
                 }
             } header: {
                 Text("About & Support")
@@ -263,11 +268,59 @@ private struct LiveFollowSection: View {
         } header: {
             Text("Lock Screen")
         } footer: {
-            Text("Shows what's on now and next from your plan or your likes (or the whole schedule) on the Lock Screen and in the Dynamic Island, from 2 hours before your first item.")
+            Text("Shows what's on now and next from your schedule (or the whole event's) on the Lock Screen and in the Dynamic Island, from 2 hours before your first item.")
         }
         .onAppear { refreshToken += 1 }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { refreshToken += 1 }
+        }
+    }
+}
+
+// MARK: - Server switch (test installs)
+
+/// TestFlight / Xcode installs only (`ServerSwitch.isSwitchable`): Production or Dev for the next
+/// launch. Switching leaves the current event, because events live on one server.
+private struct ServerSwitchRow: View {
+    @Environment(AppState.self) private var appState
+    private let current = ServerSwitch.current(host: APIClient.serverHost)
+    @State private var selection = ServerSwitch.current(host: APIClient.serverHost)
+    @State private var pending: ServerSwitch.Choice?
+    @State private var switchedTo: ServerSwitch.Choice?
+
+    var body: some View {
+        Picker(selection: $selection) {
+            ForEach(ServerSwitch.Choice.allCases, id: \.self) { Text($0.title).tag($0) }
+        } label: {
+            Label("Test server", systemImage: "server.rack")
+        }
+        .onChange(of: selection) { _, new in
+            if new != (switchedTo ?? current) { pending = new }
+        }
+        .confirmationDialog(
+            "Switch to the \(pending?.title ?? "") server?",
+            isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Switch and Leave Event", role: .destructive) {
+                guard let choice = pending else { return }
+                pending = nil
+                Task {
+                    await appState.switchServer(to: choice)
+                    switchedTo = choice
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                selection = switchedTo ?? current
+                pending = nil
+            }
+        } message: {
+            Text("Events live on one server, so you'll leave the current event. Close Attnd from the app switcher and open it again to use the other server.")
+        }
+        if let switchedTo, switchedTo != current {
+            Text("Close Attnd and open it again to use \(switchedTo.host).")
+                .font(.footnote)
+                .foregroundStyle(.orange)
         }
     }
 }
@@ -293,6 +346,48 @@ private struct InternalBuildWarning: View {
         }
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: - Event rows (API-024 `options_event`)
+
+/// Options' event section: the rows of the event's `options_event` layout (header, website, the
+/// info page link), or the built-in default.
+private struct OptionsEventRows: View {
+    let event: Event
+
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        let sections = appState.screenSections(.optionsEvent, now: .now) { bundle, state in
+            ScreenFacts.event(bundle, state)
+        }
+        ForEach(sections, id: \.type) { section in
+            row(section)
+        }
+    }
+
+    @ViewBuilder
+    private func row(_ section: LayoutSection) -> some View {
+        switch section.type {
+        case "header":
+            EventHeader(event: event, logoUrl: appState.logoUrl)
+        case "website":
+            if let website = event.websiteUrl {
+                EventWebsiteLink(url: website)
+            }
+        case "event_info_link":
+            // API-018: FAQ, amenities, getting there… (the event's info page).
+            if event.context != nil {
+                NavigationLink {
+                    EventInfoView()
+                } label: {
+                    Label(section.title ?? "FAQ, Amenities & Getting There", systemImage: "info.circle")
+                }
+            }
+        default:
+            EmptyView()
+        }
     }
 }
 
@@ -353,5 +448,88 @@ struct EventWebsiteLink: View {
     NavigationStack {
         SettingsView()
             .environment(AppState())
+    }
+}
+
+// MARK: - Permissions (batch 7)
+
+/// Location and Notifications with the system's status. Allowed: a switch for Attnd (location =
+/// the dot and walk times; notifications = the event's opt-in, sent as `subscribed`). Denied or
+/// never asked: a button to the right Settings page. Refreshed whenever the scene becomes active.
+private struct PermissionsSection: View {
+    @Binding var showUserLocation: Bool
+    @Binding var wantsNotifications: Bool
+    let isUpdatingNotifications: Bool
+
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.openURL) private var openURL
+    @State private var location = CLLocationManager().authorizationStatus
+    @State private var notifications: UNAuthorizationStatus = .notDetermined
+
+    private var locationAllowed: Bool { location == .authorizedWhenInUse || location == .authorizedAlways }
+    private var notificationsAllowed: Bool { [.authorized, .provisional, .ephemeral].contains(notifications) }
+
+    var body: some View {
+        Section {
+            if locationAllowed {
+                Toggle(isOn: $showUserLocation) {
+                    Label("Location", systemImage: "location")
+                    Text("Allowed · your dot on the map and walk times")
+                }
+            } else {
+                settingsRow("Location", systemImage: "location.slash",
+                            status: location == .notDetermined ? "Not asked yet" : "Off in Settings",
+                            url: UIApplication.openSettingsURLString)
+            }
+            if notificationsAllowed {
+                Toggle(isOn: $wantsNotifications) {
+                    Label("Notifications", systemImage: "bell")
+                    Text("Allowed · organizer updates and reminders")
+                }
+                .disabled(isUpdatingNotifications)
+            } else if notifications == .notDetermined {
+                // Never asked: the switch asks the system (the opt-in flow).
+                Toggle(isOn: $wantsNotifications) {
+                    Label("Notifications", systemImage: "bell")
+                    Text("Not asked yet · turning this on asks once")
+                }
+                .disabled(isUpdatingNotifications)
+            } else {
+                settingsRow("Notifications", systemImage: "bell.slash", status: "Off in Settings",
+                            url: UIApplication.openNotificationSettingsURLString)
+            }
+        } header: {
+            Text("Permissions")
+        } footer: {
+            Text("When iOS already allows them, Attnd turns both on for every event you join.")
+        }
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            await refresh()
+        }
+    }
+
+    private func settingsRow(_ title: String, systemImage: String, status: String, url: String) -> some View {
+        Button {
+            if let target = URL(string: url) { openURL(target) }
+        } label: {
+            HStack {
+                Label {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title).foregroundStyle(.primary)
+                        Text(status).font(.footnote).foregroundStyle(.secondary)
+                    }
+                } icon: {
+                    Image(systemName: systemImage)
+                }
+                Spacer()
+                Text("Open Settings").font(.subheadline)
+            }
+        }
+    }
+
+    private func refresh() async {
+        location = CLLocationManager().authorizationStatus
+        notifications = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
     }
 }

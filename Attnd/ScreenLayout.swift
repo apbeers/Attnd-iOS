@@ -1,0 +1,798 @@
+// ScreenLayout.swift
+// Attnd (app and App Clip; pure, unit tested in ScreenLayoutTests)
+//
+// Server-driven screens (API-024, attnd-web `API_V2.md` → Layout): the bundle's `layout` lists, per
+// screen, the sections to show in order (`{type, show?, title?, limit?, when?}`), plus overrides per
+// place category or tag. The app draws only section types compiled into it (the catalogue below,
+// `SectionCatalogue.version`, sent as `X-Attnd-Sections` so the server only sends types this build
+// knows) and skips everything else. The rules, pure so they run in the Linux harness too:
+//
+//   1. Validation (`validate`): types unknown for the screen are dropped, a type appears once (the
+//      first wins), `show` parts unknown for the type are dropped (none left → the type's default
+//      parts), `title` trimmed and cut to 60 characters, `limit` clamped to 1…20, ≤ 24 sections.
+//   2. Fallback: no layout, no entry for the screen, or no section left after validation → the
+//      built-in default (`ScreenLayout.defaults`, today's fixed screen as a layout). Screenshot mode
+//      always passes no layout, so the store screenshots never change.
+//   3. Overrides: the first of ≤ 8 overrides whose `match` fits the subject replaces the sections
+//      (`category:<name>`, case-insensitive, against the place's category or a schedule item's
+//      place's category; `tag:<tag>` against the subject's tags, as sent: lower case). An override
+//      with no valid section left is skipped.
+//   4. Visibility (`resolve`): a section shows when the data it draws is there (`SectionType.needs`,
+//      any of those facts) and every `when` condition holds. Conditions are a closed set, never
+//      code: `has:<fact>`, `has_plan`, `model_available`, `now_playing`, `within_walk`,
+//      `before_start` / `during` / `after_end` (the event), `day:YYYY-MM-DD` (today in the event's
+//      zone) and `not:<condition>`. An unknown condition is false (the section is skipped).
+//   5. `ScreenFacts` computes the facts of an item, a place or the event from the bundle.
+
+import Foundation
+
+/// The screens a layout can describe.
+enum LayoutScreen: String, CaseIterable, Hashable, Sendable {
+    case home
+    case eventInfo = "event_info"
+    case itemDetail = "item_detail"
+    case placeDetail = "place_detail"
+    case mapOverlay = "map_overlay"
+    case optionsEvent = "options_event"
+    // Catalogue 2 (API-027): the tabs' lists, Updates and the first-join cards.
+    case scheduleTab = "schedule_tab"
+    case placesTab = "places_tab"
+    case updatesTab = "updates_tab"
+    case onboarding
+}
+
+/// One section of a screen, as sent (before validation) or resolved.
+struct LayoutSection: Hashable, Sendable {
+    var type: String
+    var show: [String] = []
+    var title: String? = nil
+    var limit: Int? = nil
+    var when: [String] = []
+    /// Catalogue 2: `featured` / `pinned` ids in the organizer's order (≤ 20).
+    var ids: [Int] = []
+    /// Catalogue 2: the `welcome` card's text (≤ 300) and image (absolute https, ≤ 500).
+    var text: String? = nil
+    var image: URL? = nil
+
+    init(_ type: String, show: [String] = [], title: String? = nil, limit: Int? = nil, when: [String] = [],
+         ids: [Int] = [], text: String? = nil, image: URL? = nil) {
+        self.type = type
+        self.show = show
+        self.title = title
+        self.limit = limit
+        self.when = when
+        self.ids = ids
+        self.text = text
+        self.image = image
+    }
+
+    func shows(_ part: String) -> Bool { show.contains(part) }
+}
+
+/// Sections that replace a screen's for subjects of one category or tag.
+struct LayoutOverride: Hashable, Sendable {
+    var match: String
+    var sections: [LayoutSection]
+}
+
+struct ScreenSpec: Hashable, Sendable {
+    var sections: [LayoutSection]
+    var overrides: [LayoutOverride] = []
+}
+
+/// `bundle.layout` (API-024).
+struct ScreenLayouts: Hashable, Sendable {
+    /// The catalogue version the server built it for.
+    var catalogue: Int = 0
+    var screens: [LayoutScreen: ScreenSpec] = [:]
+}
+
+/// What a section type needs and which parts it has.
+struct SectionType: Hashable, Sendable {
+    /// Any one of these facts makes the section drawable; empty = always.
+    var needs: [String] = []
+    /// The parts `show` may list, and the default when it lists none.
+    var parts: [String] = []
+    var defaultShow: [String] = []
+}
+
+/// The section types this build draws, per screen: the layout side of the one component
+/// catalogue (`ComponentCatalogue`, Component.swift).
+enum SectionCatalogue {
+    /// Sent as `X-Attnd-Sections`; the server only sends sections of this version or older.
+    /// 2 (Nov 21, 2026): `my_schedule` on Home (`plan_today` / `liked` map to it).
+    static let version = 2
+
+    static let itemHeaderParts = ComponentCatalogue.itemHeaderParts
+    static let placeHeaderParts = ComponentCatalogue.placeHeaderParts
+
+    static var types: [LayoutScreen: [String: SectionType]] { ComponentCatalogue.screenTypes }
+
+    static func type(_ name: String, on screen: LayoutScreen) -> SectionType? {
+        ComponentCatalogue.screenTypes[screen]?[ComponentCatalogue.canonical(name)]
+    }
+
+    /// Every fact name a `has:` condition may use.
+    static let facts: Set<String> = [
+        "description", "image", "coordinate", "website", "tags", "category", "flyer", "logo",
+        "context", "context.about", "context.menu", "context.hours", "context.accessibility", "context.age_limit",
+        "context.price", "context.performers", "context.links", "context.faq", "context.amenities",
+        "context.getting_there", "context.policies", "context.weather_plan",
+        "items_here", "likes", "plan", "updates", "urgent", "locations", "pins", "schedule", "upcoming",
+    ]
+
+    /// Conditions without arguments (each is also a fact of that name).
+    static let states: Set<String> = [
+        "model_available", "now_playing", "within_walk", "before_start", "during", "after_end",
+    ]
+}
+
+enum ScreenLayout {
+    static let maxSections = 24
+    static let maxOverrides = 8
+    static let maxTitle = 60
+    static let maxLimit = 20
+    static let maxText = 300
+    static let maxImageURL = 500
+
+    /// Today's fixed screens, as layouts (also the fallback for anything missing or invalid).
+    static let defaults: [LayoutScreen: [LayoutSection]] = [
+        .itemDetail: [
+            LayoutSection("header", show: SectionCatalogue.itemHeaderParts), LayoutSection("about"),
+            LayoutSection("performers"), LayoutSection("good_to_know"), LayoutSection("links"),
+            LayoutSection("place_link"),
+        ],
+        .placeDetail: [
+            LayoutSection("header", show: SectionCatalogue.placeHeaderParts), LayoutSection("walk_map"),
+            LayoutSection("about"), LayoutSection("hours"), LayoutSection("good_to_know"),
+            LayoutSection("menu"), LayoutSection("links"), LayoutSection("at_this_location"),
+        ],
+        .eventInfo: [
+            LayoutSection("header", show: ["website"]), LayoutSection("about"), LayoutSection("faq"),
+            LayoutSection("amenities"), LayoutSection("getting_there"), LayoutSection("accessibility"),
+            LayoutSection("policies"), LayoutSection("weather_plan"), LayoutSection("links"),
+        ],
+        .optionsEvent: [LayoutSection("header"), LayoutSection("website"), LayoutSection("event_info_link")],
+        .mapOverlay: [LayoutSection("now_playing"), LayoutSection("selected_place")],
+        .home: [
+            // No now_next by default (owner, Nov 21, 2026: My schedule and the schedule below show
+            // it); organizers can still add it.
+            LayoutSection("header"), LayoutSection("urgent"), LayoutSection("countdown"),
+            LayoutSection("my_schedule"),
+            LayoutSection("map"), LayoutSection("updates", limit: 3), LayoutSection("faq", limit: 3),
+            LayoutSection("getting_there"), LayoutSection("about"),
+        ],
+    ]
+
+    /// Who a detail screen is about, for the overrides.
+    struct Subject: Hashable, Sendable {
+        var category: String? = nil
+        var tags: [String] = []
+
+        static let empty = Subject()
+    }
+
+    /// Rule 1: known types for the screen, once each, parts / title / limit cleaned, ≤ 24.
+    static func validate(_ sections: [LayoutSection], on screen: LayoutScreen) -> [LayoutSection] {
+        var seen = Set<String>()
+        var out: [LayoutSection] = []
+        for raw in sections {
+            let name = ComponentCatalogue.canonical(raw.type)
+            guard let type = SectionCatalogue.type(name, on: screen), seen.insert(name).inserted else { continue }
+            var section = LayoutSection(name)
+            var parts = Set<String>()
+            let shown = raw.show.map { $0.lowercased() }.filter { type.parts.contains($0) && parts.insert($0).inserted }
+            section.show = shown.isEmpty ? type.defaultShow : shown
+            if let title = raw.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
+                section.title = title.count > maxTitle ? String(title.prefix(maxTitle - 1)) + "…" : title
+            }
+            section.limit = raw.limit.map { min(max($0, 1), maxLimit) }
+            section.when = raw.when.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            var seenIds = Set<Int>()
+            section.ids = Array(raw.ids.filter { seenIds.insert($0).inserted }.prefix(maxLimit))
+            if let text = raw.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                section.text = text.count > maxText ? String(text.prefix(maxText - 1)) + "…" : text
+            }
+            if let image = raw.image, image.scheme?.lowercased() == "https", image.host() != nil,
+               image.absoluteString.count <= maxImageURL {
+                section.image = image
+            }
+            out.append(section)
+            if out.count == maxSections { break }
+        }
+        return out
+    }
+
+    /// Rules 2–3: the sections for a screen and subject, before the facts decide visibility.
+    static func sections(for screen: LayoutScreen, layouts: ScreenLayouts?, subject: Subject = .empty) -> [LayoutSection] {
+        let sections = layoutSections(for: screen, layouts: layouts, subject: subject)
+        // Batch 7 (owner): the event's website is always near the bottom of Home (shown only
+        // when the event has one).
+        if screen == .home, !sections.contains(where: { $0.type == "website" }) {
+            return sections + [LayoutSection("website")]
+        }
+        return sections
+    }
+
+    private static func layoutSections(for screen: LayoutScreen, layouts: ScreenLayouts?, subject: Subject) -> [LayoutSection] {
+        let fallback = defaults[screen] ?? []
+        guard let spec = layouts?.screens[screen] else { return fallback }
+        for override in spec.overrides.prefix(maxOverrides) where matches(override.match, subject) {
+            let kept = validate(override.sections, on: screen)
+            if !kept.isEmpty { return kept }
+        }
+        let kept = validate(spec.sections, on: screen)
+        return kept.isEmpty ? fallback : kept
+    }
+
+    /// Rule 3: `category:<name>` / `tag:<tag>`.
+    static func matches(_ match: String, _ subject: Subject) -> Bool {
+        let trimmed = match.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let colon = trimmed.firstIndex(of: ":") else { return false }
+        let kind = trimmed[..<colon].lowercased()
+        let value = trimmed[trimmed.index(after: colon)...].trimmingCharacters(in: .whitespaces).lowercased()
+        guard !value.isEmpty else { return false }
+        switch kind {
+        case "category": return subject.category?.trimmingCharacters(in: .whitespaces).lowercased() == value
+        case "tag": return subject.tags.contains { $0.lowercased() == value }
+        default: return false
+        }
+    }
+
+    /// Rules 1–4: the sections to draw, in order.
+    static func resolve(
+        _ screen: LayoutScreen, layouts: ScreenLayouts?, facts: Set<String>, subject: Subject = .empty
+    ) -> [LayoutSection] {
+        sections(for: screen, layouts: layouts, subject: subject).filter { section in
+            guard let type = SectionCatalogue.type(section.type, on: screen) else { return false }
+            if !type.needs.isEmpty && !type.needs.contains(where: facts.contains) { return false }
+            return section.when.allSatisfy { holds($0, facts) }
+        }
+    }
+
+    /// Rule 4: one condition.
+    static func holds(_ condition: String, _ facts: Set<String>) -> Bool {
+        let c = condition.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if c.hasPrefix("not:") {
+            let inner = String(c.dropFirst(4))
+            // An unknown condition stays false when negated too (fail closed).
+            return isKnown(inner) && !holds(inner, facts)
+        }
+        if c == "has_plan" { return facts.contains("plan") }
+        if c.hasPrefix("has:") {
+            let fact = String(c.dropFirst(4))
+            return SectionCatalogue.facts.contains(fact) && facts.contains(fact)
+        }
+        if c.hasPrefix("day:") { return isDate(String(c.dropFirst(4))) && facts.contains(c) }
+        return SectionCatalogue.states.contains(c) && facts.contains(c)
+    }
+
+    private static func isKnown(_ c: String) -> Bool {
+        if c.hasPrefix("not:") { return isKnown(String(c.dropFirst(4))) }
+        if c == "has_plan" || SectionCatalogue.states.contains(c) { return true }
+        if c.hasPrefix("has:") { return SectionCatalogue.facts.contains(String(c.dropFirst(4))) }
+        if c.hasPrefix("day:") { return isDate(String(c.dropFirst(4))) }
+        return false
+    }
+
+    private static func isDate(_ s: String) -> Bool {
+        s.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil
+    }
+}
+
+/// The facts the visibility rules read, from the bundle (rule 5).
+enum ScreenFacts {
+    /// What the app knows beyond the bundle.
+    struct State: Hashable, Sendable {
+        var now: Date
+        var modelAvailable = false
+        var hasPlan = false
+        var hasLikes = false
+        /// Within walking range of the subject (8 km, with a position).
+        var withinWalk = false
+    }
+
+    /// The event-wide facts every screen shares: the event phase, today, the model, plan, likes.
+    static func common(_ bundle: EventBundle, _ state: State) -> Set<String> {
+        var facts: Set<String> = []
+        let event = bundle.event
+        let now = state.now
+        if let start = event.startTime, now < start { facts.insert("before_start") }
+        if let end = event.endTime, now >= end {
+            facts.insert("after_end")
+        } else if event.startTime.map({ now >= $0 }) ?? false {
+            facts.insert("during")
+        }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = event.timeZone
+        let d = calendar.dateComponents([.year, .month, .day], from: now)
+        if let y = d.year, let m = d.month, let day = d.day {
+            facts.insert(String(format: "day:%04d-%02d-%02d", y, m, day))
+        }
+        if state.modelAvailable { facts.insert("model_available") }
+        if state.hasPlan { facts.insert("plan") }
+        if state.hasLikes { facts.insert("likes") }
+        if state.withinWalk { facts.insert("within_walk") }
+        if bundle.schedule.contains(where: { ScheduleTiming.isHappening($0, at: now) && bundle.location($0.locationId)?.coordinate != nil }) {
+            facts.insert("now_playing")
+        }
+        return facts
+    }
+
+    static func item(_ item: ScheduleItem, _ bundle: EventBundle, _ state: State) -> Set<String> {
+        var facts = common(bundle, state)
+        if !item.description.isEmpty { facts.insert("description") }
+        if !item.tags.isEmpty { facts.insert("tags") }
+        if let start = item.startTime, start > state.now { facts.insert("upcoming") }
+        if let location = bundle.location(item.locationId) {
+            if location.coordinate != nil { facts.insert("coordinate") }
+            if location.category != nil { facts.insert("category") }
+        }
+        if let c = item.context, !c.isEmpty {
+            facts.insert("context")
+            if !c.about.isEmpty { facts.insert("context.about") }
+            if !c.performers.isEmpty { facts.insert("context.performers") }
+            if !c.price.isEmpty { facts.insert("context.price") }
+            if !c.ageLimit.isEmpty { facts.insert("context.age_limit") }
+            if !c.accessibility.isEmpty { facts.insert("context.accessibility") }
+            if !c.links.isEmpty { facts.insert("context.links") }
+        }
+        return facts
+    }
+
+    static func place(_ location: Location, _ bundle: EventBundle, _ state: State) -> Set<String> {
+        var facts = common(bundle, state)
+        if !location.description.isEmpty { facts.insert("description") }
+        if !location.tags.isEmpty { facts.insert("tags") }
+        if location.category != nil { facts.insert("category") }
+        if location.imageUrl != nil { facts.insert("image") }
+        if location.coordinate != nil { facts.insert("coordinate") }
+        if location.website != nil { facts.insert("website") }
+        if bundle.schedule.contains(where: { $0.locationId == location.id }) { facts.insert("items_here") }
+        if let c = location.context, !c.isEmpty {
+            facts.insert("context")
+            if !c.about.isEmpty { facts.insert("context.about") }
+            if !c.menu.isEmpty { facts.insert("context.menu") }
+            if !c.hours.isEmpty { facts.insert("context.hours") }
+            if !c.ageLimit.isEmpty { facts.insert("context.age_limit") }
+            if !c.accessibility.isEmpty { facts.insert("context.accessibility") }
+            if !c.links.isEmpty { facts.insert("context.links") }
+        }
+        return facts
+    }
+
+    static func event(_ bundle: EventBundle, _ state: State) -> Set<String> {
+        var facts = common(bundle, state)
+        let event = bundle.event
+        if !event.description.isEmpty { facts.insert("description") }
+        if event.websiteUrl != nil { facts.insert("website") }
+        if event.flyerUrl != nil { facts.insert("flyer") }
+        if event.logoUrl != nil || bundle.display.logoUrl != nil { facts.insert("logo") }
+        if event.coordinate != nil { facts.insert("coordinate") }
+        if !bundle.schedule.isEmpty { facts.insert("schedule") }
+        if !bundle.locations.isEmpty { facts.insert("locations") }
+        if bundle.locations.contains(where: { $0.coordinate != nil }) { facts.insert("pins") }
+        if !bundle.notifications.isEmpty { facts.insert("updates") }
+        if bundle.notifications.contains(where: { n in
+            n.isUrgent && (n.sendTime.map { state.now.timeIntervalSince($0) < 12 * 3600 } ?? false)
+        }) {
+            facts.insert("urgent")
+        }
+        if let c = event.context, !c.isEmpty {
+            facts.insert("context")
+            if !c.about.isEmpty { facts.insert("context.about") }
+            if !c.faq.isEmpty { facts.insert("context.faq") }
+            if !c.amenities.isEmpty { facts.insert("context.amenities") }
+            if !c.gettingThere.isEmpty { facts.insert("context.getting_there") }
+            if !c.accessibility.isEmpty { facts.insert("context.accessibility") }
+            if !c.policies.isEmpty { facts.insert("context.policies") }
+            if !c.weatherPlan.isEmpty { facts.insert("context.weather_plan") }
+            if !c.links.isEmpty { facts.insert("context.links") }
+        }
+        return facts
+    }
+
+    /// The override subject of a schedule item: its place's category, its own tags.
+    static func subject(_ item: ScheduleItem, _ bundle: EventBundle) -> ScreenLayout.Subject {
+        ScreenLayout.Subject(category: bundle.location(item.locationId)?.category, tags: item.tags)
+    }
+
+    static func subject(_ location: Location) -> ScreenLayout.Subject {
+        ScreenLayout.Subject(category: location.category, tags: location.tags)
+    }
+}
+
+// MARK: - Decoding (lenient: unknown keys ignored, bad entries dropped)
+
+extension LayoutSection: Decodable {
+    private enum CodingKeys: String, CodingKey { case type, show, title, limit, when, ids, text, image }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        guard let type = c.nonEmptyString(.type) else {
+            throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "section without a type")
+        }
+        self.type = type
+        show = c.lossyArray(String.self, .show)
+        title = c.nonEmptyString(.title)
+        limit = c.lenient(Int.self, .limit)
+        if let one = c.nonEmptyString(.when) {
+            when = [one]
+        } else {
+            when = c.lossyArray(String.self, .when)
+        }
+        ids = c.lossyArray(Int.self, .ids)
+        text = c.nonEmptyString(.text)
+        image = c.nonEmptyString(.image).flatMap(URL.init(string:))
+    }
+}
+
+extension LayoutOverride: Decodable {
+    private enum CodingKeys: String, CodingKey { case match, sections }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        guard let match = c.nonEmptyString(.match) else {
+            throw DecodingError.dataCorruptedError(forKey: .match, in: c, debugDescription: "override without a match")
+        }
+        self.match = match
+        sections = c.lossyArray(LayoutSection.self, .sections)
+    }
+}
+
+extension ScreenSpec: Decodable {
+    private enum CodingKeys: String, CodingKey { case sections, overrides }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        sections = c.lossyArray(LayoutSection.self, .sections)
+        overrides = c.lossyArray(LayoutOverride.self, .overrides)
+    }
+}
+
+extension ScreenLayouts: Decodable {
+    private enum CodingKeys: String, CodingKey { case catalogue, screens }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        catalogue = c.lenient(Int.self, .catalogue) ?? 0
+        let raw = c.lenient(LossyScreens.self, .screens)?.screens ?? [:]
+        var screens: [LayoutScreen: ScreenSpec] = [:]
+        for (key, spec) in raw {
+            if let screen = LayoutScreen(rawValue: key) { screens[screen] = spec }
+        }
+        self.screens = screens
+    }
+}
+
+/// `screens` with each entry decoded on its own (a bad screen doesn't lose the others).
+private struct LossyScreens: Decodable {
+    var screens: [String: ScreenSpec] = [:]
+
+    private struct Key: CodingKey {
+        var stringValue: String
+        var intValue: Int? { nil }
+        init?(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { nil }
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Key.self)
+        for key in c.allKeys {
+            if let spec = try? c.decode(ScreenSpec.self, forKey: key) { screens[key.stringValue] = spec }
+        }
+    }
+}
+
+// MARK: - Two columns on wide containers (iPhone Duo unfolded)
+
+/// Detail screens in two columns from a container width of 700 pt (the inner display of an
+/// unfolded iPhone Duo; never a device check): the header and the "where / when" parts leading,
+/// everything else trailing, each in layout order. nil = one column.
+enum DetailColumns {
+    static let minWidth = 700.0
+
+    static let leadingTypes: [LayoutScreen: Set<String>] = [
+        .placeDetail: ["header", "walk_map", "directions", "now_next"],
+        .itemDetail: ["header", "place_link", "countdown"],
+    ]
+
+    static func split(_ sections: [LayoutSection], screen: LayoutScreen, width: Double)
+        -> (leading: [LayoutSection], trailing: [LayoutSection])? {
+        guard width >= minWidth, let types = leadingTypes[screen] else { return nil }
+        let leading = sections.filter { types.contains($0.type) }
+        let trailing = sections.filter { !types.contains($0.type) }
+        // Two columns only with enough to fill them (batch 7: ≥ 3 sections besides the header's
+        // side); else one centred column.
+        guard !leading.isEmpty, trailing.count >= 3 else { return nil }
+        return (leading, trailing)
+    }
+}
+
+/// Home in tabletop posture (iPhone Duo partly folded, the fold across the middle): the top half
+/// for viewing (header, urgent, countdown, now / next, the map), the bottom half the rest as a
+/// list. nil = nothing for one of the halves (one scroll view as usual).
+/// Home's two columns (iPhone Duo unfolded, batch 7): each section goes to the column that is
+/// shorter so far (rough heights by type), keeping the order within each column, so both
+/// columns start at the top and end near the same height. Pure.
+enum HomeColumns {
+    static func weight(_ type: String) -> Int {
+        switch type {
+        case "map", "my_schedule", "my_day", "faq", "whats_on", "places": return 3
+        case "updates", "getting_there", "amenities", "about": return 2
+        default: return 1
+        }
+    }
+
+    static func split(_ sections: [LayoutSection]) -> (leading: [LayoutSection], trailing: [LayoutSection]) {
+        var leading: [LayoutSection] = [], trailing: [LayoutSection] = []
+        var left = 0, right = 0
+        for section in sections {
+            if left <= right { leading.append(section); left += weight(section.type) }
+            else { trailing.append(section); right += weight(section.type) }
+        }
+        return (leading, trailing)
+    }
+}
+
+/// Home's two column widths on a wide container (iPhone Duo unfolded, owner feedback after build
+/// 181: no large gap down the middle, both columns fill their halves). With a reported vertical
+/// fold the gap is the fold's own width plus `gutter` on each side; without one the columns meet
+/// at the middle with `2 × gutter` between them. `margin` is the page's side padding. Pure.
+enum HomeColumnWidths {
+    struct Widths: Equatable { var leading: Double; var gap: Double; var trailing: Double }
+
+    static func of(width: Double, margin: Double, gutter: Double,
+                   foldMinX: Double?, foldMaxX: Double?) -> Widths {
+        let inner = max(width - 2 * margin, 0)
+        if let minX = foldMinX, let maxX = foldMaxX, maxX > minX,
+           minX - margin - gutter > 160, width - margin - (maxX + gutter) > 160 {
+            let leading = minX - margin - gutter
+            let gap = (maxX - minX) + 2 * gutter
+            return Widths(leading: leading, gap: gap, trailing: max(inner - leading - gap, 0))
+        }
+        let gap = 2 * gutter
+        let half = max((inner - gap) / 2, 0)
+        return Widths(leading: half, gap: gap, trailing: half)
+    }
+}
+
+enum TabletopSplit {
+    static let topTypes: Set<String> = ["header", "urgent", "countdown", "now_next", "map"]
+    /// What the tabletop glance (DuoViews.swift) already shows on the top half (batch 7 fix round:
+    /// the top half is a glance that never scrolls; the map moved to the list below the fold).
+    static let glanceTypes: Set<String> = ["header", "urgent", "countdown", "now_next", "now_playing"]
+
+    static func home(_ sections: [LayoutSection]) -> (top: [LayoutSection], bottom: [LayoutSection])? {
+        let top = sections.filter { topTypes.contains($0.type) }
+        let bottom = sections.filter { !topTypes.contains($0.type) }
+        guard !top.isEmpty, !bottom.isEmpty else { return nil }
+        return (top, bottom)
+    }
+}
+
+/// An "About" section's text from the description and the API-018 `context.about`, once: the
+/// same or contained text isn't shown twice (owner, Nov 21, 2026). The context's about wins; the
+/// description joins it only when it says something more.
+enum AboutText {
+    static func merged(description: String, about: String?) -> String {
+        let d = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        let a = (about ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if a.isEmpty { return d }
+        if d.isEmpty { return a }
+        let nd = normalized(d), na = normalized(a)
+        if na.contains(nd) { return a }
+        if nd.contains(na) { return d }
+        return a + "\n\n" + d
+    }
+
+    private static func normalized(_ text: String) -> String {
+        text.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+}
+
+// MARK: - Catalogue 2 screens (API-027)
+
+/// What the Schedule and Places tabs draw from their layouts (`schedule_tab`, `places_tab`): which
+/// list (the existing styles), whether My Schedule shows, and the organizer's featured ids. nil =
+/// no layout for the tab (today's screen, from `display`). Row parts (`show`) aren't drawn yet.
+struct TabListLayout: Hashable, Sendable {
+    /// `display.schedule_style` / `locations_style` values: `timeline`, `by_day`, `by_location`,
+    /// `now_next` (Schedule); `cards`, `list`, `grouped` (Places).
+    var style: String?
+    var showsMySchedule = true
+    var featured: [Int] = []
+    var featuredTitle: String?
+
+    static func schedule(_ sections: [LayoutSection]) -> TabListLayout? {
+        guard !sections.isEmpty else { return nil }
+        var out = TabListLayout(showsMySchedule: sections.contains { $0.type == "my_schedule" })
+        for section in sections {
+            switch section.type {
+            case "timeline": out.style = out.style ?? "timeline"
+            case "by_day": out.style = out.style ?? "by_day"
+            case "by_place": out.style = out.style ?? "by_location"
+            case "happening_now", "up_next": out.style = out.style ?? "now_next"
+            case "featured":
+                out.featured = section.ids
+                out.featuredTitle = section.title
+            default: break
+            }
+        }
+        return out
+    }
+
+    static func places(_ sections: [LayoutSection]) -> TabListLayout? {
+        guard !sections.isEmpty else { return nil }
+        var out = TabListLayout(showsMySchedule: false)
+        for section in sections {
+            switch section.type {
+            case "by_category": out.style = out.style ?? "grouped"
+            case "all_places", "nearby": out.style = out.style ?? (section.shows("image") ? "cards" : "list")
+            case "featured":
+                out.featured = section.ids
+                out.featuredTitle = section.title
+            default: break
+            }
+        }
+        return out
+    }
+}
+
+/// The Updates tab from `updates_tab` (urgent first, the organizer's pinned ones, the latest day,
+/// earlier): each notification once, in the first section that takes it, newest first.
+enum UpdatesLayout {
+    struct Group: Hashable, Sendable {
+        var type: String
+        var title: String
+        var ids: [Int]
+    }
+
+    static func groups(_ sections: [LayoutSection], notifications: [AppNotification], now: Date) -> [Group] {
+        let newestFirst = notifications.sorted { ($0.sendTime ?? .distantPast, $0.id) > ($1.sendTime ?? .distantPast, $1.id) }
+        let byId = Dictionary(newestFirst.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        var used = Set<Int>()
+        var out: [Group] = []
+        func take(_ list: [AppNotification]) -> [Int] { list.map(\.id).filter { used.insert($0).inserted } }
+        for section in sections {
+            let ids: [Int]
+            let title: String
+            switch section.type {
+            case "urgent":
+                ids = take(newestFirst.filter { n in
+                    n.isUrgent && (n.sendTime.map { now.timeIntervalSince($0) < UpdatesInbox.urgentWindow } ?? false)
+                })
+                title = "Urgent"
+            case "pinned":
+                ids = take(section.ids.compactMap { byId[$0] })
+                title = "Pinned"
+            case "latest":
+                ids = take(newestFirst.filter { n in n.sendTime.map { now.timeIntervalSince($0) < 24 * 3600 } ?? true })
+                title = "Latest"
+            case "earlier":
+                ids = take(newestFirst)
+                title = "Earlier"
+            case "faq", "getting_there":
+                out.append(Group(type: section.type, title: section.title ?? (section.type == "faq" ? "FAQ" : "Getting There"), ids: []))
+                continue
+            default:
+                continue
+            }
+            let limited = section.limit.map { Array(ids.prefix($0)) } ?? ids
+            if !limited.isEmpty { out.append(Group(type: section.type, title: section.title ?? title, ids: limited)) }
+        }
+        // Nothing may get lost: anything no section took goes last.
+        let rest = take(newestFirst)
+        if !rest.isEmpty, sections.contains(where: { ["urgent", "pinned", "latest", "earlier"].contains($0.type) }) {
+            out.append(Group(type: "earlier", title: "Earlier", ids: rest))
+        }
+        return out
+    }
+}
+
+/// The first-join cards from `onboarding` (nil = the built-in cards): their order, which ones, and
+/// the organizer's welcome card.
+struct OnboardingLayout: Hashable, Sendable {
+    enum Card: String, Hashable, Sendable { case intro, welcome, location, notifications, lockScreen = "lock_screen", plan }
+    var cards: [Card]
+    var welcomeTitle: String?
+    var welcomeText: String?
+    var welcomeImage: URL?
+
+    static func of(_ sections: [LayoutSection]) -> OnboardingLayout? {
+        let cards = sections.compactMap { Card(rawValue: $0.type) }
+        guard !cards.isEmpty else { return nil }
+        let welcome = sections.first { $0.type == "welcome" }
+        // A welcome card with nothing to say is skipped.
+        let usable = cards.filter { $0 != .welcome || welcome?.title != nil || welcome?.text != nil }
+        return OnboardingLayout(cards: usable, welcomeTitle: welcome?.title, welcomeText: welcome?.text, welcomeImage: welcome?.image)
+    }
+}
+
+// MARK: - Live Activity settings (API-027 `live_activity`)
+
+/// `bundle.live_activity`: what the Live Activity follows, its buttons and stale text. Lenient:
+/// missing or unknown values keep today's behaviour.
+struct LiveActivitySettings: Hashable, Sendable, Decodable {
+    enum Follows: String, Hashable, Sendable { case mySchedule = "my_schedule", everything, location }
+
+    var follows: Follows = .mySchedule
+    var locationId: Int? = nil
+    /// In order, from `add`, `skip`, `map`; nil = the defaults.
+    var buttons: [String]? = nil
+    var staleText: String? = nil
+
+    static let defaults = LiveActivitySettings()
+
+    init(follows: Follows = .mySchedule, locationId: Int? = nil, buttons: [String]? = nil, staleText: String? = nil) {
+        self.follows = follows
+        self.locationId = locationId
+        self.buttons = buttons
+        self.staleText = staleText
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case follows, buttons
+        case locationId = "location_id"
+        case staleText = "stale_text"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        follows = c.lenient(String.self, .follows).flatMap { Follows(rawValue: $0.lowercased()) } ?? .mySchedule
+        locationId = c.lenient(Int.self, .locationId)
+        if c.contains(.buttons) {
+            let known = ["add", "skip", "map"]
+            var seen = Set<String>()
+            buttons = c.lossyArray(String.self, .buttons).map { $0.lowercased() }.filter { known.contains($0) && seen.insert($0).inserted }
+        }
+        staleText = c.nonEmptyString(.staleText).map { String($0.prefix(60)) }
+    }
+
+    /// The location to follow, when it exists in the bundle (else My schedule's rule).
+    func followedLocation(in bundle: EventBundle) -> Int? {
+        guard follows == .location, let id = locationId, bundle.location(id) != nil else { return nil }
+        return id
+    }
+
+    /// The activity's buttons this app draws: Skip and Map (the owner removed Add / the heart from
+    /// the Live Activity on Nov 21, 2026, so `add` is accepted and not drawn).
+    var activityButtons: [String] {
+        (buttons ?? ["skip", "map"]).filter { $0 == "skip" || $0 == "map" }
+    }
+}
+
+// MARK: - Fold continuity (batch 7)
+
+/// What each screen keeps across fold ↔ unfold (a resize and trait change, never a rebuild):
+/// which pane is primary, and what the folded layout shows for a given unfolded state. Pure.
+enum FoldRules {
+    enum Screen: String, Sendable { case map, schedule, places, home, chat, detail }
+
+    /// The pane that is the screen when folded.
+    static func primary(_ screen: Screen) -> String {
+        switch screen {
+        case .map: return "map"
+        case .schedule, .places: return "list"
+        case .home: return "sections"
+        case .chat: return "chat"
+        case .detail: return "detail"
+        }
+    }
+
+    /// Folded: a list screen with a selection shows that detail pushed over the list (Back
+    /// returns to the list); without one, the list. The map shows the pane's item as the
+    /// selected pin. Unfolded: list + the same detail.
+    enum Folded: Equatable, Sendable { case list, pushedDetail(Int), map(selectedPin: Int?), same }
+
+    static func folded(_ screen: Screen, selected: Int?) -> Folded {
+        switch screen {
+        case .schedule, .places: return selected.map(Folded.pushedDetail) ?? .list
+        case .map: return .map(selectedPin: selected)
+        case .home, .chat, .detail: return .same
+        }
+    }
+}

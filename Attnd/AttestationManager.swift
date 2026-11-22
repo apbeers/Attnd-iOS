@@ -60,7 +60,9 @@ actor AttestationManager {
     // MARK: - Public API
 
     /// Whether this device supports App Attest. False on simulators and macOS.
-    nonisolated var isSupported: Bool { DCAppAttestService.shared.isSupported }
+    /// Read once per run (it never changes while the app runs; ~5 ms each time on the main thread).
+    nonisolated var isSupported: Bool { Self.supported }
+    nonisolated private static let supported = DCAppAttestService.shared.isSupported
 
     /// Returns a valid JWT.
     /// - If a non-expired token is already stored, returns it immediately.
@@ -105,6 +107,12 @@ actor AttestationManager {
     /// Call this after receiving a 401 from the API so a fresh token is fetched.
     func invalidateToken() {
         AppLog.info(.auth, "auth.token.expired", "401: attestation token cleared", ["reason": "401"])
+        KeychainHelper.delete(key: jwtKeychainKey)
+        inflightTask = nil
+    }
+
+    /// Drops the stored JWT before switching servers (each server signs its own tokens).
+    func clearToken() {
         KeychainHelper.delete(key: jwtKeychainKey)
         inflightTask = nil
     }

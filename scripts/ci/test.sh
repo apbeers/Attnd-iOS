@@ -13,6 +13,7 @@
 # xcodebuild passes only TEST_RUNNER_-prefixed variables on to the test process (prefix stripped), so
 # they are exported here as TEST_RUNNER_ATTND_IT_*; the tests read ATTND_IT_SERVER / ATTND_IT_KEY.
 # ATTND_IT_RUN_ID (default GITHUB_RUN_ID) goes into the CI device ids.
+# ATTND_SIM_OS_MAJOR (optional, e.g. 26): use the newest iPhone simulator of that iOS major (compat.yml).
 # COMPILATION_CACHE_DIR (optional): Xcode's compilation cache (CAS) lives there, so CI can keep it
 # between runs (actions/cache in ios.yml).
 set -euo pipefail
@@ -41,13 +42,17 @@ common=(-project Attnd.xcodeproj -scheme Attnd -derivedDataPath "$derived")
 if [ "$mode" = build ]; then
   device=$(xcrun simctl list devices available -j | python3 -c '
 import json, re, sys
+import os
 data = json.load(sys.stdin)["devices"]
+want = os.environ.get("ATTND_SIM_OS_MAJOR", "")
 best = None
 for runtime, devs in data.items():
     m = re.search(r"iOS-(\d+)-(\d+)", runtime)
     if not m:
         continue
     ver = (int(m.group(1)), int(m.group(2)))
+    if want and str(ver[0]) != want:
+        continue
     for d in devs:
         if d["name"].startswith("iPhone") and (best is None or ver > best[0]):
             best = (ver, d["udid"], d["name"])

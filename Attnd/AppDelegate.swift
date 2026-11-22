@@ -18,6 +18,7 @@
 // Lock Screen"; LiveFollowController) carry `attnd_local` instead of `type`: a tap opens the
 // item (and starts following), and they never trigger a bundle refresh.
 
+import CoreSpotlight
 import SwiftUI
 import UIKit
 import UserNotifications
@@ -37,12 +38,31 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         }
         // MetricKit: crash / hang and other diagnostic reports (API-013); launch times are LaunchTiming's.
         MetricKitReporter.shared.start()
+        // Debug / Dev builds: log main-thread stalls over 100 ms (perf.hang).
+        if !ScreenshotMode.isActive { MainThreadWatchdog.start() }
         UNUserNotificationCenter.current().delegate = self
         // Live Activity and reminders; also handles Live Activity buttons, which
         // may launch the app in the background.
         LiveFollowController.shared.install(appState: appState)
         appState.registerForRemoteNotifications()
+        Self.removeOldShortcuts(application)
         return true
+    }
+
+    /// Siri, Shortcuts and Spotlight were removed on Nov 19, 2026 (App Intents can't run in the
+    /// App Clip), but what older builds left behind stayed on the phone and failed when used
+    /// ("Happening now", "Up next"): Spotlight items, Home Screen quick actions and saved user
+    /// activities. Removed once per build.
+    private static func removeOldShortcuts(_ application: UIApplication) {
+        let key = "pref.oldShortcutsRemovedBuild"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
+        guard UserDefaults.standard.string(forKey: key) != build else { return }
+        UserDefaults.standard.set(build, forKey: key)
+        application.shortcutItems = nil
+        NSUserActivity.deleteAllSavedUserActivities {}
+        CSSearchableIndex.default().deleteAllSearchableItems { error in
+            if let error { AppLog.caught(error, .lifecycle, "spotlight_cleanup") }
+        }
     }
 
     // MARK: - APNs registration
@@ -87,8 +107,11 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
 // MARK: - UNUserNotificationCenterDelegate
 //
-// These callbacks are nonisolated: each parses userInfo into a Sendable PushPayload
-// right away and hands only that to the main actor. The bundle refresh runs in its
+// The completion-handler variants, answered synchronously on the thread the system called us on
+// (the main thread). The async variants returned on a cooperative-pool thread, and UIKit's
+// handler then asserted it was on the main thread: tapping a notification crashed the app
+// (MetricKit report, TestFlight 2.0.169). Each callback parses userInfo into a Sendable
+// PushPayload right away and hands only that to the main actor; the bundle refresh runs in its
 // own task so the system isn't kept waiting for the network.
 
 extension AppDelegate: UNUserNotificationCenterDelegate {
@@ -96,39 +119,57 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
     /// A notification arrived while the app is open: show it and refresh.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
-        willPresent notification: UNNotification
-    ) async -> UNNotificationPresentationOptions {
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
         let userInfo = notification.request.content.userInfo
         // A reminder or "tap to follow" while the app is open: just show it.
         if let local = LocalNotificationInfo(userInfo: userInfo) {
             if local.kind == LiveFollowKeys.reminderCategory {
                 AppLog.info(.live, "live.reminder.shown", "Reminder shown", ["item_id": .int(local.itemId ?? 0)])
             }
-            return [.banner, .list, .sound]
+            completionHandler([.banner, .list, .sound])
+            return
         }
         let payload = PushPayload(userInfo: userInfo)
+        let title = notification.request.content.title
+        let body = notification.request.content.body
         Task { @MainActor in
             await self.appState.handlePush(payload, opened: false)
         }
-        return [.banner, .list, .sound]
+        // An organizer update while the app is open: the app's own banner at the top (swipe up to
+        // dismiss, tap to open), the system's only in Notification Center.
+        if payload.kind == .notification, let id = payload.notificationId, !title.isEmpty || !body.isEmpty {
+            let urgent = (userInfo["priority"] as? String) == "urgent"
+            Task { @MainActor in
+                self.appState.showInAppBanner(InAppBanner(notificationId: id, title: title, body: body, urgent: urgent))
+            }
+            completionHandler([.list, .sound])
+            return
+        }
+        completionHandler([.banner, .list, .sound])
     }
 
-    /// The user tapped a notification: open the Notifications tab for that event.
+    /// The user tapped a notification: open the Notifications tab for that event (also when the
+    /// tap launched the app: `handlePush` waits for the saved event to be restored).
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
-        didReceive response: UNNotificationResponse
-    ) async {
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
         let userInfo = response.notification.request.content.userInfo
         if let local = LocalNotificationInfo(userInfo: userInfo) {
             AppLog.info(.push, "push.opened", "Local notification tapped (\(local.kind))", ["type": .string(local.kind)])
             Task { @MainActor in
                 _ = await LiveFollowController.shared.handleNotificationTap(local)
             }
+            completionHandler()
             return
         }
         let payload = PushPayload(userInfo: userInfo)
         Task { @MainActor in
             await self.appState.handlePush(payload, opened: true)
         }
+        completionHandler()
     }
 }

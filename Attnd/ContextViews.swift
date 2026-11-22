@@ -2,13 +2,15 @@
 // Attnd (app + App Clip)
 //
 // API-018 rich context on the detail screens: the organizer's (AI-imported, reviewed) notes the
-// on-device assistant also reads, shown where they help an attendee:
-//   - `ScheduleItemContextSections` (schedule item detail, List sections): About, performers with
-//     genres and bios, price / age / accessibility, links.
-//   - `LocationContextView` (location detail, a stack inside its ScrollView): About, hours,
-//     menu, accessibility / age, links.
-//   - `EventContextSections` (`EventInfoView`, Options' event section): FAQ, amenities (with the
-//     place they're at), getting there, accessibility, policies, weather plan, links.
+// on-device assistant also reads, shown where they help an attendee. Since API-024 each piece is
+// one layout section (`ScreenLayout`), drawn where the screen's layout puts it:
+//   - schedule item detail (List sections): `PerformersSection`, `ItemFactsSection` (price / age /
+//     accessibility), `ContextLinksSection`.
+//   - location detail (a stack inside its ScrollView): `PlaceHoursLine`, `PlaceFactsLines`
+//     (age / accessibility), `MenuList`, `PlaceLinks`.
+//   - `EventInfoView` (List sections): `EventFAQSection`, `EventAmenitiesSection`,
+//     `ContextTextSection` (getting there, accessibility, policies, weather plan),
+//     `ContextLinksSection`.
 // All from the bundle on disk, so offline too. Links open in the browser (`Link`), https only.
 
 import SwiftUI
@@ -19,32 +21,36 @@ private struct ContextFact: Hashable {
     var value: String
 }
 
-struct ScheduleItemContextSections: View {
-    let context: ScheduleItemContext
+// MARK: - Schedule item
+
+struct PerformersSection: View {
+    let performers: [Performer]
+    var title: String? = nil
 
     var body: some View {
-        if !context.about.isEmpty {
-            Section("About") {
-                Text(context.about)
-            }
-        }
-        if !context.performers.isEmpty {
-            Section(context.performers.count == 1 ? "Performer" : "Performers") {
-                ForEach(context.performers, id: \.self) { performer in
+        if !performers.isEmpty {
+            Section(title ?? (performers.count == 1 ? "Performer" : "Performers")) {
+                ForEach(performers, id: \.self) { performer in
                     PerformerRow(performer: performer)
                 }
             }
         }
+    }
+}
+
+/// Price, ages and accessibility of a schedule item ("Good to Know").
+struct ItemFactsSection: View {
+    let context: ScheduleItemContext
+    var title: String? = nil
+
+    var body: some View {
         let facts = factRows
         if !facts.isEmpty {
-            Section("Good to Know") {
+            Section(title ?? "Good to Know") {
                 ForEach(facts, id: \.self) { fact in
                     LabeledContent(fact.label, value: fact.value)
                 }
             }
-        }
-        if !context.links.isEmpty {
-            ContextLinksSection(links: context.links)
         }
     }
 
@@ -74,66 +80,104 @@ private struct PerformerRow: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
+            if let url = performer.appleMusicURL {
+                ListenOnAppleMusicButton(url: url, artist: performer.name)
+                    .padding(.top, 2)
+            }
         }
         .padding(.vertical, 2)
-        .accessibilityElement(children: .combine)
+        // Not `.combine`: the Apple Music button stays its own control for VoiceOver.
+        .accessibilityElement(children: .contain)
     }
 }
 
-private struct ContextLinksSection: View {
-    let links: [ContextLink]
+/// API-030 "Listen on Apple Music" (Apple's wording): opens the artist page (a universal link,
+/// so the Music app when installed, else Safari). No MusicKit, no account; nothing without a link.
+struct ListenOnAppleMusicButton: View {
+    let url: URL
+    var artist: String = ""
 
     var body: some View {
-        Section("Links") {
-            ForEach(links, id: \.url) { link in
-                Link(destination: link.url) {
-                    Label(link.title, systemImage: "safari")
+        Link(destination: url) {
+            Label("Listen on Apple Music", systemImage: "music.note")
+                .font(.subheadline.weight(.semibold))
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .accessibilityLabel(artist.isEmpty ? "Listen on Apple Music" : "Listen to \(artist) on Apple Music")
+    }
+}
+
+struct ContextLinksSection: View {
+    let links: [ContextLink]
+    var title: String? = nil
+
+    var body: some View {
+        if !links.isEmpty {
+            Section(title ?? "Links") {
+                ForEach(links, id: \.url) { link in
+                    Link(destination: link.url) {
+                        Label(link.title, systemImage: "safari")
+                    }
                 }
             }
         }
     }
 }
 
-/// The location detail's context (inside its ScrollView, between dividers).
-struct LocationContextView: View {
+// MARK: - Location (inside its ScrollView)
+
+struct PlaceHoursLine: View {
+    let hours: String
+
+    var body: some View {
+        Label(hours, systemImage: "clock")
+            .font(.subheadline)
+    }
+}
+
+/// Age limit and accessibility of a place.
+struct PlaceFactsLines: View {
     let context: LocationContext
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if !context.about.isEmpty {
-                Text(context.about)
-            }
-            if !context.hours.isEmpty {
-                Label(context.hours, systemImage: "clock")
-                    .font(.subheadline)
-            }
-            if !context.ageLimit.isEmpty {
-                Label(context.ageLimit, systemImage: "person.crop.circle.badge.checkmark")
-                    .font(.subheadline)
-            }
-            if !context.accessibility.isEmpty {
-                Label(context.accessibility, systemImage: "figure.roll")
-                    .font(.subheadline)
-            }
-            if !context.menu.isEmpty {
-                MenuList(menu: context.menu)
-            }
-            ForEach(context.links, id: \.url) { link in
-                Link(destination: link.url) {
-                    Label(link.title, systemImage: "safari")
-                }
+        if !context.ageLimit.isEmpty {
+            Label(context.ageLimit, systemImage: "person.crop.circle.badge.checkmark")
                 .font(.subheadline)
-            }
+        }
+        if !context.accessibility.isEmpty {
+            Label(context.accessibility, systemImage: "figure.roll")
+                .font(.subheadline)
         }
     }
 }
 
-private struct MenuList: View {
+/// The place's context links, then its own website ("Visit Website").
+struct PlaceLinks: View {
+    let links: [ContextLink]
+    let website: URL?
+
+    var body: some View {
+        ForEach(links, id: \.url) { link in
+            Link(destination: link.url) {
+                Label(link.title, systemImage: "safari")
+            }
+            .font(.subheadline)
+        }
+        if let website {
+            Link("Visit Website", destination: website)
+                .font(.subheadline)
+        }
+    }
+}
+
+struct MenuList: View {
     let menu: [MenuEntry]
+    var title: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Menu")
+            Text(title ?? "Menu")
                 .font(.title3.bold())
             ForEach(menu, id: \.self) { entry in
                 HStack(alignment: .firstTextBaseline) {
@@ -158,19 +202,17 @@ private struct MenuList: View {
     }
 }
 
-/// The event's own context (List sections).
-struct EventContextSections: View {
-    let context: EventContext
+// MARK: - Event (List sections)
 
-    @Environment(AppState.self) private var appState
+struct EventFAQSection: View {
+    let faq: [FAQEntry]
+    var title: String? = nil
+    var limit: Int? = nil
 
     var body: some View {
-        if !context.about.isEmpty {
-            Section("Details") { Text(context.about) }
-        }
-        if !context.faq.isEmpty {
-            Section("FAQ") {
-                ForEach(context.faq, id: \.self) { entry in
+        if !faq.isEmpty {
+            Section(title ?? "FAQ") {
+                ForEach(Array(faq.prefix(limit ?? faq.count)), id: \.self) { entry in
                     DisclosureGroup(entry.question) {
                         Text(entry.answer)
                             .foregroundStyle(.secondary)
@@ -178,28 +220,35 @@ struct EventContextSections: View {
                 }
             }
         }
-        if !context.amenities.isEmpty {
-            Section("Amenities") {
-                ForEach(context.amenities, id: \.self) { amenity in
+    }
+}
+
+struct EventAmenitiesSection: View {
+    let amenities: [Amenity]
+    var title: String? = nil
+
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        if !amenities.isEmpty {
+            Section(title ?? "Amenities") {
+                ForEach(amenities, id: \.self) { amenity in
                     AmenityRow(amenity: amenity, location: appState.location(id: amenity.locationId))
                 }
             }
         }
-        ForEach(textRows, id: \.self) { row in
-            Section(row.label) { Text(row.value) }
-        }
-        if !context.links.isEmpty {
-            ContextLinksSection(links: context.links)
-        }
     }
+}
 
-    private var textRows: [ContextFact] {
-        [
-            ContextFact(label: "Getting There", value: context.gettingThere),
-            ContextFact(label: "Accessibility", value: context.accessibility),
-            ContextFact(label: "Policies", value: context.policies),
-            ContextFact(label: "Weather Plan", value: context.weatherPlan),
-        ].filter { !$0.value.isEmpty }
+/// One of the event's text parts (Details, Getting There, Accessibility, Policies, Weather Plan).
+struct ContextTextSection: View {
+    let title: String
+    let text: String
+
+    var body: some View {
+        if !text.isEmpty {
+            Section(title) { Text(text) }
+        }
     }
 }
 

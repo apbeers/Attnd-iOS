@@ -1,0 +1,44 @@
+# iPhone Duo layout audit: the app on the Duo simulator folded, unfolded (portrait and landscape) and
+# in tabletop, for Home, Schedule, the Map, a place's detail and the chat, with the Debug-only
+# reserved-region overlay (fold red, cameras orange, floating controls dashed blue) so overlaps show
+# without the hardware. Not store screenshots and never run with normal builds.
+# Manual only: Actions → "Duo screenshots" → Run workflow. Artifact "duo-audit" (PNGs + report.txt).
+name: Duo screenshots
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: duo-audit
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: iPhone Duo layout audit
+    runs-on: ${{ vars.MACOS_RUNNER || 'xcode-27' }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: Select Xcode ${{ vars.XCODE_VERSION || '27.2' }}
+        env:
+          XCODE_VERSION: ${{ vars.XCODE_VERSION || '27.2' }}
+        run: bash scripts/ci/select_xcode.sh
+      - name: Capture (Duo simulator, dev server, event DEMO)
+        env:
+          ATTND_API_KEY: ${{ secrets.ATTND_API_KEY }}
+          ATTND_SERVER: ${{ vars.SCREENSHOT_SERVER || 'dev.attnd.app' }}
+        run: bash scripts/ci/duo_audit.sh
+      - name: Keep captures
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: duo-audit
+          path: build/screenshots/duo-audit
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Shut down simulators
+        if: always()
+        run: xcrun simctl shutdown all || true

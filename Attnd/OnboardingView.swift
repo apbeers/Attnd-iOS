@@ -29,13 +29,30 @@ struct OnboardingView: View {
     @State private var locationPermission = LocationPermissionManager()
 
     private enum Card: Hashable {
-        case intro, location, notifications, plan
+        case intro, welcome, location, notifications, lockScreen, plan
     }
 
+    /// The organizer's choice (API-027 `onboarding`: which cards, their order, the welcome card),
+    /// else the built-in cards. The plan card needs the on-device model either way.
+    private var serverLayout: OnboardingLayout? { OnboardingLayout.of(appState.layoutSections(.onboarding)) }
+
     private var cards: [Card] {
-        var cards: [Card] = [.intro, .location, .notifications]
-        if hasPlanCard { cards.append(.plan) }
-        return cards
+        guard let layout = serverLayout else {
+            var cards: [Card] = [.intro, .location, .notifications]
+            if hasPlanCard { cards.append(.plan) }
+            return cards
+        }
+        let mapped: [Card] = layout.cards.compactMap { card in
+            switch card {
+            case .intro: return .intro
+            case .welcome: return .welcome
+            case .location: return .location
+            case .notifications: return .notifications
+            case .lockScreen: return .lockScreen
+            case .plan: return hasPlanCard ? .plan : nil
+            }
+        }
+        return mapped.isEmpty ? [.intro] : mapped
     }
 
     private var hasPlanCard: Bool {
@@ -99,13 +116,51 @@ struct OnboardingView: View {
     @ViewBuilder
     private func cardView(_ card: Card) -> some View {
         switch card {
+        case .welcome:
+            let layout = serverLayout
+            VStack(alignment: .leading, spacing: 16) {
+                if let image = layout?.welcomeImage {
+                    CachedImage(url: image) { image in
+                        image.resizable().scaledToFill()
+                    } placeholder: { _ in
+                        Color(.systemGray6)
+                    }
+                    .frame(height: 180)
+                    .frame(maxWidth: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: 18))
+                    .accessibilityHidden(true)
+                }
+                Text(layout?.welcomeTitle ?? appState.currentEvent?.name ?? "Welcome")
+                    .font(.title.bold())
+                if let text = layout?.welcomeText {
+                    Text(text)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        case .lockScreen:
+            CardLayout(systemImage: "lock.iphone", title: "Follow on your Lock Screen") {
+                Text("See what's on now and next, with a countdown and the walk, without opening the app.")
+                    .foregroundStyle(.secondary)
+                if appState.followsOnLockScreen {
+                    Label("On your Lock Screen", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                } else {
+                    Button {
+                        appState.setFollowOnLockScreen(true)
+                    } label: {
+                        Label("Follow on Lock Screen", systemImage: "lock.iphone")
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
         case .intro:
             CardLayout(systemImage: "sparkles", title: "Your event, in your pocket") {
                 FeatureRow(systemImage: "map", text: "Find every stage, stand and place on the map.")
                 FeatureRow(systemImage: "calendar", text: "See what's on now and next, with live countdowns.")
                 FeatureRow(systemImage: "bell", text: "Get the organizers' updates the moment they're sent.")
                 FeatureRow(systemImage: "magnifyingglass", text: "Search everything with the button in the corner.")
-                FeatureRow(systemImage: "heart", text: "Like what you don't want to miss and follow it on your Lock Screen.")
+                FeatureRow(systemImage: "heart", text: "Tap the heart on what you don't want to miss: it goes in your schedule, and you can follow it on your Lock Screen.")
             }
         case .location:
             CardLayout(systemImage: "location.north.line", title: "Find your way") {
@@ -131,7 +186,7 @@ struct OnboardingView: View {
             }
         case .notifications:
             CardLayout(systemImage: "bell.badge", title: "Don't miss a change") {
-                Text("Get set-time changes and urgent news from the organizers, and a reminder 15 minutes before anything you've liked.")
+                Text("Get set-time changes and urgent news from the organizers, and a reminder 15 minutes before anything in your schedule.")
                     .foregroundStyle(.secondary)
                 if appState.notificationsEnabled {
                     Label("Notifications are on", systemImage: "checkmark.circle.fill")
@@ -158,7 +213,7 @@ struct OnboardingView: View {
     @ViewBuilder
     private var planCard: some View {
         CardLayout(systemImage: "wand.and.stars", title: "Plan your day") {
-            Text("Say what you'd like in your own words. Apple Intelligence builds a plan on your iPhone from the event's schedule, your likes and walking times.")
+            Text("Say what you'd like in your own words. Apple Intelligence suggests what to add to your schedule, on your iPhone, from the event's schedule, what you already picked and walking times.")
                 .foregroundStyle(.secondary)
             ForEach(examples) { example in
                 Button {

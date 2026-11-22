@@ -1,1 +1,4 @@
-Improvements and fixes.
+- My Schedule: tap the heart on anything to add it, set a time for a place, and get a reminder before it starts.
+- Home: what's on now and next, announcements and your schedule at a glance.
+- Ask Attnd (with Apple Intelligence): ask about the event or plan your day, right on your iPhone.
+- Better layouts on iPhone Duo, plus speed and reliability fixes.

@@ -7,10 +7,15 @@
 	<key>com.apple.developer.associated-domains</key>
 	<array>
 		<string>applinks:attnd.app</string>
+		<string>applinks:dev.attnd.app</string>
 	</array>
 	<key>com.apple.developer.devicecheck.appattest-environment</key>
 	<string>production</string>
 	<key>com.apple.developer.usernotifications.time-sensitive</key>
 	<true/>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.arcu.Attnd</string>
+	</array>
 </dict>
 </plist>

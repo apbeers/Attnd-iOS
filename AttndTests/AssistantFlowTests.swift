@@ -84,11 +84,11 @@ final class AssistantFlowTests: XCTestCase {
     }
 
     func testSummaries() {
-        XCTAssertEqual(BlockData.summary("liked_counts", plan, bundle, likes, now: now, units: .imperial, locale: enUS), "2 liked items and 0 liked places")
-        XCTAssertEqual(BlockData.likedCounts(LikeSet(locations: [1], scheduleItems: [101])), "1 liked item and 1 liked place")
+        XCTAssertEqual(BlockData.summary("liked_counts", plan, bundle, likes, now: now, units: .imperial, locale: enUS), "2 items and 0 places")
+        XCTAssertEqual(BlockData.likedCounts(LikeSet(locations: [1], scheduleItems: [101])), "1 item and 1 place")
         let walking = BlockData.summary("walking", plan, bundle, likes, now: now, units: .imperial, locale: enUS)
         XCTAssertTrue(walking?.hasSuffix(" walking today") == true, walking ?? "nil")
-        XCTAssertEqual(BlockData.summary("recap", plan, bundle, likes, now: now, units: .imperial, locale: enUS), "You saw 0 things, liked 2 and walked 10 ft.")
+        XCTAssertEqual(BlockData.summary("recap", plan, bundle, likes, now: now, units: .imperial, locale: enUS), "You saw 0 things, added 2 and walked 10 ft.")
         XCTAssertNil(BlockData.summary("walking", nil, bundle, likes, now: now, units: .imperial, locale: enUS))
     }
 

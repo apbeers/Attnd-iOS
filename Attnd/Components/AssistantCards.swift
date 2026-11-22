@@ -27,10 +27,29 @@ import SwiftUI
 extension View {
     /// The background of an assistant card: a rounded tile on the grouped secondary background.
     func blockCardBackground(padding: CGFloat = 12) -> some View {
-        self
+        modifier(BlockCardBackground(padding: padding))
+    }
+}
+
+/// The card surface; with an event theme (API-023) a light wash of its secondary colour.
+private struct BlockCardBackground: ViewModifier {
+    let padding: CGFloat
+
+    @Environment(\.themeSoft) private var soft
+
+    func body(content: Content) -> some View {
+        content
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 18))
+            .background {
+                RoundedRectangle(cornerRadius: 18)
+                    .fill(Color(.secondarySystemGroupedBackground))
+                    .overlay {
+                        if let soft {
+                            RoundedRectangle(cornerRadius: 18).fill(soft.opacity(0.12))
+                        }
+                    }
+            }
     }
 }
 
@@ -84,6 +103,8 @@ struct ItemCard: View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
             card(now: context.date)
         }
+        // Drag between panes (iPhone Duo unfolded): onto the map, My schedule or the plan.
+        .draggable(DragPayload.item(item.id).string)
     }
 
     private func card(now: Date) -> some View {
@@ -202,6 +223,7 @@ struct PlaceCard: View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
             card(now: context.date)
         }
+        .draggable(DragPayload.place(location.id).string)
     }
 
     private func card(now: Date) -> some View {
@@ -388,18 +410,9 @@ struct CardCarousel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             BlockTitle(title: title)
-            ScrollView(.horizontal) {
-                LazyHStack(alignment: .top, spacing: 12) {
-                    ForEach(Array(targets.prefix(Self.maxCards)), id: \.self) { target in
-                        card(target)
-                            .containerRelativeFrame(.horizontal) { width, _ in width * 0.8 }
-                    }
-                }
-                .scrollTargetLayout()
+            CarouselRow(items: Array(targets.prefix(Self.maxCards)), id: \.self) { target in
+                card(target)
             }
-            .scrollTargetBehavior(.viewAligned)
-            .scrollIndicators(.hidden)
-            .scrollClipDisabled()
         }
     }
 
@@ -670,5 +683,54 @@ struct Countdown: View {
                 .monospacedDigit()
                 .foregroundStyle(.tint)
         }
+    }
+}
+
+// MARK: - Carousel row
+
+extension EnvironmentValues {
+    /// True inside one column of a multi-column layout (Home unfolded on iPhone Duo): carousels
+    /// clip to their column so cards never run under the other column (Duo simulator feedback
+    /// after build 181).
+    @Entry var carouselContained = false
+}
+
+/// A horizontal row of cards sized from the row's own measured width (not the nearest container,
+/// which inside Home's columns resolved to the whole scroll view and made the cards overflow into
+/// the other column). Not lazy (≤ 8 cards): the row is as tall as its tallest card and every card
+/// takes that height (build 167).
+struct CarouselRow<Item, ID: Hashable, Card: View>: View {
+    let items: [Item]
+    let id: KeyPath<Item, ID>
+    var fraction: CGFloat = 0.8
+    var maxCardWidth: CGFloat = 420
+    @ViewBuilder let card: (Item) -> Card
+
+    @Environment(\.carouselContained) private var contained
+    @State private var width: CGFloat = 0
+
+    private var cardWidth: CGFloat {
+        let base = width > 0 ? width : 320
+        return items.count == 1 && fraction >= 1 ? base : min(base * fraction, maxCardWidth)
+    }
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            HStack(alignment: .top, spacing: 12) {
+                ForEach(items, id: id) { item in
+                    card(item)
+                        .frame(width: cardWidth)
+                        .frame(maxHeight: .infinity, alignment: .top)
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .scrollTargetLayout()
+        }
+        .frame(maxWidth: .infinity)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+        .scrollTargetBehavior(.viewAligned)
+        .scrollIndicators(.hidden)
+        // Single column: cards peek past the screen edge as before. In a column: clipped to it.
+        .scrollClipDisabled(!contained)
     }
 }

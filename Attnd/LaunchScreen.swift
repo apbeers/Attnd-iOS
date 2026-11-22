@@ -138,11 +138,11 @@ struct LaunchScreen: View {
     }
 
     /// Exact event code or name via `events/lookup/`.
-    private func joinByCode(_ code: String, via: String = "search") async {
+    private func joinByCode(_ code: String, via: String = "search", previewToken: String? = nil) async {
         guard !code.isEmpty, !isJoining else { return }
         isJoining = true
         joinError = nil
-        let joined = await appState.join(code: code, via: via)
+        let joined = await appState.join(code: code, via: via, previewToken: previewToken)
         if !joined {
             joinError = "Event not found. Check the code or full event name and try again."
             AppLog.warning(.ui, "ui.error.shown", "Event not found", ["kind": .string(via == "qr" ? "scan" : "lookup")])
@@ -158,7 +158,8 @@ struct LaunchScreen: View {
             return
         }
         searchQuery = code
-        await joinByCode(code, via: "qr")
+        // API-026: the console's "Preview on my phone" QR carries `?preview=<token>`.
+        await joinByCode(code, via: "qr", previewToken: DeepLink.previewToken(fromScanned: raw))
     }
 
     private func join(_ event: Event) async {
@@ -213,11 +214,6 @@ private struct EventRow: View {
                 Text(details.joined(separator: " · "))
                     .font(.caption)
                     .foregroundStyle(.tertiary)
-            }
-            if event.isDemo {
-                Text("Demo Event")
-                    .font(.caption.bold())
-                    .foregroundStyle(.orange)
             }
         }
         .padding(.vertical, 4)

@@ -19,12 +19,17 @@ final class AssistantBlocksTests: XCTestCase {
     func testRegistry() {
         XCTAssertEqual(ActionName.allCases.map(\.key), [
             "search", "get_item", "get_location", "get_update", "event_info", "now_next", "whats_on", "liked", "plan", "near_me", "why_not", "route", "day_route",
-            "like", "unlike", "plan_make", "plan_edit", "plan_undo", "plan_version", "checkoff", "follow_lock_screen", "reminders", "notifications",
+            "my_schedule", "like", "unlike", "plan_make", "plan_edit", "plan_undo", "plan_version", "checkoff", "follow_lock_screen", "reminders", "notifications",
             "share_plan", "share_item", "open", "directions",
+            // iOS (My schedule, Nov 21, 2026)
+            "schedule_add", "schedule_remove", "schedule_move", "schedule_reminder",
+            // iOS (app settings from the chat, batch 7)
+            "location", "leave", "switch_server",
         ])
-        XCTAssertEqual(Set(ActionName.allCases.filter { $0.confirm == .chip }), [.followLockScreen, .reminders, .notifications])
+        XCTAssertEqual(Set(ActionName.allCases.filter { $0.confirm == .chip }),
+                       [.followLockScreen, .reminders, .notifications, .location, .leave, .switchServer])
         XCTAssertEqual(Set(ActionName.allCases.filter { $0.confirm == .sheet }), [.sharePlan, .shareItem])
-        XCTAssertEqual(Set(ActionName.allCases.filter(\.undoable)), [.like, .unlike, .planMake, .planEdit, .planVersion, .checkoff])
+        XCTAssertEqual(Set(ActionName.allCases.filter(\.undoable)), [.like, .unlike, .planMake, .planEdit, .planVersion, .checkoff, .scheduleAdd, .scheduleRemove])
         XCTAssertTrue(ActionName.allCases.filter { !$0.mutates }.allSatisfy { $0.confirm == .none })
         XCTAssertEqual(ActionName.neverAvailable, ["leave_event", "debug_mode", "copy_support_info", "add_to_calendar"])
     }
@@ -66,7 +71,7 @@ final class AssistantBlocksTests: XCTestCase {
         let context = ActionContext(bundle: bundle, now: now, hasLocation: false, hasPlan: true)
         let reminders = AssistantAction.toggle(.reminders, on: true)
         XCTAssertEqual(dispatcher.dispatch(reminders, context: context, source: .rules),
-                       .needsConfirmation(.confirm(action: reminders, prompt: "Turn on reminders before liked and planned items?")))
+                       .needsConfirmation(.confirm(action: reminders, prompt: "Turn on reminders before things in your schedule?")))
         XCTAssertTrue(recorder.ran.isEmpty)
         XCTAssertEqual(dispatcher.dispatch(reminders, context: context, source: .rules, confirmed: true), .executed(.done(), undo: nil))
         XCTAssertEqual(dispatcher.dispatch(reminders, context: context, source: .manual), .executed(.done(), undo: nil))
@@ -151,7 +156,7 @@ final class AssistantBlocksTests: XCTestCase {
         guard case .valid(let turn) = AssistantModel.parse(raw, c) else { return XCTFail("valid reply") }
         XCTAssertEqual(
             BlockJSON.encode(turn).encoded,
-            #"{"blocks":[{"type":"text","text":"The **Prairie Lights** play at 7."},{"type":"item_card","id":"s101","show":["time","place","distance","like","actions"]},{"type":"confirm","action":"reminders","params":{"on":true},"prompt":"Turn on reminders before liked and planned items?"},{"type":"chips","chips":[{"label":"Like","action":"like","params":{"kind":"schedule","id":"s101"}}]}],"actions":[]}"#
+            #"{"blocks":[{"type":"text","text":"The **Prairie Lights** play at 7."},{"type":"item_card","id":"s101","show":["time","place","distance","like","actions"]},{"type":"confirm","action":"reminders","params":{"on":true},"prompt":"Turn on reminders before things in your schedule?"},{"type":"chips","chips":[{"label":"Like","action":"like","params":{"kind":"schedule","id":"s101"}}]}],"actions":[]}"#
         )
         // A read action is rendered with the router's layout; open stays an action.
         guard case .valid(let read) = AssistantModel.parse(#"{"blocks":[{"type":"text","text":"Here"}],"actions":[{"name":"search","params":{"query":"tacos"}},{"name":"open","params":{"screen":"map"}}]}"#, c)

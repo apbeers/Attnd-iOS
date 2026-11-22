@@ -763,6 +763,8 @@ final class LogCore: @unchecked Sendable {
 
 enum AppSignpost {
     static let signposter = OSSignposter(subsystem: AppLog.subsystem, category: "perf")
+    /// The same intervals on Points of Interest, so Instruments' Time Profiler shows them by default.
+    static let pointsOfInterest = OSSignposter(subsystem: AppLog.subsystem, category: .pointsOfInterest)
 
     /// The intervals (Instruments name; `perf.signpost` `name` from LOG_EVENTS.md).
     enum Name: String, Sendable {
@@ -770,9 +772,16 @@ enum AppSignpost {
         case bundleFetch = "bundle_fetch"
         case planner
         case mapFirstRender = "map_first_render"
+        // Main-thread audit (batch 7).
+        case bundleApply = "bundle_apply"
+        case bundleSave = "bundle_save"
+        case searchIndex = "search_index"
 
         var signpostName: StaticString {
             switch self {
+            case .bundleApply:    return "bundle apply"
+            case .bundleSave:     return "bundle save"
+            case .searchIndex:    return "search index"
             case .launch:         return "launch"
             case .bundleFetch:    return "bundle fetch"
             case .planner:        return "planner"
@@ -785,20 +794,28 @@ enum AppSignpost {
     struct Interval: @unchecked Sendable {
         let name: Name
         let state: OSSignpostIntervalState
+        let poiState: OSSignpostIntervalState
         let started: ContinuousClock.Instant
 
         var elapsedMs: Int { (ContinuousClock.now - started).wholeMilliseconds }
     }
 
     static func begin(_ name: Name) -> Interval {
+        MainThreadWatchdog.noteBegin(name.rawValue)
         let id = signposter.makeSignpostID()
-        return Interval(name: name, state: signposter.beginInterval(name.signpostName, id: id), started: .now)
+        let poiID = pointsOfInterest.makeSignpostID()
+        return Interval(name: name,
+                        state: signposter.beginInterval(name.signpostName, id: id),
+                        poiState: pointsOfInterest.beginInterval(name.signpostName, id: poiID),
+                        started: .now)
     }
 
     /// Ends the interval and logs `perf.signpost` (name, ms). Returns the milliseconds.
     @discardableResult
     static func end(_ interval: Interval, _ fields: @autoclosure () -> LogFields = [:]) -> Int {
         signposter.endInterval(interval.name.signpostName, interval.state)
+        pointsOfInterest.endInterval(interval.name.signpostName, interval.poiState)
+        MainThreadWatchdog.noteEnd(interval.name.rawValue)
         let ms = interval.elapsedMs
         AppLog.debug(.perf, "perf.signpost", "\(interval.name.rawValue) in \(ms) ms",
                      fields().merging(["name": .string(interval.name.rawValue), "ms": .int(ms)]) { _, new in new })
@@ -889,5 +906,65 @@ enum LaunchTiming {
         guard sysctl(&mib, UInt32(mib.count), &info, &size, nil, 0) == 0 else { return nil }
         let started = info.kp_proc.p_starttime
         return Date(timeIntervalSince1970: TimeInterval(started.tv_sec) + TimeInterval(started.tv_usec) / 1_000_000)
+    }
+}
+
+// MARK: - Main-thread watchdog (batch 7; Debug and Dev builds only)
+
+/// A background thread asks the main queue for a reply every 50 ms; when the main thread takes
+/// longer than 100 ms to answer, the stall is logged as `perf.hang` with its length and the
+/// signpost interval that was running (`AppSignpost`), so TestFlight logs show where the UI
+/// stuttered. Never in Release builds or screenshot mode.
+enum MainThreadWatchdog {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var running: [String] = []
+    nonisolated(unsafe) private static var started = false
+
+    static func noteBegin(_ name: String) {
+        lock.lock(); running.append(name); lock.unlock()
+    }
+
+    static func noteEnd(_ name: String) {
+        lock.lock()
+        if let i = running.lastIndex(of: name) { running.remove(at: i) }
+        lock.unlock()
+    }
+
+    private static var current: String? {
+        lock.lock(); defer { lock.unlock() }
+        return running.last
+    }
+
+    static func start() {
+        #if DEBUG
+        lock.lock()
+        let first = !started
+        started = true
+        lock.unlock()
+        guard first else { return }
+        let thread = Thread {
+            let threshold: TimeInterval = 0.1
+            while true {
+                let sent = Date()
+                let signpostAtSend = current
+                let answered = DispatchSemaphore(value: 0)
+                DispatchQueue.main.async { answered.signal() }
+                if answered.wait(timeout: .now() + threshold) == .timedOut {
+                    answered.wait()
+                    let ms = Int(Date().timeIntervalSince(sent) * 1000)
+                    let signpost = signpostAtSend ?? current
+                    AppLog.warning(.perf, "perf.hang", "Main thread busy for \(ms) ms", {
+                        var fields: LogFields = ["ms": .int(ms)]
+                        if let signpost { fields["signpost"] = .string(signpost) }
+                        return fields
+                    }())
+                }
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+        }
+        thread.name = "attnd.watchdog"
+        thread.qualityOfService = .utility
+        thread.start()
+        #endif
     }
 }

@@ -17,6 +17,19 @@ final class BusinessLogicTests: XCTestCase {
 
     // MARK: - ISO 8601
 
+    func testServerSwitch_BuildHostUnlessASwitchableInstallChose() {
+        // App Store installs: always the build's server, whatever is stored.
+        XCTAssertEqual(ServerSwitch.host(buildHost: "attnd.app", switchable: false, choice: .dev), "attnd.app")
+        // TestFlight / Xcode without a choice: the build's server (Release → production, Dev → dev).
+        XCTAssertEqual(ServerSwitch.host(buildHost: "attnd.app", switchable: true, choice: nil), "attnd.app")
+        XCTAssertEqual(ServerSwitch.host(buildHost: "dev.attnd.app", switchable: true, choice: nil), "dev.attnd.app")
+        // A choice wins in a switchable install.
+        XCTAssertEqual(ServerSwitch.host(buildHost: "attnd.app", switchable: true, choice: .dev), "dev.attnd.app")
+        XCTAssertEqual(ServerSwitch.host(buildHost: "dev.attnd.app", switchable: true, choice: .production), "attnd.app")
+        XCTAssertEqual(ServerSwitch.current(host: "attnd.app"), .production)
+        XCTAssertEqual(ServerSwitch.current(host: "dev.attnd.app"), .dev)
+    }
+
     func testISODate_Variants() {
         let base = ISODate.parse("2026-07-04T12:00:00Z")
         XCTAssertNotNil(base)
@@ -29,6 +42,27 @@ final class BusinessLogicTests: XCTestCase {
     }
 
     // MARK: - Deep links
+
+    func testDeepLink_AppSchemeBecomesTheHttpsLink() {
+        XCTAssertEqual(DeepLink.httpsURL(fromAppScheme: URL(string: "attnd://join/IFICCK70")!)?.absoluteString,
+                       "https://attnd.app/join/IFICCK70/")
+        XCTAssertEqual(DeepLink.httpsURL(fromAppScheme: URL(string: "attnd://join/IFICCK70/")!)?.absoluteString,
+                       "https://attnd.app/join/IFICCK70/")
+        XCTAssertEqual(DeepLink.httpsURL(fromAppScheme: URL(string: "ATTND://JOIN/abc")!)?.absoluteString,
+                       "https://attnd.app/join/abc/")
+        XCTAssertEqual(DeepLink.httpsURL(fromAppScheme: URL(string: "attnd://p/DEMO/eyJ2IjoxfQ")!)?.absoluteString,
+                       "https://attnd.app/p/DEMO/eyJ2IjoxfQ")
+        XCTAssertEqual(DeepLink.httpsURL(fromAppScheme: URL(string: "attnd://p/DEMO")!)?.absoluteString,
+                       "https://attnd.app/join/DEMO/")
+        // The handler reads the path: the converted link gives the same code as a Universal Link would.
+        let link = DeepLink.httpsURL(fromAppScheme: URL(string: "attnd://join/FWFM2026")!)!
+        XCTAssertEqual(DeepLink.eventCode(from: link), "FWFM2026")
+        XCTAssertNil(DeepLink.httpsURL(fromAppScheme: URL(string: "attnd://join")!))
+        XCTAssertNil(DeepLink.httpsURL(fromAppScheme: URL(string: "attnd://settings/x")!))
+        XCTAssertNil(DeepLink.httpsURL(fromAppScheme: URL(string: "attnd-live://event/1/plan")!))
+        XCTAssertNil(DeepLink.httpsURL(fromAppScheme: URL(string: "https://attnd.app/join/X/")!))
+        XCTAssertNil(DeepLink.httpsURL(fromAppScheme: URL(string: "attnd://join/a%20b")!))
+    }
 
     func testDeepLink_JoinURLs() {
         XCTAssertEqual(DeepLink.eventCode(from: URL(string: "https://attnd.app/join/FWFM2026")!), "FWFM2026")
@@ -179,11 +213,37 @@ final class BusinessLogicTests: XCTestCase {
             "perf_launch_cold", "perf_launch_warm", "perf_bundle_fetch", "perf_bundle_304", "perf_api_error",
             "perf_push_refresh_delay", "perf_live_start_fail", "perf_planner_ms", "perf_map_first_render",
         ])
-        // tab_view details: the event tabs' raw values, and "options" for the Options sheet.
-        XCTAssertEqual(EventTab.allCases.map(\.rawValue), ["map", "locations", "schedule", "flyer", "notifications"])
+        // tab_view details: the event tabs' raw values (API-024 adds "home"), and "options" for the Options sheet.
+        XCTAssertEqual(EventTab.allCases.map(\.rawValue), ["home", "map", "locations", "schedule", "flyer", "notifications"])
         XCTAssertEqual(EventSheet.options.usageDetail, "options")
         // The search sheet has no tab_view detail (the server only accepts the event tabs and options).
         XCTAssertNil(EventSheet.search.usageDetail)
+    }
+
+    // MARK: - Device id (survives reinstalls through the Keychain)
+
+    func testDeviceIdentity_ExistingInstallKeepsItsIdAndFillsTheKeychain() {
+        XCTAssertEqual(DeviceIdentity.resolve(defaults: "A", keychain: nil, make: { "NEW" }),
+                       .init(id: "A", saveDefaults: false, saveKeychain: true))
+        XCTAssertEqual(DeviceIdentity.resolve(defaults: "A", keychain: "A", make: { "NEW" }),
+                       .init(id: "A", saveDefaults: false, saveKeychain: false))
+    }
+
+    func testDeviceIdentity_ReinstallTakesTheKeychainsId() {
+        XCTAssertEqual(DeviceIdentity.resolve(defaults: nil, keychain: "K", make: { "NEW" }),
+                       .init(id: "K", saveDefaults: true, saveKeychain: false))
+        XCTAssertEqual(DeviceIdentity.resolve(defaults: "  ", keychain: "K", make: { "NEW" }).id, "K")
+    }
+
+    func testDeviceIdentity_AppClipHandoverWinsOverAnOldKeychainId() {
+        // The handover put the clip's id in UserDefaults: that is the phone the server knows now.
+        XCTAssertEqual(DeviceIdentity.resolve(defaults: "CLIP", keychain: "OLD", make: { "NEW" }),
+                       .init(id: "CLIP", saveDefaults: false, saveKeychain: true))
+    }
+
+    func testDeviceIdentity_FirstLaunchMakesOneAndStoresItTwice() {
+        XCTAssertEqual(DeviceIdentity.resolve(defaults: nil, keychain: nil, make: { "NEW" }),
+                       .init(id: "NEW", saveDefaults: true, saveKeychain: true))
     }
 
     // MARK: - Support info (API-004)

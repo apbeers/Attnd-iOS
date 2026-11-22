@@ -172,7 +172,7 @@ enum AssistantSearch {
     static let timeTBATitle = "Time TBA"
     static let nowTitle = "Happening now"
     static let nextTitle = "Up next"
-    static let likedTitle = "Liked"
+    static let likedTitle = "My Schedule"
     static let upNextWindow: TimeInterval = 2 * 3600
     static let tonightStartsHour = 17
     static let clockWindow: TimeInterval = 30 * 60

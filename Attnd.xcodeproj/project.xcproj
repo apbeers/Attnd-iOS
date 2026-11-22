@@ -36,6 +36,18 @@
             "AttndAppClip/compile-sources",
           ],
         }, {
+          "path": "ScreenLayout.swift",
+          "target-membership": [
+            "Attnd/compile-sources",
+            "AttndAppClip/compile-sources",
+          ],
+        }, {
+          "path": "ScreenLayoutViews.swift",
+          "target-membership": [
+            "Attnd/compile-sources",
+            "AttndAppClip/compile-sources",
+          ],
+        }, {
           "path": "DisplayLogic.swift",
           "target-membership": [
             "Attnd/compile-sources",
@@ -153,7 +165,6 @@
         { "path": "Planner.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
         { "path": "PlanRequest.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
         { "path": "PlanStore.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
-        { "path": "PlanView.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
         { "path": "AssistantJSON.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
         { "path": "AssistantSearch.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
         { "path": "AssistantActions.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
@@ -172,8 +183,13 @@
         { "path": "DayRouteProvider.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
         { "path": "PlanProposal.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
         { "path": "PlanDock.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
-        { "path": "PlanPage.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
-        { "path": "PlanSummaryStore.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
+        { "path": "MySchedule.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
+        { "path": "AppHandover.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
+        { "path": "Component.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
+        { "path": "ConversationContext.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
+        { "path": "ThemeColors.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
+        { "path": "DuoFeatures.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
+        { "path": "DuoViews.swift", "target-membership": [ "Attnd/compile-sources", "AttndAppClip/compile-sources" ] },
         {
           "path": "ContextViews.swift",
           "target-membership": [
@@ -293,9 +309,17 @@
         { "path": "AssistantFlowTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "PlanProposalTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "PlanDockTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
-        { "path": "PlanPageTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "ContextDecodingTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
         { "path": "TabLayoutTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
+        { "path": "ScreenLayoutTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
+        { "path": "DuoFeaturesTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
+        { "path": "MyScheduleTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
+        { "path": "ConversationContextTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
+        { "path": "ComponentTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
+        { "path": "AssistantEvalData.swift", "target-membership": [ "AttndTests/compile-sources" ] },
+        { "path": "AssistantEval.swift", "target-membership": [ "AttndTests/compile-sources" ] },
+        { "path": "AssistantEvalTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
+        { "path": "AssistantEvalModelTests.swift", "target-membership": [ "AttndTests/compile-sources" ] },
       ],
     }, {
       "kind": "group",

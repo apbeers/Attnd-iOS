@@ -174,7 +174,7 @@ struct EventSearchView: View {
             Section {
                 if appState.hasHearts {
                     NavigationLink(value: HeartedListRoute()) {
-                        Label("Liked", systemImage: "heart.fill")
+                        Label(MyScheduleText.title, systemImage: "calendar")
                     }
                 }
                 ForEach(items) { suggestion in
@@ -313,31 +313,56 @@ struct SearchDestinationView: View {
 }
 
 /// The event's own details (a search result for the event, or a link to the event when
-/// pushed). Options shows the same header.
+/// pushed). Options shows the same header. API-024: the sections of the event's `event_info`
+/// layout (or the built-in default, today's screen), each only when the event has its data.
 struct EventInfoView: View {
     @Environment(AppState.self) private var appState
 
     var body: some View {
         List {
             if let event = appState.currentEvent {
-                Section {
-                    EventHeader(event: event, logoUrl: appState.logoUrl)
-                    if let website = event.websiteUrl {
-                        EventWebsiteLink(url: website)
-                    }
+                let sections = appState.screenSections(.eventInfo, now: .now) { bundle, state in
+                    ScreenFacts.event(bundle, state)
                 }
-                if !event.description.isEmpty {
-                    Section("About") {
-                        Text(event.description)
-                    }
-                }
-                // API-018: FAQ, amenities, getting there, accessibility, policies, weather plan.
-                if let context = event.context {
-                    EventContextSections(context: context)
+                ForEach(sections, id: \.type) { section in
+                    EventInfoSection(section: section, event: event)
                 }
             }
         }
         .navigationTitle(appState.currentEvent?.name ?? "Event")
         .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// One section of the event's info (List sections).
+private struct EventInfoSection: View {
+    let section: LayoutSection
+    let event: Event
+
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        let context = event.context ?? EventContext()
+        switch section.type {
+        case "header":
+            Section {
+                EventHeader(event: event, logoUrl: appState.logoUrl)
+                if section.shows("website"), let website = event.websiteUrl {
+                    EventWebsiteLink(url: website)
+                }
+            }
+        case "about":
+            ContextTextSection(title: section.title ?? "About", text: event.description)
+            // API-018: the organizer's notes for the assistant.
+            ContextTextSection(title: section.title ?? "Details", text: context.about)
+        case "faq": EventFAQSection(faq: context.faq, title: section.title, limit: section.limit)
+        case "amenities": EventAmenitiesSection(amenities: context.amenities, title: section.title)
+        case "getting_there": ContextTextSection(title: section.title ?? "Getting There", text: context.gettingThere)
+        case "accessibility": ContextTextSection(title: section.title ?? "Accessibility", text: context.accessibility)
+        case "policies": ContextTextSection(title: section.title ?? "Policies", text: context.policies)
+        case "weather_plan": ContextTextSection(title: section.title ?? "Weather Plan", text: context.weatherPlan)
+        case "links": ContextLinksSection(links: context.links, title: section.title)
+        default: EmptyView()
+        }
     }
 }

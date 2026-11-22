@@ -8,8 +8,14 @@
 //     so never a More tab. No My plan tab and no Explore tab: the plan is the plan page, a
 //     full-screen cover opened by the floating "My plan" button on every tab (AssistantView.swift).
 //   - The tab selected after joining: `default_tab` when listed, else Map, else the first.
+//   - Home (API-024): always on, first and the default tab (owner, Nov 21, 2026; `withHome`), the
+//     event's `home` layout sections (`HomeTab` in ScreenLayoutViews.swift); never in screenshot mode.
 //   - The Locations tab is titled "Places" (the app's word for locations); screenshot mode keeps
 //     "Locations" so the store screenshots stay exactly as they were.
+//   - Options (the gear) is on one tab's root screen only: Home's header row (so Updates is
+//     optional), else Updates, else the first tab (`optionsTab`), so it is always reachable.
+//   - `MapNavigation`: the Map tab's stack of pushed place details and its pending pin focus
+//     ("Show on Map" pops back to the map and selects the pin).
 
 import Foundation
 
@@ -18,8 +24,42 @@ struct TabLayout: Hashable, Sendable {
     /// The tab selected after joining.
     var defaultTab: EventTab
 
-    static func resolve(_ display: DisplayConfig, hasFlyer: Bool) -> TabLayout {
-        TabLayout(tabs: display.resolvedTabs(hasFlyer: hasFlyer), defaultTab: display.resolvedDefaultTab(hasFlyer: hasFlyer))
+    /// Screenshot mode drops the Home tab (API-024): the store screenshots keep the built-in tabs.
+    static func resolve(_ display: DisplayConfig, hasFlyer: Bool, screenshotMode: Bool = false) -> TabLayout {
+        var display = display
+        if screenshotMode, let tabs = display.tabs {
+            display.tabs = tabs.filter { $0 != .home }
+            if display.defaultTab == .home { display.defaultTab = nil }
+        }
+        let layout = TabLayout(tabs: display.resolvedTabs(hasFlyer: hasFlyer), defaultTab: display.resolvedDefaultTab(hasFlyer: hasFlyer))
+        if screenshotMode { return layout }
+        // Home's rule sees the whole list, so the five-tab cut drops Flyer / Places, never a tab
+        // that happens to be listed sixth (Schedule added back last, batch 7).
+        if let listed = display.tabs, !listed.isEmpty {
+            var seen = Set<EventTab>()
+            return TabLayout(tabs: listed.filter { seen.insert($0).inserted }, defaultTab: layout.defaultTab).withHome()
+        }
+        return layout.withHome()
+    }
+
+    /// Home is always on, first and the default tab (owner, Nov 21, 2026), whatever the bundle
+    /// lists, so a cached or older bundle without it can't make it come and go. Over five tabs
+    /// the server's rule drops Flyer first, then Places when the Map is there, then the last tab
+    /// that isn't Updates.
+    func withHome() -> TabLayout {
+        var tabs = [EventTab.home] + self.tabs.filter { $0 != .home }
+        while tabs.count > DisplayConfig.maxTabs {
+            if let i = tabs.firstIndex(of: .flyer) {
+                tabs.remove(at: i)
+            } else if tabs.contains(.map), let i = tabs.firstIndex(of: .locations) {
+                tabs.remove(at: i)
+            } else if let i = tabs.lastIndex(where: { $0 != .notifications && $0 != .home }) {
+                tabs.remove(at: i)
+            } else {
+                break
+            }
+        }
+        return TabLayout(tabs: tabs, defaultTab: .home)
     }
 
     /// The tab bar's (and the tab's navigation) title.
@@ -29,4 +69,43 @@ struct TabLayout: Hashable, Sendable {
     }
 
     func contains(_ tab: EventTab) -> Bool { tabs.contains(tab) }
+
+    /// The tab whose root screen has the Options button: Home (its header row's gear), else
+    /// Updates, else the first tab.
+    var optionsTab: EventTab? {
+        if tabs.contains(.home) { return .home }
+        return tabs.contains(.notifications) ? .notifications : tabs.first
+    }
+}
+
+/// The Map tab's navigation: place details pushed over the map (by location id) and the pin to
+/// focus next. "Show on Map" (from any detail, including one pushed over the map itself) pops
+/// back to the map and focuses the pin, so the selected-location card and walking route show.
+struct MapNavigation: Hashable, Sendable {
+    /// Location ids of the place details pushed on the Map tab's stack.
+    var path: [Int] = []
+    /// The pin to select and frame once the map is on screen (consumed by the map).
+    var focusLocationId: Int?
+
+    /// A pin's card tapped: its detail over the map.
+    mutating func open(_ locationId: Int) {
+        path.append(locationId)
+    }
+
+    /// Back to the map (every pushed detail pops) with `locationId` focused.
+    mutating func showOnMap(_ locationId: Int) {
+        path = []
+        focusLocationId = locationId
+    }
+
+    /// The pending focus, cleared.
+    mutating func takeFocus() -> Int? {
+        defer { focusLocationId = nil }
+        return focusLocationId
+    }
+
+    mutating func reset() {
+        path = []
+        focusLocationId = nil
+    }
 }

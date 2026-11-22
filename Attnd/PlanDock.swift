@@ -1,17 +1,8 @@
 // PlanDock.swift
 // Attnd (app + App Clip; pure, unit tested in PlanDockTests)
 //
-// The rules of the plan page's dock that outlived the snapping plan panel (retired Nov 19, 2026
-// for the full-page plan, PlanPage.swift; the plan page spec in attnd-web docs/specs/
-// planner_view_spec.md). There is no Search / Ask / Plan toggle: the app picks the path for
-// every turn (`AssistantFlow.path`).
-//   - `PlanDock.pane`: what the small pane above the text box shows. While typing it keeps the
-//     last results until the next ones are ready (never blank between keystrokes); a typed answer
-//     to a proposal ("do it", "the second one", "no") shows nothing; with an empty box the last
-//     answer card.
-//   - `PlanDock.resultAction`: the inline action of a search result — "Add to plan" on a
-//     schedule item that hasn't started and isn't planned ("In your plan" when it is), "Plan
-//     around this" on a place with something still to come; nothing on updates.
+// The plan rules that outlived the plan page and its dock (both retired for the My plan chat, Nov 21,
+// 2026; the pane and the results' inline actions went with them).
 //   - `PlanDock.addToPlan` / `planAround`: those actions as in-place proposals (PlanProposal.swift):
 //     an item that clashes with a planned one → a replace ("instead of X", the clashing row crossed
 //     out), else an add; a place → its next unplanned items (≤ 4) as add options. Without a plan
@@ -20,40 +11,6 @@
 
 import Foundation
 
-/// What the results pane above the input bar shows.
-enum PlanDockPane: Hashable, Sendable {
-    case none
-    /// Search results for the typed text (possibly still the previous text's).
-    case results
-    /// The last turn's answer card.
-    case answer
-}
-
-/// A search result's inline action.
-enum DockResultAction: Hashable, Sendable {
-    case addToPlan(Int)
-    /// A place: a plan (or options) around what's on there.
-    case planAround(Int)
-    /// The item is already planned (a label, not a button).
-    case inPlan
-
-    var label: String {
-        switch self {
-        case .addToPlan: return "Add to plan"
-        case .planAround: return "Plan around this"
-        case .inPlan: return "In your plan"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .addToPlan: return "plus.circle"
-        case .planAround: return "sparkles"
-        case .inPlan: return "checkmark.circle.fill"
-        }
-    }
-}
-
 /// The result of an inline plan action.
 enum DockPlanChange: Hashable, Sendable {
     case proposal(PlanProposal)
@@ -61,34 +18,6 @@ enum DockPlanChange: Hashable, Sendable {
 }
 
 enum PlanDock {
-
-    /// See the file comment. `resultsQuery`: the text the shown results are for (nil: none yet);
-    /// `proposalOptions`: the shown proposal's option count (nil: no proposal).
-    static func pane(draft: String, resultsQuery: String?, hasAnswer: Bool, proposalOptions: Int?) -> PlanDockPane {
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        if text.isEmpty { return hasAnswer ? .answer : PlanDockPane.none }
-        if let options = proposalOptions {
-            switch ProposalReply.parse(text, options: options) {
-            case .apply, .cancel: return PlanDockPane.none
-            case .none: break
-            }
-        }
-        if resultsQuery != nil { return .results }
-        return hasAnswer ? .answer : PlanDockPane.none
-    }
-
-    static func resultAction(_ ref: EntityRef, _ ctx: RouterContext) -> DockResultAction? {
-        guard ctx.canPlan else { return nil }
-        switch ref.kind {
-        case .schedule:
-            guard let item = ctx.bundle.scheduleItem(ref.id), let start = item.startTime, start > ctx.now else { return nil }
-            return ctx.plan?.itemIds.contains(item.id) == true ? .inPlan : .addToPlan(item.id)
-        case .location:
-            return upcoming(at: ref.id, ctx).isEmpty ? nil : .planAround(ref.id)
-        case .update:
-            return nil
-        }
-    }
 
     /// "Add to plan" on a schedule item.
     static func addToPlan(_ itemId: Int, _ ctx: RouterContext) -> DockPlanChange {

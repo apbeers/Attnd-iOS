@@ -21,8 +21,8 @@ import UIKit
 // MARK: - Links
 
 enum SharedPlanLink {
-    /// Universal Links are claimed for this host only (entitlement `applinks:attnd.app`).
-    static let host = "attnd.app"
+    /// attnd.app, or dev.attnd.app on the dev server (both are Universal Link domains).
+    static var host: String { ServerSwitch.linkHost }
     /// The longest payload the server accepts.
     static let maxPayloadLength = 1_500
 

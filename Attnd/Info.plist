@@ -32,6 +32,14 @@
 				<string>attnd-live</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.arcu.Attnd.open</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>attnd</string>
+			</array>
+		</dict>
 	</array>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>

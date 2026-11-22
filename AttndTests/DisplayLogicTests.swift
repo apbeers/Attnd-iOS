@@ -204,6 +204,17 @@ final class DisplayLogicTests: XCTestCase {
         XCTAssertEqual(single.latitudeDelta, MapRegionMath.minimumDelta)
     }
 
+    func testFilterRegionFramesWhatIsLeft() throws {
+        XCTAssertNil(MapRegionMath.filterRegion([]))
+        let one = Coordinate(latitude: 32.75, longitude: -97.33)
+        let single = try XCTUnwrap(MapRegionMath.filterRegion([one]))
+        XCTAssertEqual(single.center, one)
+        XCTAssertEqual(single.latitudeDelta, MapRegionMath.streetLevelDelta)
+        let two = try XCTUnwrap(MapRegionMath.filterRegion([one, Coordinate(latitude: 32.76, longitude: -97.32)]))
+        XCTAssertEqual(two.latitudeDelta, 0.016, accuracy: 0.0001)
+        XCTAssertGreaterThanOrEqual(two.longitudeDelta, MapRegionMath.minimumDelta * 1.5)
+    }
+
     func testInitialRegion_FitAllVersusStreetLevel() throws {
         let event = Coordinate(latitude: 32.75, longitude: -97.33)
         let pins = [Coordinate(latitude: 32.70, longitude: -97.40), Coordinate(latitude: 32.80, longitude: -97.20)]
@@ -307,6 +318,13 @@ final class DisplayLogicTests: XCTestCase {
         XCTAssertEqual(MediaCache.referencedURLs(event: nil, display: .default, locations: []), [])
     }
 
+    func testMediaReferencedURLs_SkipLiveGooglePhotos_API031() {
+        let live = URL(string: "https://attnd.app/img/places/9/")!
+        let own = URL(string: "https://attnd.app/media/b.jpg")!
+        let locations = [Location(id: 9, name: "A", imageUrl: live), Location(id: 10, name: "B", imageUrl: own)]
+        XCTAssertEqual(MediaCache.referencedURLs(event: nil, display: .default, locations: locations), [own])
+    }
+
     func testMediaNeedsDownload_MissingOrStale() {
         let now = date("2026-11-14T12:00:00Z")
         XCTAssertTrue(MediaCache.needsDownload(existing: nil, now: now))
@@ -340,5 +358,109 @@ final class DisplayLogicTests: XCTestCase {
         XCTAssertEqual(MediaCache.sniffMIMEType(Data([0, 0, 0, 0x18] + Array("ftypheic".utf8))), "image/heic")
         XCTAssertNil(MediaCache.sniffMIMEType(Data("<html>".utf8)))
         XCTAssertNil(MediaCache.sniffMIMEType(Data()))
+    }
+
+    // MARK: - A place's events (Places disclosure)
+
+    func testPlaceEvents_UpcomingInStartOrder() {
+        let now = date("2026-11-14T14:00:00-06:00")
+        let schedule = [
+            item(1, "2026-11-14T19:00:00-06:00", location: 5),
+            item(2, "2026-11-14T10:00:00-06:00", end: "2026-11-14T11:00:00-06:00", location: 5), // ended
+            item(3, "2026-11-14T13:30:00-06:00", end: "2026-11-14T15:00:00-06:00", location: 5), // now
+            item(4, nil, location: 5),                                                            // no time
+            item(5, "2026-11-14T15:00:00-06:00", location: 6),                                    // elsewhere
+        ]
+        let events = PlaceEvents.make(locationId: 5, schedule: schedule, now: now)
+        XCTAssertEqual(events?.items.map(\.id), [3, 1, 4])
+        XCTAssertEqual(events?.allEnded, false)
+        XCTAssertEqual(events?.toggleTitle, "3 events")
+        XCTAssertEqual(PlaceEvents.make(locationId: 6, schedule: schedule, now: now)?.toggleTitle, "1 event")
+    }
+
+    func testPlaceEvents_EndedOnlyWhenNothingIsAhead() {
+        let now = date("2026-11-15T23:00:00-06:00")
+        let schedule = [
+            item(2, "2026-11-14T12:00:00-06:00", location: 5),
+            item(1, "2026-11-14T10:00:00-06:00", location: 5),
+        ]
+        let events = PlaceEvents.make(locationId: 5, schedule: schedule, now: now)
+        XCTAssertEqual(events?.items.map(\.id), [1, 2])
+        XCTAssertEqual(events?.allEnded, true)
+        XCTAssertEqual(events?.toggleTitle, "2 ended")
+        XCTAssertNil(PlaceEvents.make(locationId: 9, schedule: schedule, now: now), "no items → no disclosure")
+    }
+
+    // MARK: - Walking map (place detail)
+
+    func testPlaceWalkMap_OnlyWithinWalkingRange() {
+        XCTAssertTrue(PlaceWalkMap.shows(distanceMeters: 600, screenshotMode: false))
+        XCTAssertTrue(PlaceWalkMap.shows(distanceMeters: 8_000, screenshotMode: false))
+        XCTAssertFalse(PlaceWalkMap.shows(distanceMeters: 8_001, screenshotMode: false), "farther: the button")
+        XCTAssertFalse(PlaceWalkMap.shows(distanceMeters: 10, screenshotMode: false), "here: no walk")
+        XCTAssertFalse(PlaceWalkMap.shows(distanceMeters: nil, screenshotMode: false), "no permission or fix")
+        XCTAssertFalse(PlaceWalkMap.shows(distanceMeters: 600, screenshotMode: true))
+    }
+
+    func testPlaceWalkMap_FramesUserPlaceAndLine() {
+        let user = Coordinate(latitude: 41.0, longitude: -87.0)
+        let place = Coordinate(latitude: 41.01, longitude: -87.0)
+        let bend = Coordinate(latitude: 41.005, longitude: -87.02)
+        let region = PlaceWalkMap.region(user: user, destination: place, line: [user, bend, place])
+        XCTAssertEqual(region?.center.latitude ?? 0, 41.005, accuracy: 1e-9)
+        XCTAssertEqual(region?.center.longitude ?? 0, -87.01, accuracy: 1e-9)
+        XCTAssertEqual(region?.latitudeDelta ?? 0, 0.016, accuracy: 1e-9)
+        XCTAssertEqual(region?.longitudeDelta ?? 0, 0.032, accuracy: 1e-9)
+    }
+
+    // MARK: - Fold posture (iPhone Duo)
+
+    func testFoldPosture() {
+        let size = CGSize(width: 951, height: 669)
+        XCTAssertEqual(FoldPosture.of(container: size, folds: []), .flat)
+        // A horizontal fold across the middle: tabletop.
+        XCTAssertEqual(FoldPosture.of(container: size, folds: [CGRect(x: 0, y: 320, width: 951, height: 24)]),
+                       .tabletop(foldMinY: 320, foldMaxY: 344))
+        // A vertical fold: book.
+        let tall = CGSize(width: 669, height: 951)
+        XCTAssertEqual(FoldPosture.of(container: tall, folds: [CGRect(x: 322, y: 0, width: 24, height: 951)]),
+                       .book(foldMinX: 322, foldMaxX: 346))
+        // A small strip at the edge (not a fold across the screen): flat.
+        XCTAssertEqual(FoldPosture.of(container: size, folds: [CGRect(x: 0, y: 0, width: 951, height: 30)]), .flat)
+    }
+
+    func testOverlappingClusters_OnlyPinsThatTouch() {
+        let near = [
+            Location(id: 1, name: "A", latitude: 41.8800, longitude: -87.6300),
+            Location(id: 2, name: "B", latitude: 41.8801, longitude: -87.6301),
+            Location(id: 3, name: "C", latitude: 41.8850, longitude: -87.6300),
+            Location(id: 4, name: "No pin"),
+        ]
+        // 0.02° tall over 700 pt: 24 pt ≈ 0.0007°, so A and B overlap, C doesn't.
+        let clusters = MapClustering.overlapping(for: near, latitudeDelta: 0.02, longitudeDelta: 0.02)
+        XCTAssertEqual(clusters.map { $0.locations.map(\.id) }, [[1, 2], [3]])
+        // Zoomed in, nothing merges.
+        XCTAssertEqual(MapClustering.overlapping(for: near, latitudeDelta: 0.001, longitudeDelta: 0.001).count, 3)
+    }
+
+    func testRoutePulse() {
+        let line = [Coordinate(latitude: 0, longitude: 0), Coordinate(latitude: 0, longitude: 1), Coordinate(latitude: 1, longitude: 1)]
+        XCTAssertEqual(RoutePulse.point(along: line, fraction: 0), line[0])
+        XCTAssertEqual(RoutePulse.point(along: line, fraction: 0.5)?.longitude ?? 0, 1, accuracy: 0.01)
+        XCTAssertEqual(RoutePulse.point(along: line, fraction: 1), line[2])
+        XCTAssertNil(RoutePulse.point(along: [], fraction: 0.5))
+        XCTAssertEqual(RoutePulse.fraction(elapsed: 3), 0.5, accuracy: 0.0001)
+        XCTAssertEqual(RoutePulse.opacity(0), 0)
+        XCTAssertEqual(RoutePulse.opacity(0.5), 1)
+    }
+
+    func testSwipeDismissRule() {
+        XCTAssertEqual(SwipeDismissRule.offset(for: -30), -30)
+        XCTAssertEqual(SwipeDismissRule.offset(for: 50), 10)
+        XCTAssertEqual(SwipeDismissRule.offset(for: 500), 24)
+        XCTAssertTrue(SwipeDismissRule.dismisses(translation: -20, predicted: -20, height: 60))
+        XCTAssertFalse(SwipeDismissRule.dismisses(translation: -10, predicted: -20, height: 60))
+        XCTAssertTrue(SwipeDismissRule.dismisses(translation: -5, predicted: -90, height: 60), "a fast flick")
+        XCTAssertFalse(SwipeDismissRule.dismisses(translation: 20, predicted: 40, height: 60))
     }
 }

@@ -1,9 +1,9 @@
 // LiveActivityIntents.swift
 // Attnd, AttndAppClip + AttndWidgets, AttndClipWidgets (widget extensions)
 //
-// The Live Activity's buttons (Lock Screen and the expanded Dynamic Island): Heart the
-// current item, Skip the next one, Dismiss an urgent announcement. "Show on map" is a `Link`
-// (it opens the app), not an intent.
+// The Live Activity's buttons (Lock Screen and the expanded Dynamic Island): Skip the next
+// item, Dismiss an urgent announcement. "Map" is a `Link` (it opens the app), not an intent.
+// No Heart / Add button (owner, Nov 21, 2026: the space goes to Next's details).
 //
 // These are `LiveActivityIntent`s compiled into both targets: the widget extension needs
 // the types for `Button(intent:)`, and the system runs `perform()` in the APP's process
@@ -16,7 +16,6 @@ import Foundation
 
 /// What a Live Activity button asks the app to do.
 enum LiveActivityAction: Hashable, Sendable {
-    case heart(eventId: Int, itemId: Int)
     case skip(eventId: Int, itemId: Int)
     case dismissUrgent(eventId: Int, notificationId: Int)
 }
@@ -28,32 +27,6 @@ enum LiveActivityActionRelay {
 
     static func perform(_ action: LiveActivityAction) async {
         await handler?(action)
-    }
-}
-
-/// "Like" (heart) on the item in progress (or the next one before anything has started).
-struct HeartActivityItemIntent: LiveActivityIntent {
-    static let title: LocalizedStringResource = "Like Item"
-    static let description = IntentDescription("Likes the schedule item shown in your Live Activity.")
-    static let isDiscoverable = false
-
-    @Parameter(title: "Event")
-    var eventId: Int
-
-    @Parameter(title: "Item")
-    var itemId: Int
-
-    init() {}
-
-    init(eventId: Int, itemId: Int) {
-        self.eventId = eventId
-        self.itemId = itemId
-    }
-
-    @MainActor
-    func perform() async throws -> some IntentResult {
-        await LiveActivityActionRelay.perform(.heart(eventId: eventId, itemId: itemId))
-        return .result()
     }
 }
 

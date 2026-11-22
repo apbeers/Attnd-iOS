@@ -18,7 +18,9 @@
 // prefetched into `ImageStore`. Only a 404 for the event, leaving or switching
 // events deletes the saved copy; network and server errors never do.
 
+import CoreLocation
 import Foundation
+import MapKit
 import Observation
 import SwiftUI
 import UIKit
@@ -81,6 +83,11 @@ final class AppState {
             // Logs carry the joined event's id; perf counts go with its usage batch.
             AppLog.setEventId(currentEvent?.id)
             usage.eventId = currentEvent?.id
+            // Another event (or none) ends being a preview phone (API-026).
+            if let preview = previewEventId, preview != currentEvent?.id {
+                previewEventId = nil
+            }
+            updatePreviewPolling()
         }
     }
     private(set) var display: DisplayConfig = .default
@@ -88,13 +95,71 @@ final class AppState {
     private(set) var locations: [Location] = []
     private(set) var schedule: [ScheduleItem] = []
     private(set) var notifications: [AppNotification] = []
+    /// API-024: the bundle's screen layouts (nil: none sent, or screenshot mode → the built-in ones).
+    private(set) var screenLayouts: ScreenLayouts?
+    /// API-027 `bundle.live_activity` (part of `currentBundle`; it was missing there before batch 7).
+    @ObservationIgnored private var liveActivitySettings: LiveActivitySettings?
 
     // MARK: - Loading
 
     private(set) var isLoading = false
     private(set) var loadError: String?
     /// Why the last refresh failed (nil after a success); drives the floating offline badge.
-    private(set) var refreshProblem: RefreshProblem?
+    private(set) var refreshProblem: RefreshProblem? {
+        didSet {
+            // A new problem (or the end of one) shows its pill again after a swipe away.
+            if refreshProblem != oldValue { dismissedStatusBadges.remove("refresh") }
+        }
+    }
+    /// An organizer update that arrived while the app was open (top banner, ~6 s).
+    private(set) var inAppBanner: InAppBanner?
+    @ObservationIgnored private var inAppBannerTask: Task<Void, Never>?
+
+    func showInAppBanner(_ banner: InAppBanner) {
+        guard !ScreenshotMode.isActive else { return }
+        inAppBanner = banner
+        inAppBannerTask?.cancel()
+        inAppBannerTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(banner.urgent ? 10 : 6))
+            guard !Task.isCancelled else { return }
+            self?.dismissInAppBanner()
+        }
+    }
+
+    func dismissInAppBanner() {
+        inAppBannerTask?.cancel()
+        inAppBanner = nil
+    }
+
+    /// The region the Map tab last showed (kept across fold / unfold, when the full-screen map and
+    /// the split one swap, batch 7).
+    @ObservationIgnored var lastMapRegion: MKCoordinateRegion?
+
+    /// Where the last tap landed (window coordinates, x): the Undo toast stays in that pane of an
+    /// unfolded iPhone Duo (batch 7 fix round). Not observed: read when a toast appears.
+    @ObservationIgnored var lastTouchX: CGFloat?
+    /// Network tidy-ups (owner's trace, Nov 22, 2026): when app-status was last asked, the last
+    /// device registration the server accepted, and the last successful bundle fetch.
+    @ObservationIgnored private var lastAppStatusCheck: Date?
+    @ObservationIgnored private var lastDeviceSyncBody: String?
+    @ObservationIgnored private var lastFetchAt: (eventId: Int, at: Date)?
+    /// A personal-state write waiting for its debounce (`savePersonalState`).
+    @ObservationIgnored private var pendingPersonal: (eventId: Int, state: EventPersonalState)?
+    @ObservationIgnored private var personalSaveTask: Task<Void, Never>?
+
+    /// Tabletop "at the event" mode (iPhone Duo half-folded): the top half a big Now / Next with
+    /// the countdown, the bottom half controls. Offered once during a live event.
+    var tabletopAtEventMode: Bool = UserDefaults.standard.bool(forKey: "pref.tabletopAtEvent") {
+        didSet { UserDefaults.standard.set(tabletopAtEventMode, forKey: "pref.tabletopAtEvent") }
+    }
+    var tabletopModeOffered: Bool = UserDefaults.standard.bool(forKey: "pref.tabletopOffered") {
+        didSet { UserDefaults.standard.set(tabletopModeOffered, forKey: "pref.tabletopOffered") }
+    }
+
+    /// Status pills swiped away this session ("ended", "refresh", "instant"); Options keeps the info.
+    var dismissedStatusBadges: Set<String> = []
+    /// API-026: this phone is the event's preview phone and the long-poll runs ("Instant updates on").
+    private(set) var instantUpdates = false
     /// The last successful refresh (restored from disk at launch).
     private(set) var lastRefreshed: Date?
 
@@ -129,8 +194,15 @@ final class AppState {
     /// Incremented when the Map tab is re-tapped; MapView re-centres on change.
     var mapCenterToken = 0
 
-    /// Set by the map's secondary pane to focus a pin; MapView consumes it.
-    var mapFocusLocationId: Int?
+    /// The Map tab's stack (place details pushed over the map) and the pin to focus next
+    /// (`MapNavigation`, TabLayout.swift). MapView consumes the focus.
+    var mapNavigation = MapNavigation()
+
+    /// Set by the map's secondary pane and "Show on Map" to focus a pin; MapView consumes it.
+    var mapFocusLocationId: Int? {
+        get { mapNavigation.focusLocationId }
+        set { mapNavigation.focusLocationId = newValue }
+    }
 
     // MARK: - Search and jumps
 
@@ -154,6 +226,8 @@ final class AppState {
 
     /// The user's position and heading while a screen showing distances is visible.
     let userLocation = UserLocationTracker()
+    /// The Undo toast over the tabs (a swiped-away urgent card, a heart tapped).
+    var undoToast: UndoToast?
     /// Walking routes for the map card.
     let walkingRoutes = WalkingRouteProvider()
     /// Hearts and the Updates "seen" mark for the current event (UserDefaults, per event).
@@ -163,6 +237,8 @@ final class AppState {
     /// A shared plan link (`/p/<code>/<payload>`, API-015) opened for the joined event, waiting
     /// for the assistant to show it read-only ("Use this plan" / "Merge with mine"). Cleared
     /// when the event is left or switched; the assistant clears it once shown.
+    /// The last Universal Link handled and when (`handleDeepLink` drops a repeat within 5 s).
+    @ObservationIgnored private var lastDeepLink: (url: URL, at: Date)?
     var pendingSharedPlan: PendingSharedPlan?
 
     /// "My plan" (spec §6): the current event's plan and the planner's progress (PlanStore.swift;
@@ -173,9 +249,6 @@ final class AppState {
     /// and live hints. The floating My plan button opens its plan page (only with the on-device
     /// model; otherwise, like screenshot mode, the search button and sheet).
     let assistant = AssistantController()
-
-    /// The plan page's day summaries (on-device model, cached on disk per event).
-    let daySummaries = PlanSummaryStore()
 
     /// Apple Intelligence's on-device model can be used, never in screenshot mode
     /// (planner_view_spec §1: the My plan button, plan page, planner and assistant exist only
@@ -269,6 +342,17 @@ final class AppState {
     @ObservationIgnored private var etag: String?
     /// `content_version` of the applied bundle; compared with `content_updated` pushes.
     @ObservationIgnored private var contentVersion: Int?
+    /// API-026: a preview token from a "Preview on my phone" link, sent once with the next join.
+    @ObservationIgnored private var pendingPreviewToken: String?
+    /// API-026: this device is the organizer's preview phone for this event (kept across launches;
+    /// `changes/` answering `preview: false`, leaving or switching ends it).
+    private var previewEventId: Int? {
+        get { UserDefaults.standard.object(forKey: Self.previewKey) as? Int }
+        set { UserDefaults.standard.set(newValue, forKey: Self.previewKey) }
+    }
+    private static let previewKey = "pref.previewEventId"
+    @ObservationIgnored private var previewTask: Task<Void, Never>?
+    @ObservationIgnored private var inForeground = true
     /// The raw JSON of the applied bundle, re-saved with a new `lastRefreshed` after a 304.
     @ObservationIgnored private var bundleData: Data?
     /// `lastRefreshed` as last written to disk (304s re-save at most every few minutes).
@@ -310,15 +394,21 @@ final class AppState {
     // MARK: - Init
 
     init() {
+        // App Clip → full app: the clip's event, My schedule, chat and settings, once (AppHandover.swift).
+        let handedOver = AppHandover.importAtLaunch()
         usage = UsageReporter()
         usage.attachPerfMetrics()
         let defaults = UserDefaults.standard
-        if let stored = defaults.string(forKey: Keys.deviceId) {
-            deviceId = stored
-        } else {
-            let newId = UUID().uuidString
-            defaults.set(newId, forKey: Keys.deviceId)
-            deviceId = newId
+        // The device id survives a reinstall through the Keychain (this phone only; DeviceIdentity).
+        // Screenshot mode leaves the Keychain alone.
+        let identity = DeviceIdentity.resolve(
+            defaults: defaults.string(forKey: Keys.deviceId),
+            keychain: ScreenshotMode.isActive ? nil : KeychainHelper.read(key: DeviceIdentity.keychainKey),
+            make: { UUID().uuidString })
+        deviceId = identity.id
+        if identity.saveDefaults { defaults.set(identity.id, forKey: Keys.deviceId) }
+        if identity.saveKeychain && !ScreenshotMode.isActive {
+            KeychainHelper.save(key: DeviceIdentity.keychainKey, value: identity.id)
         }
         // Screenshot mode: no blue dot and no push (property observers don't run in init,
         // so the stored preferences are left untouched).
@@ -333,6 +423,9 @@ final class AppState {
         }
         assistant.appState = self
         refreshOnDeviceModel()
+        if handedOver {
+            AppLog.notice(.lifecycle, "lifecycle.event.joined", "Opened the App Clip's event", ["via": "app_clip"])
+        }
     }
 
     /// Re-checks the on-device model (launch, scene activation). When it goes away the plan page
@@ -354,6 +447,9 @@ final class AppState {
     func checkForUpdate() async {
         // Screenshot mode never shows the update banner.
         guard !ScreenshotMode.isActive else { return }
+        // Once at launch, then at most hourly on foreground (network trace, Nov 22, 2026: 3× in 73 s).
+        if let last = lastAppStatusCheck, Date.now.timeIntervalSince(last) < 3600 { return }
+        lastAppStatusCheck = .now
         do {
             let status = try await APIClient.shared.appStatus()
             appStatus = status
@@ -383,10 +479,13 @@ final class AppState {
 
     /// The tab bar (TabLayout.swift): the event's own tabs (`display.tabs`, ≤ 5).
     var tabLayout: TabLayout {
-        TabLayout.resolve(display, hasFlyer: currentEvent?.flyerUrl != nil)
+        TabLayout.resolve(display, hasFlyer: currentEvent?.flyerUrl != nil, screenshotMode: ScreenshotMode.isActive)
     }
 
     var tabs: [EventTab] { tabLayout.tabs }
+
+    /// The tab whose root screen has the Options button: Updates, else the first tab.
+    var optionsTab: EventTab? { tabLayout.optionsTab }
 
     /// The tab's title ("Places" for Locations; "Locations" in screenshot mode).
     func title(of tab: EventTab) -> String { TabLayout.title(tab, screenshotMode: ScreenshotMode.isActive) }
@@ -433,6 +532,12 @@ final class AppState {
             await launchForScreenshots(screenshot)
             return
         }
+        #if DEBUG
+        if let audit = LayoutAudit.screen {
+            await launchForAudit(audit)
+            return
+        }
+        #endif
         Task { await syncDevice() }
         Task { await checkForUpdate() }
         Task { await sendPendingLeaves() }
@@ -497,7 +602,7 @@ final class AppState {
         }
         // A deep link may have joined another event while we read the file.
         guard currentEvent == nil else { return }
-        etag = saved.etag
+        etag = saved.usableETag
         lastRefreshed = saved.lastRefreshed
         lastSavedRefresh = saved.lastRefreshed
         bundleData = saved.bundleJSON
@@ -512,11 +617,17 @@ final class AppState {
             eventCode: event.eventCode,
             etag: etag,
             lastRefreshed: lastRefreshed,
-            bundleJSON: data
+            bundleJSON: data,
+            sections: SectionCatalogue.version
         )
         lastSavedRefresh = lastRefreshed
         let version = contentVersion ?? event.contentVersion
-        enqueueDisk { await EventStore.shared.save(saved, contentVersion: version) }
+        enqueueDisk {
+            await EventStore.shared.save(saved, contentVersion: version)
+            // The App Clip keeps its handover for the full app current (AppHandover.swift).
+            await MainActor.run { self.flushPersonalState() }
+            AppHandover.exportFromClip()
+        }
     }
 
     /// Deletes the saved event and its cached images (leave, switch, 404).
@@ -592,6 +703,48 @@ final class AppState {
         }
     }
 
+    #if DEBUG
+    /// The iPhone Duo layout audit (Debug / Dev builds; scripts/ci/screenshots.sh with
+    /// SCREENSHOT_MODE=duo-audit): NOT screenshot mode, so Home, My schedule and the chat are the
+    /// real ones. Joins `-AttndEventCode` (default DEMO) through the normal path, opens the screen
+    /// and writes the same ready marker.
+    private func launchForAudit(_ screen: String) async {
+        ScreenshotMode.clearMarker()
+        let code = UserDefaults.standard.string(forKey: "AttndEventCode") ?? "DEMO"
+        for attempt in 1...8 {
+            if currentEvent == nil { _ = await join(code: code) } else { await refreshBundle(source: .join) }
+            if hasAppliedDefaultTab { break }
+            if attempt < 8 { try? await Task.sleep(for: .seconds(5)) }
+        }
+        guard hasAppliedDefaultTab, let bundle = currentBundle else {
+            ScreenshotMode.writeMarker("failed bundle not loaded")
+            return
+        }
+        pendingTour = false
+        switch screen {
+        case "home": _ = select(.home)
+        case "schedule": _ = select(.schedule)
+        case "map": _ = select(.map)
+        case "locations": _ = select(.locations)
+        case "place":
+            if let first = bundle.locations.first { navigate(to: .location(first.id)) }
+        case "chat":
+            guard hasAssistant else {
+                ScreenshotMode.writeMarker("failed no on-device model in this simulator")
+                return
+            }
+            openPlanPage()
+        default:
+            ScreenshotMode.writeMarker("failed unknown audit screen \(screen)")
+            return
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(4))
+            ScreenshotMode.writeMarker("ready \(screen) \(Self.keyWindowSize)")
+        }
+    }
+    #endif
+
     /// The key window's size in points ("669x951") for the screenshot ready marker, so the
     /// capture script can check which iPhone Duo display hosts the app. Diagnostics only.
     private static var keyWindowSize: String {
@@ -607,6 +760,10 @@ final class AppState {
 
     /// `via` says how (`lifecycle.event.joined`): "qr", "link", "search", "nearby", "rejoin".
     func joinEvent(_ event: Event, via: String = "search") async {
+        // A new join (not the relaunch's rejoin): what iOS already allows is on (batch 7).
+        if via != "rejoin" {
+            Task { await self.applySystemPermissionsOnJoin() }
+        }
         if currentEvent?.id != event.id {
             if let old = currentEvent {
                 AppLog.notice(.lifecycle, "lifecycle.event.left", "Switching events", ["event_id": .int(old.id), "reason": "switch"])
@@ -631,9 +788,18 @@ final class AppState {
         guard let event = currentEvent, joinedEventId != event.id, joiningEventId != event.id else { return }
         joiningEventId = event.id
         defer { if joiningEventId == event.id { joiningEventId = nil } }
+        let token = pendingPreviewToken
         do {
-            _ = try await APIClient.shared.joinEvent(eventId: event.id, deviceId: deviceId, pushToken: pushToken)
+            let answer = try await APIClient.shared.joinEvent(eventId: event.id, deviceId: deviceId, pushToken: pushToken,
+                                                               previewToken: token)
             if currentEvent?.id == event.id { joinedEventId = event.id }
+            if token != nil { pendingPreviewToken = nil }
+            if answer.preview == true, currentEvent?.id == event.id {
+                AppLog.notice(.lifecycle, "lifecycle.event.joined", "Joined as the organizer's preview phone",
+                              ["event_id": .int(event.id), "via": "preview"])
+                previewEventId = event.id
+                updatePreviewPolling()
+            }
         } catch {
             // Retried later; the bundle works without it.
             AppLog.caught(error, .net, "join")
@@ -641,6 +807,8 @@ final class AppState {
     }
 
     func leaveEvent() async {
+        previewEventId = nil
+        updatePreviewPolling()
         AppLog.notice(.lifecycle, "lifecycle.event.left", "Left the event", ["event_id": .int(currentEvent?.id ?? 0), "reason": "user"])
         usage.flush()
         savedEventCode = nil
@@ -653,6 +821,19 @@ final class AppState {
         currentEvent = nil
         resetContent()
         deleteSavedEvent()
+    }
+
+    /// Options → Server (test installs only, `ServerSwitch`): leaves the current event on this server,
+    /// drops this server's token and stores the choice; the next launch talks to the other server
+    /// (`APIClient.serverHost` is fixed per process).
+    func switchServer(to choice: ServerSwitch.Choice) async {
+        guard ServerSwitch.isSwitchable else { return }
+        AppLog.notice(.lifecycle, "lifecycle.server_switch", "Server switch for the next launch", ["to": .string(choice.rawValue)])
+        if currentEvent != nil { await leaveEvent() }
+        await sendPendingLeaves()
+        pendingLeaveEventIds = []
+        await AttestationManager.shared.clearToken()
+        UserDefaults.standard.set(choice.rawValue, forKey: ServerSwitch.choiceKey)
     }
 
     /// Sends the queued `POST leave/`s; each one the server accepted (or answered 404) is dropped.
@@ -713,15 +894,19 @@ final class AppState {
         locations = []
         schedule = []
         notifications = []
+        screenLayouts = nil
+        lastMapRegion = nil
+        liveActivitySettings = nil
         loadError = nil
         refreshProblem = nil
         lastRefreshed = nil
         hasAppliedDefaultTab = false
-        mapFocusLocationId = nil
+        mapNavigation.reset()
         searchText = ""
         searchPath = NavigationPath()
         focusRequest = nil
         presentedSheet = nil
+        searchIndexTask?.cancel()
         searchIndex = nil
         pendingTour = false
         pendingSharedPlan = nil
@@ -738,6 +923,12 @@ final class AppState {
     /// flash; errors are recorded the same way as any refresh.
     func refreshBundle(silent: Bool = false, source: RefreshSource = .foreground) async {
         guard let eventId = currentEvent?.id else { return }
+        // Right after a fetch (a join's, say) a foreground or poll refresh adds nothing; pushes and
+        // pull to refresh always go (network trace: 3 bundle requests within a minute).
+        if source == .foreground || source == .poll, let last = lastFetchAt, last.eventId == eventId,
+           Date.now.timeIntervalSince(last.at) < 15 {
+            return
+        }
         if let inflight = inflightRefresh, inflight.eventId == eventId {
             await inflight.task.value
             return
@@ -766,6 +957,7 @@ final class AppState {
             guard currentEvent?.id == eventId, !Task.isCancelled else { return }
             let now = Date.now
             lastRefreshed = now
+            lastFetchAt = (eventId, now)
             // Avoid needless observation churn from the polls.
             if loadError != nil { loadError = nil }
             if refreshProblem != nil { refreshProblem = nil }
@@ -808,7 +1000,10 @@ final class AppState {
     }
 
     private func apply(_ bundle: EventBundle) {
+        let signpost = AppSignpost.begin(.bundleApply)
+        defer { AppSignpost.end(signpost, ["items": .int(bundle.schedule.count)]) }
         let isFirstApply = !hasAppliedDefaultTab
+        liveActivitySettings = bundle.liveActivity
         currentEvent = bundle.event
         loadPersonalState(for: bundle.event.id)
         contentVersion = bundle.contentVersion
@@ -817,6 +1012,12 @@ final class AppState {
         locations = bundle.locations
         schedule = bundle.schedule
         notifications = bundle.notifications
+        // Migrated entries start from the content as it is now (organizer changes count from here).
+        if !ScreenshotMode.isActive, personal.mySchedule != nil, personal.updateSchedule({ $0.fillFingerprints(bundle) }) {
+            savePersonalState()
+        }
+        // Screenshot mode always draws the built-in layouts, so the store screenshots never change.
+        screenLayouts = ScreenshotMode.isActive ? nil : bundle.layout
 
         let layout = tabLayout
         if pendingNotificationsEventId == bundle.event.id, layout.contains(.notifications) {
@@ -836,13 +1037,37 @@ final class AppState {
         }
         // New images download first; files the new content no longer uses are deleted after.
         scheduleImageSync()
-        searchIndex = EventSearchIndex(bundle)
+        rebuildSearchIndex(bundle)
         // The onboarding cards after the first join on this device (never in screenshot mode).
         if isFirstApply, !ScreenshotMode.isActive, !UserDefaults.standard.bool(forKey: Keys.onboardingSeen) {
             pendingTour = true
         }
+        refreshDerivedPlan()
         assistant.refreshLive()
         liveFollowNeedsUpdate()
+    }
+
+    /// The search index is built off the main actor (main-thread audit, batch 7: thousands of
+    /// tokens for a big event) and assigned in one go when it still matches the content shown.
+    @ObservationIgnored private var searchIndexTask: Task<Void, Never>?
+
+    private func rebuildSearchIndex(_ bundle: EventBundle) {
+        searchIndexTask?.cancel()
+        let version = bundle.contentVersion
+        let eventId = bundle.event.id
+        searchIndexTask = Task { [weak self] in
+            let index = await Self.buildSearchIndex(bundle)
+            guard !Task.isCancelled, let self, self.currentEvent?.id == eventId,
+                  (self.contentVersion ?? version) == version else { return }
+            self.searchIndex = index
+        }
+    }
+
+    @concurrent
+    nonisolated private static func buildSearchIndex(_ bundle: EventBundle) async -> EventSearchIndex {
+        let signpost = AppSignpost.begin(.searchIndex)
+        defer { AppSignpost.end(signpost, ["items": .int(bundle.schedule.count + bundle.locations.count)]) }
+        return EventSearchIndex(bundle)
     }
 
     /// The content shown, as one bundle (nil outside an event). For search and the assistant.
@@ -855,7 +1080,9 @@ final class AppState {
             categories: categories,
             locations: locations,
             schedule: schedule,
-            notifications: notifications
+            notifications: notifications,
+            layout: screenLayouts,
+            liveActivity: liveActivitySettings
         )
     }
 
@@ -908,35 +1135,6 @@ final class AppState {
         navigate(to: target)
     }
 
-    /// "Ask About This" on a location, schedule item or update detail (assistant spec §8): the
-    /// plan page's assistant with the item as context ("Tell me about X"). Only with the
-    /// on-device model (the button is hidden without it).
-    func askAbout(_ target: SearchTarget) {
-        guard currentEvent != nil, Self.modelReady else { return }
-        let name: String?
-        switch target {
-        case .location(let id):     name = location(id: id)?.name
-        case .scheduleItem(let id): name = schedule.first { $0.id == id }?.name
-        case .notification(let id): name = notifications.first { $0.id == id }?.title
-        case .event:                name = currentEvent?.name
-        }
-        guard let name, !name.isEmpty else { return }
-        AppLog.debug(.ui, "ui.action", "Ask about this", ["name": "ask_about", "id": .string(target.reference)])
-        let ref: EntityRef?
-        switch target {
-        case .location(let id):     ref = EntityRef(kind: .location, id: id)
-        case .scheduleItem(let id): ref = EntityRef(kind: .schedule, id: id)
-        case .notification(let id): ref = EntityRef(kind: .update, id: id)
-        case .event:                ref = nil
-        }
-        openPlanPage()
-        if let ref {
-            assistant.askAbout(ref)
-        } else {
-            assistant.submit("Tell me about \(name)")
-        }
-    }
-
     /// The floating search button (no on-device model, screenshot mode): opens the search sheet on
     /// its results (the last query stays, like the old search tab), with the field focused. With
     /// the model the floating button is "My plan" and opens the plan page instead.
@@ -966,9 +1164,10 @@ final class AppState {
     }
 
     /// "Show on Map" in a location's detail: the Map tab, focused on that pin (any sheet closes).
+    /// A detail pushed over the map itself pops, so the map shows the pin's card and route.
     func showOnMap(locationId: Int) {
         guard shows(.map) else { return }
-        mapFocusLocationId = locationId
+        mapNavigation.showOnMap(locationId)
         presentedSheet = nil
         assistant.closePage()
         select(.map)
@@ -988,6 +1187,10 @@ final class AppState {
     /// keeps the plan in `pendingSharedPlan` for the assistant. On failure the user stays where
     /// they are.
     func handleDeepLink(_ url: URL) async {
+        // The same link can arrive twice (onOpenURL and onContinueUserActivity): handle it once.
+        let now = Date()
+        if let last = lastDeepLink, last.url == url, now.timeIntervalSince(last.at) < 5 { return }
+        lastDeepLink = (url, now)
         // A link that launched the app: the saved event first, so a link to the event already
         // joined works offline (`join(code:)` needs no lookup then).
         await restoreSavedEventIfNeeded()
@@ -1003,14 +1206,20 @@ final class AppState {
         }
         guard let code = DeepLink.eventCode(from: url) else { return }
         AppLog.info(.lifecycle, "lifecycle.deep_link", "Opened by a join link", ["kind": "join", "target": "/join/{id}/"])
-        await join(code: code, via: "link")
+        await join(code: code, via: "link", previewToken: DeepLink.previewToken(from: url))
     }
 
     /// Looks up an event by code (QR codes, deep links) and joins it, leaving any
     /// current event first. Returns false if no live event matches.
     @discardableResult
-    func join(code: String, via: String = "search") async -> Bool {
+    func join(code: String, via: String = "search", previewToken: String? = nil) async -> Bool {
+        if let previewToken { pendingPreviewToken = previewToken }
         if let current = currentEvent, current.eventCode.caseInsensitiveCompare(code) == .orderedSame {
+            // Already in it: a preview link still joins again once, with its token.
+            if pendingPreviewToken != nil {
+                joinedEventId = nil
+                await ensureJoined()
+            }
             return true
         }
         let event: Event
@@ -1025,6 +1234,20 @@ final class AppState {
         }
         await joinEvent(event, via: via)
         return true
+    }
+
+    /// Batch 7 (owner): when iOS already allows them, notifications (subscribed) and the location
+    /// dot are on for every event joined; never a prompt here.
+    func applySystemPermissionsOnJoin() async {
+        guard !ScreenshotMode.isActive else { return }
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        if [.authorized, .provisional, .ephemeral].contains(settings.authorizationStatus), !notificationsEnabled {
+            notificationsEnabled = true
+            liveFollowNeedsUpdate()
+            await syncDevice()
+        }
+        let location = CLLocationManager().authorizationStatus
+        if location == .authorizedWhenInUse || location == .authorizedAlways { showUserLocation = true }
     }
 
     // MARK: - Push notifications
@@ -1085,6 +1308,10 @@ final class AppState {
         guard !ScreenshotMode.isActive else { return }
         let token = liveActivityToken
         let change: LiveActivityTokenChange = liveActivityTokenSynced ? .unchanged : (token.map { LiveActivityTokenChange.set($0) } ?? .clear)
+        // Only when something changed since the last registration the server accepted (network
+        // trace: 5 identical POSTs in 73 s).
+        let body = "\(pushToken ?? "-")|\(notificationsEnabled)|\(currentEvent?.id ?? 0)"
+        if change == .unchanged, !deviceSyncPending, body == lastDeviceSyncBody { return }
         do {
             _ = try await APIClient.shared.registerDevice(
                 deviceId: deviceId,
@@ -1092,6 +1319,7 @@ final class AppState {
                 subscribed: notificationsEnabled,
                 liveActivityToken: change
             )
+            lastDeviceSyncBody = body
             if change != .unchanged, liveActivityToken == token { liveActivityTokenSynced = true }
             deviceSyncPending = false
             AppLog.info(.net, "net.device.registered", "Device registered", [
@@ -1168,7 +1396,7 @@ final class AppState {
                 ])
                 return false
             }
-            let delay = ContentUpdatePolicy.jitter()
+            let delay = ContentUpdatePolicy.jitter(maxMilliseconds: payload.jitterMilliseconds)
             try? await Task.sleep(for: delay)
             guard currentEvent?.id == eventId else { return false }
             await refreshBundle(silent: true, source: .push)
@@ -1195,6 +1423,7 @@ final class AppState {
     /// Loads the event's hearts and Updates mark when the event changes (nil clears them).
     private func loadPersonalState(for eventId: Int?) {
         guard personalEventId != eventId else { return }
+        flushPersonalState()
         personalEventId = eventId
         walkingRoutes.clear()
         // Screenshot mode starts clean and never writes.
@@ -1203,45 +1432,229 @@ final class AppState {
               let saved = try? JSONDecoder().decode(EventPersonalState.self, from: data) else {
             personal = EventPersonalState()
             loadPlan(for: eventId)
+            migrateScheduleIfNeeded()
             return
         }
         personal = saved
         loadPlan(for: eventId)
+        migrateScheduleIfNeeded()
+    }
+
+    /// My schedule replaces likes (iOS, Nov 21, 2026) and the stored plan (one list, Nov 22,
+    /// 2026): once per event the hearted items and places become entries, and an older build's
+    /// plan is absorbed (`source: planner`, its meal places, preferences and check-offs), saved,
+    /// then its keys deleted. Re-running finds nothing. No metrics.
+    private func migrateScheduleIfNeeded() {
+        guard let eventId = personalEventId, !ScreenshotMode.isActive else { return }
+        var changed = personal.migrateSchedule(plan: nil)
+        let legacy = planner.takeLegacyPlan()
+        if let legacy { changed = personal.absorbLegacy(plan: legacy) || changed }
+        if changed {
+            if let bundle = currentBundle { _ = personal.updateSchedule { $0.fillFingerprints(bundle) } }
+            savePersonalState()
+            flushPersonalState()
+            AppLog.debug(.ui, "ui.action", "My schedule migrated", ["name": "schedule_migrate", "count": .int(personal.schedule.entries.count)])
+        }
+        if legacy != nil { planner.deleteLegacy(eventId) }
+        refreshDerivedPlan()
     }
 
     private func loadPlan(for eventId: Int?) {
         planner.load(eventId: eventId)
         assistant.load(eventId: eventId)
-        daySummaries.load(eventId: eventId)
     }
 
-    private func savePersonalState() {
-        guard let eventId = personalEventId, !ScreenshotMode.isActive,
-              let data = try? JSONEncoder().encode(personal) else { return }
-        UserDefaults.standard.set(data, forKey: Keys.personal(eventId))
+    /// Coalesced (perf, batch 7: every heart, "Updates seen" and dismissal encoded the whole
+    /// per-event JSON into UserDefaults at once): the in-memory `personal` is the source of truth,
+    /// written ~0.6 s after the last change, and at once before it is read back (another event
+    /// loads), on background and before the App Clip's handover export.
+    func savePersonalState() {
+        guard let eventId = personalEventId, !ScreenshotMode.isActive else { return }
+        pendingPersonal = (eventId, personal)
+        personalSaveTask?.cancel()
+        personalSaveTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled else { return }
+            self?.flushPersonalState()
+        }
+    }
+
+    /// Writes a pending personal-state change now (no-op without one).
+    func flushPersonalState() {
+        personalSaveTask?.cancel()
+        personalSaveTask = nil
+        guard let pending = pendingPersonal else { return }
+        pendingPersonal = nil
+        guard let data = try? JSONEncoder().encode(pending.state) else { return }
+        UserDefaults.standard.set(data, forKey: Keys.personal(pending.eventId))
     }
 
     func isHearted(_ target: SearchTarget) -> Bool {
         personal.isHearted(target)
     }
 
+    /// Places shown by the My Schedule chip (Map, Places): saved / timed places and the places of
+    /// the schedule's items.
+    var myScheduleLocationIds: Set<Int> {
+        MySchedule.placeIds(heartedLocations: personal.heartedLocations,
+                            heartedItems: personal.heartedScheduleItems, schedule: schedule)
+    }
+
     /// Hearts or unhearts a location or schedule item of the current event, counted as
     /// `location_heart` / `schedule_item_unheart` … with the item's id (API-009).
     func setHeart(_ hearted: Bool, for target: SearchTarget) {
-        guard currentEvent != nil, let metric = personal.setHeart(hearted, for: target) else { return }
-        savePersonalState()
-        // The Live Activity follows hearts; reminders are for hearted items.
-        liveFollowNeedsUpdate()
-        switch target {
-        case .location(let id), .scheduleItem(let id):
-            track(metric, id: id)
-        case .notification, .event:
-            break
-        }
+        hearted ? addToSchedule(target) : removeFromSchedule(target)
     }
 
     func toggleHeart(_ target: SearchTarget) {
         setHeart(!isHearted(target), for: target)
+    }
+
+    // MARK: - My schedule (iOS, replaces likes and the stored plan)
+
+    /// The current event's My schedule (empty outside an event and in screenshot mode).
+    var mySchedule: MySchedule { personal.schedule }
+
+    func isInSchedule(_ target: SearchTarget) -> Bool { personal.schedule.contains(target) }
+
+    /// Adds an item, or a place at a time (nil: saved without one). A place already there gets
+    /// the new time. Counted (API-009) only when it wasn't in My schedule.
+    func addToSchedule(_ target: SearchTarget, at: Date? = nil, minutes: Int? = nil,
+                       source: ScheduleEntrySource = .you, reason: String? = nil) {
+        guard currentEvent != nil else { return }
+        let bundle = currentBundle
+        let before = personal.schedule
+        let change: MyScheduleChange? = personal.updateSchedule { (schedule: inout MySchedule) -> MyScheduleChange? in
+            let change = schedule.add(target, at: at, minutes: minutes)
+            if change?.metric != nil, let (kind, id) = MySchedule.key(target),
+               let index = schedule.entries.firstIndex(where: { $0.kind == kind && $0.id == id }) {
+                schedule.entries[index].source = source
+                schedule.entries[index].reason = ScheduleEntry.cleanReason(reason)
+            }
+            if let bundle { _ = schedule.fillFingerprints(bundle) }
+            return change
+        }
+        // One Undo history (one list §3): adds and time changes are undoable.
+        if change != nil { planner.push(before) }
+        scheduleDidChange(change.map { [$0] } ?? [])
+    }
+
+    /// The heart: adds at once (a place as a saved place, no time), with an Undo toast.
+    func addToScheduleWithUndo(_ target: SearchTarget) {
+        guard currentEvent != nil, !isInSchedule(target) else { return }
+        addToSchedule(target)
+        guard isInSchedule(target) else { return }
+        let name: String
+        switch target {
+        case .scheduleItem(let id): name = schedule.first { $0.id == id }?.name ?? "It"
+        case .location(let id): name = location(id: id)?.name ?? "It"
+        default: name = "It"
+        }
+        showUndo("\(name) added to My Schedule") { [weak self] in _ = self?.undoScheduleChange() }
+    }
+
+    /// Items in My schedule the organizer moved, changed or cancelled (Schedule tab hints).
+    var scheduleOrganizerChanges: [MySchedule.OrganizerChange] {
+        guard let bundle = currentBundle, !ScreenshotMode.isActive else { return [] }
+        return mySchedule.organizerChanges(bundle)
+    }
+
+    /// "Keep" on an organizer change: the item as it is now.
+    func keepOrganizerChange(_ itemId: Int) {
+        guard let bundle = currentBundle else { return }
+        personal.updateSchedule { $0.keepChange(itemId, bundle) }
+        savePersonalState()
+        refreshDerivedPlan()
+        liveFollowNeedsUpdate()
+    }
+
+    func removeFromSchedule(_ target: SearchTarget) {
+        guard currentEvent != nil else { return }
+        let before = personal.schedule
+        let change = personal.updateSchedule { $0.remove(target) }
+        if change != nil { planner.push(before) }
+        scheduleDidChange(change.map { [$0] } ?? [])
+    }
+
+    /// A place entry's time (nil: keep it saved without a time).
+    func moveEntry(_ target: SearchTarget, to at: Date?) {
+        guard currentEvent != nil else { return }
+        let before = personal.schedule
+        let change = personal.updateSchedule { $0.move(target, to: at) }
+        if change != nil { planner.push(before) }
+        scheduleDidChange(change.map { [$0] } ?? [])
+    }
+
+    /// The entry's reminder (minutes before; 0 = off; nil = the default 15 min).
+    func setReminder(_ target: SearchTarget, minutes: Int?) {
+        guard currentEvent != nil else { return }
+        scheduleDidChange(personal.updateSchedule { $0.setReminder(target, minutes: minutes) }.map { [$0] } ?? [])
+    }
+
+    /// Check-offs (tap or auto): a per-event set, outside the Undo history.
+    func setCheckedOff(_ itemId: Int, _ done: Bool) {
+        guard currentEvent != nil else { return }
+        let before = personal.checkedOff
+        if done { personal.checkedOff.insert(itemId) } else { personal.checkedOff.remove(itemId) }
+        guard personal.checkedOff != before else { return }
+        savePersonalState()
+        refreshDerivedPlan()
+    }
+
+    /// What the planner was told (one list §1), kept with the personal state.
+    func setPlannerPreferences(_ preferences: SchedulePreferences) {
+        guard currentEvent != nil, preferences != personal.plannerPreferences else { return }
+        personal.plannerPreferences = preferences
+        savePersonalState()
+    }
+
+    /// Applies a proposal to My schedule (one list §3) as one entry on the Undo history.
+    func applyScheduleProposal(_ proposal: ScheduleProposal, source: ScheduleEntrySource = .planner) {
+        guard currentEvent != nil, !ScreenshotMode.isActive, !proposal.isEmpty else { return }
+        let bundle = currentBundle
+        let before = personal.schedule
+        let changes = personal.updateSchedule { (schedule: inout MySchedule) -> [MyScheduleChange] in
+            let changes = schedule.apply(proposal, source: source)
+            if let bundle { _ = schedule.fillFingerprints(bundle) }
+            return changes
+        }
+        if personal.schedule != before { planner.push(before) }
+        scheduleDidChange(changes)
+    }
+
+    /// "undo", the Undo card and the toast: My schedule as it was before the last change. Adds and
+    /// removes it reverses are counted (API-009) like any other. False with nothing to undo.
+    @discardableResult
+    func undoScheduleChange() -> Bool {
+        guard currentEvent != nil, let restored = planner.pop() else { return false }
+        let before = personal.schedule
+        personal.updateSchedule { $0 = restored }
+        var changes: [MyScheduleChange] = []
+        for id in restored.itemIds.subtracting(before.itemIds).sorted() { changes.append(MyScheduleChange(metric: .scheduleItemHeart, target: .scheduleItem(id))) }
+        for id in before.itemIds.subtracting(restored.itemIds).sorted() { changes.append(MyScheduleChange(metric: .scheduleItemUnheart, target: .scheduleItem(id))) }
+        for id in restored.placeIds.subtracting(before.placeIds).sorted() { changes.append(MyScheduleChange(metric: .locationHeart, target: .location(id))) }
+        for id in before.placeIds.subtracting(restored.placeIds).sorted() { changes.append(MyScheduleChange(metric: .locationUnheart, target: .location(id))) }
+        if changes.isEmpty, let first = restored.entries.first ?? before.entries.first {
+            changes.append(MyScheduleChange(metric: nil, target: first.target))
+        }
+        scheduleDidChange(changes)
+        return true
+    }
+
+    /// Saves, counts real adds / removes (API-009), recomputes the day view and updates the Live
+    /// Activity, reminders and widgets that follow My schedule.
+    private func scheduleDidChange(_ changes: [MyScheduleChange]) {
+        guard !changes.isEmpty else { return }
+        savePersonalState()
+        for change in changes {
+            guard let metric = change.metric else { continue }
+            switch change.target {
+            case .location(let id), .scheduleItem(let id): track(metric, id: id)
+            case .notification, .event: break
+            }
+        }
+        refreshDerivedPlan()
+        liveFollowNeedsUpdate()
     }
 
     var hasHearts: Bool { personal.hasHearts }
@@ -1295,11 +1708,36 @@ final class AppState {
         liveFollowNeedsUpdate()
     }
 
+    /// Home's urgent card swiped away: dismissed like the banner, with an Undo toast (~6 s).
+    func dismissUrgentWithUndo(_ notificationId: Int) {
+        dismissUrgent(notificationId)
+        showUndo("Urgent update dismissed") { [weak self] in self?.restoreUrgent(notificationId) }
+    }
+
+    /// Shows the Undo toast for ~6 s (a newer one replaces it).
+    func showUndo(_ message: String, undo: @escaping @MainActor () -> Void) {
+        let token = UUID()
+        undoToast = UndoToast(id: token, message: message, undo: undo, touchX: lastTouchX)
+        lastTouchX = nil
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(6))
+            if self?.undoToast?.id == token { self?.undoToast = nil }
+        }
+    }
+
+    /// Undo of a dismissed urgent announcement.
+    func restoreUrgent(_ notificationId: Int) {
+        guard currentEvent != nil, personal.dismissedUrgentIds.remove(notificationId) != nil else { return }
+        if personal.dismissedUpdateBannerId == notificationId { personal.dismissedUpdateBannerId = nil }
+        savePersonalState()
+        liveFollowNeedsUpdate()
+    }
+
     // MARK: - Follow on Lock Screen (Live Activity), reminders, onboarding
 
-    /// "Follow on Lock Screen" for this event (default: on once something is hearted or planned).
+    /// "Follow on Lock Screen" for this event (default on: batch 7 starts the activity on join).
     var followsOnLockScreen: Bool {
-        return personal.followOnLockScreen ?? (personal.hasHearts || planner.hasPlan)
+        return personal.followOnLockScreen ?? true
     }
 
     func setFollowOnLockScreen(_ on: Bool) {
@@ -1317,11 +1755,80 @@ final class AppState {
         liveFollowNeedsUpdate()
     }
 
+    /// My schedule's places with a time, for the Live Activity.
+    func followPlaces(_ bundle: EventBundle) -> [FollowPlace] {
+        mySchedule.entries.compactMap { entry -> FollowPlace? in
+            guard entry.kind == .place, let start = entry.at, let location = bundle.location(entry.id) else { return nil }
+            let end = start.addingTimeInterval(TimeInterval((entry.minutes ?? MySchedule.defaultMinutes) * 60))
+            return FollowPlace(locationId: location.id, name: location.name, start: start, end: end)
+        }
+    }
+
     /// The user's position changed (walk minutes in the Live Activity).
     func userLocationDidChange() {
         // Position samples for auto check-off and running late (only while already tracked).
         assistant.onLocation(userLocation.isAuthorized ? userLocation.location : nil)
         liveFollowNeedsUpdate()
+    }
+
+    // MARK: - Preview phone (API-026)
+
+    /// The scene came to the foreground or left it: the preview long-poll runs only in the foreground.
+    func setForeground(_ active: Bool) {
+        inForeground = active
+        updatePreviewPolling()
+    }
+
+    /// Holds `changes/` while this is the event's preview phone and the app is on screen.
+    private func updatePreviewPolling() {
+        let wanted = inForeground && previewEventId != nil && previewEventId == currentEvent?.id && !ScreenshotMode.isActive
+        let preview = previewEventId != nil && previewEventId == currentEvent?.id && !ScreenshotMode.isActive
+        if instantUpdates != preview { instantUpdates = preview }
+        if !wanted {
+            previewTask?.cancel()
+            previewTask = nil
+            return
+        }
+        guard previewTask == nil else { return }
+        let task = Task<Void, Never> { [weak self] in
+            guard let self else { return }
+            await self.previewLoop()
+        }
+        previewTask = task
+        Task { [weak self] in
+            await task.value
+            if self?.previewTask == task { self?.previewTask = nil }
+        }
+    }
+
+    private func previewLoop() async {
+        while !Task.isCancelled {
+            guard let event = currentEvent, previewEventId == event.id, inForeground else { return }
+            do {
+                let since = contentVersion
+                let answer = try await APIClient.shared.changes(eventId: event.id, since: since, deviceId: deviceId)
+                guard !Task.isCancelled, currentEvent?.id == event.id else { return }
+                switch PreviewPoll.next(answer, since: since) {
+                case .refresh:
+                    // At once, no random wait (a preview phone). A refresh that didn't move the
+                    // version (offline, an error) waits before asking again.
+                    await refreshBundle(silent: true, source: .push)
+                    if contentVersion == since { try await Task.sleep(for: .seconds(15)) }
+                case .wait(let seconds):
+                    if seconds > 0 { try await Task.sleep(for: .seconds(seconds)) }
+                case .stop:
+                    AppLog.notice(.lifecycle, "lifecycle.event.joined", "No longer the preview phone",
+                                  ["event_id": .int(event.id), "via": "preview_ended"])
+                    previewEventId = nil
+                    return
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                AppLog.caught(error, .net, "preview_changes")
+                try? await Task.sleep(for: .seconds(15))
+            }
+        }
     }
 
     /// The scene became active: the Live Activity can start now (foreground only).
@@ -1370,6 +1877,8 @@ final class AppState {
             LiveFollowController.shared.followNow()
         case .plan:
             showMyPlan()
+        case .place(let id):
+            navigate(to: .location(id))
         }
     }
 
@@ -1567,6 +2076,8 @@ actor EventStore {
     func save(_ saved: SavedEvent, contentVersion: Int? = nil) {
         guard let fileURL else { return }
         let started = ContinuousClock.now
+        let signpost = AppSignpost.begin(.bundleSave)
+        defer { AppSignpost.end(signpost) }
         do {
             let data = try SavedEvent.encode(saved)
             let directory = fileURL.deletingLastPathComponent()
@@ -1651,6 +2162,10 @@ actor ImageStore {
     /// Disk first; otherwise downloads (and keeps) the file. nil when neither works or the
     /// file is too large to cache.
     func data(for url: URL) async -> Data? {
+        // API-031: live Google photos only through the HTTP cache (their `max-age`), no file.
+        if MediaCache.isLivePlacePhoto(url) {
+            return await Self.httpCached(url)
+        }
         if let data = cachedData(for: url) { return data }
         _ = await fetch(url)
         return cachedData(for: url)
@@ -1715,6 +2230,22 @@ actor ImageStore {
         tooLarge = []
         guard let directory else { return }
         try? FileManager.default.removeItem(at: directory)
+    }
+
+    /// A session that honours HTTP caching (memory + a small disk URLCache, as the system keeps
+    /// it), for content that may only be cached as the server's headers allow.
+    private static let httpCachingSession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 30
+        config.requestCachePolicy = .useProtocolCachePolicy
+        config.urlCache = URLCache(memoryCapacity: 8 * 1024 * 1024, diskCapacity: 40 * 1024 * 1024)
+        return URLSession(configuration: config)
+    }()
+
+    static func httpCached(_ url: URL) async -> Data? {
+        guard let (data, response) = try? await httpCachingSession.data(from: url),
+              let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return nil }
+        return data
     }
 
     // MARK: Downloads
@@ -1807,4 +2338,79 @@ final class ImageMemoryCache: @unchecked Sendable {
     func removeAll() {
         cache.removeAllObjects()
     }
+}
+
+/// The Undo toast over the tabs.
+struct UndoToast: Identifiable {
+    var id: UUID
+    var message: String
+    var undo: @MainActor () -> Void
+    /// Where the action was tapped (window x), so the toast stays in that pane; nil = the primary pane.
+    var touchX: CGFloat? = nil
+}
+
+#if DEBUG
+/// `-AttndAudit <home|schedule|map|locations|place|chat>`: the iPhone Duo layout audit (Debug / Dev
+/// builds only; see `AppState.launchForAudit`).
+enum LayoutAudit {
+    static var screen: String? {
+        UserDefaults.standard.string(forKey: "AttndAudit")?.trimmingCharacters(in: .whitespaces).lowercased().nilIfEmptyAudit
+    }
+}
+
+private extension String {
+    var nilIfEmptyAudit: String? { isEmpty ? nil : self }
+}
+
+extension AppState {
+    /// Previews only (DuoViews.swift `PreviewFixture`): shows a bundle as if it had just arrived.
+    func applyForPreview(_ bundle: EventBundle) {
+        apply(bundle)
+    }
+}
+#endif
+
+// MARK: - App Clip → full app (AppHandover.swift holds the pure part)
+
+extension AppHandover {
+    static var sharedDefaults: UserDefaults? { UserDefaults(suiteName: groupId) }
+
+    static var sharedDirectory: URL? {
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupId)
+    }
+
+    /// `Application Support/attnd-event/event.json` (EventStore's file).
+    static var eventFile: URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("attnd-event", isDirectory: true)
+            .appendingPathComponent("event.json")
+    }
+
+    static var isAppClip: Bool { Bundle.main.bundleIdentifier?.hasSuffix(".clip") ?? false }
+
+    /// The app at launch (before AppState reads its preferences).
+    static func importAtLaunch() -> Bool {
+        guard !isAppClip, let shared = sharedDefaults else { return false }
+        return importIfNeeded(into: .standard, from: shared, eventFile: eventFile, sharedDirectory: sharedDirectory)
+    }
+
+    /// The clip, after saving and when it goes to the background.
+    static func exportFromClip() {
+        guard isAppClip, let shared = sharedDefaults else { return }
+        // The transcript, plan history and conversation are already files in the group
+        // container (AssistantFiles); make sure the queued writes have landed.
+        AssistantFiles.shared.flush()
+        export(from: .standard, to: shared, eventFile: eventFile, sharedDirectory: sharedDirectory)
+    }
+
+    /// The clip, before running its Live Activity and reminders.
+    static var clipSuperseded: Bool { isAppClip && appTookOver(sharedDefaults) }
+}
+
+/// An organizer update shown inside the app while it was open.
+struct InAppBanner: Equatable, Sendable {
+    var notificationId: Int
+    var title: String
+    var body: String
+    var urgent = false
 }

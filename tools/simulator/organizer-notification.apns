@@ -1,0 +1,10 @@
+{
+  "Simulator Target Bundle": "com.arcu.Attnd",
+  "aps": {
+    "alert": { "title": "Welcome to the DEMO festival", "body": "Water stations are by every stage. Have fun!" },
+    "sound": "default"
+  },
+  "type": "notification",
+  "event_id": 1,
+  "notification_id": 1
+}

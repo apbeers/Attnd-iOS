@@ -14,3 +14,6 @@ __pycache__/
 
 # CI / script output (screenshots, derived data)
 build/
+
+# Xcode Cloud is not used (CLAUDE.md); Xcode may create this on a Mac.
+Attnd.xcodeproj/xcshareddata/xcodecloud/

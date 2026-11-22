@@ -127,11 +127,18 @@ enum ActionName: String, CaseIterable, Hashable, Sendable {
     // Read
     case search, getItem = "get_item", getLocation = "get_location", getUpdate = "get_update", eventInfo = "event_info"
     case nowNext = "now_next", whatsOn = "whats_on", liked, plan, nearMe = "near_me", whyNot = "why_not", route
-    case dayRoute = "day_route"
+    case dayRoute = "day_route", mySchedule = "my_schedule"
     // Write
     case like, unlike, planMake = "plan_make", planEdit = "plan_edit", planUndo = "plan_undo", planVersion = "plan_version"
     case checkoff, followLockScreen = "follow_lock_screen", reminders, notifications
     case sharePlan = "share_plan", shareItem = "share_item", open, directions
+    // My schedule (iOS, Nov 21, 2026): `target` = "s12" / "l3"; times "HH:MM" in the event's zone.
+    case scheduleAdd = "schedule_add", scheduleRemove = "schedule_remove", scheduleMove = "schedule_move"
+    case scheduleReminder = "schedule_reminder"
+    // App settings from the chat (batch 7, iOS): the location dot, leaving the event (always
+    // confirmed; `leave`, not Android's never-available `leave_event`), the test server switch
+    // (TestFlight / Xcode installs only). Router only: the model's tools don't offer them.
+    case location, leave, switchServer = "switch_server"
 
     var key: String { rawValue }
 
@@ -158,17 +165,25 @@ enum ActionName: String, CaseIterable, Hashable, Sendable {
         case .planEdit: return [p("ops", .ops, true)]
         case .planVersion: return [p("kind", .enumeration, true, "chill", "everything")]
         case .checkoff: return [p("item", .scheduleId, true), p("done", .bool, true)]
-        case .followLockScreen, .reminders, .notifications: return [p("on", .bool, true)]
+        case .followLockScreen, .reminders, .notifications, .location: return [p("on", .bool, true)]
+        case .leave: return []
+        case .switchServer: return [p("server", .enumeration, true, "production", "dev")]
         case .shareItem: return [p("id", .scheduleId, true)]
         case .open: return [ActionParam(name: "screen", type: .enumeration, required: true, values: assistantOpenScreens), p("id", .entity, false)]
         case .directions: return [p("location", .locationId, true)]
+        case .mySchedule: return [p("day", .day, false)]
+        case .scheduleAdd: return [p("target", .entity, true), p("time", .time, false), p("minutes", .int, false), p("replace", .entity, false)]
+        case .scheduleRemove: return [p("target", .entity, true)]
+        case .scheduleMove: return [p("target", .entity, true), p("time", .time, true)]
+        case .scheduleReminder: return [p("target", .entity, true), p("minutes", .int, true)]
         }
     }
 
     var mutates: Bool {
         switch self {
         case .like, .unlike, .planMake, .planEdit, .planUndo, .planVersion, .checkoff, .followLockScreen, .reminders,
-             .notifications, .sharePlan, .shareItem:
+             .notifications, .sharePlan, .shareItem, .scheduleAdd, .scheduleRemove, .scheduleMove, .scheduleReminder,
+             .location, .leave, .switchServer:
             return true
         default:
             return false
@@ -177,7 +192,7 @@ enum ActionName: String, CaseIterable, Hashable, Sendable {
 
     var confirm: ConfirmKind {
         switch self {
-        case .followLockScreen, .reminders, .notifications: return .chip
+        case .followLockScreen, .reminders, .notifications, .location, .leave, .switchServer: return .chip
         case .sharePlan, .shareItem: return .sheet
         default: return .none
         }
@@ -186,7 +201,8 @@ enum ActionName: String, CaseIterable, Hashable, Sendable {
     var result: ActionResultType {
         switch self {
         case .search, .nearMe: return .results
-        case .getItem, .like, .unlike: return .item
+        case .getItem, .like, .unlike, .scheduleAdd, .scheduleRemove, .scheduleMove, .scheduleReminder: return .item
+        case .mySchedule: return .liked
         case .getLocation: return .location
         case .getUpdate: return .update
         case .eventInfo: return .event
@@ -198,7 +214,7 @@ enum ActionName: String, CaseIterable, Hashable, Sendable {
         case .route: return .route
         case .dayRoute: return .dayRoute
         case .planEdit, .planVersion: return .planDiff
-        case .followLockScreen, .reminders, .notifications: return .setting
+        case .followLockScreen, .reminders, .notifications, .location, .leave, .switchServer: return .setting
         case .sharePlan, .shareItem: return .sheet
         case .open, .directions: return .navigation
         }
@@ -207,7 +223,7 @@ enum ActionName: String, CaseIterable, Hashable, Sendable {
     /// Applies with an Undo (like ↔ unlike, checkoff ↔ un-checkoff, plan changes → `plan_undo`).
     var undoable: Bool {
         switch self {
-        case .like, .unlike, .planMake, .planEdit, .planVersion, .checkoff: return true
+        case .like, .unlike, .planMake, .planEdit, .planVersion, .checkoff, .scheduleAdd, .scheduleRemove: return true
         default: return false
         }
     }
@@ -291,6 +307,32 @@ struct AssistantAction: Hashable, Sendable {
     static func planMake(_ request: String) -> AssistantAction { AssistantAction(name: .planMake, params: ["request": .string(request)]) }
     static func planVersion(_ kind: PlanVersionKind) -> AssistantAction { AssistantAction(name: .planVersion, params: ["kind": .string(kind.key)]) }
     static func directions(_ locationId: Int) -> AssistantAction { AssistantAction(name: .directions, params: ["location": .string("l\(locationId)")]) }
+
+    /// My schedule: add (a place at "HH:MM" or saved), optionally replacing a clashing entry.
+    static func scheduleAdd(_ ref: EntityRef, time: String? = nil, replace: EntityRef? = nil) -> AssistantAction {
+        var params: JSONObject = ["target": .string(ref.code)]
+        if let time { params["time"] = .string(time) }
+        if let replace { params["replace"] = .string(replace.code) }
+        return AssistantAction(name: .scheduleAdd, params: params)
+    }
+
+    static func scheduleRemove(_ ref: EntityRef) -> AssistantAction {
+        AssistantAction(name: .scheduleRemove, params: ["target": .string(ref.code)])
+    }
+
+    static func scheduleMove(_ ref: EntityRef, time: String) -> AssistantAction {
+        AssistantAction(name: .scheduleMove, params: ["target": .string(ref.code), "time": .string(time)])
+    }
+
+    static func scheduleReminder(_ ref: EntityRef, minutes: Int) -> AssistantAction {
+        AssistantAction(name: .scheduleReminder, params: ["target": .string(ref.code), "minutes": .int(minutes)])
+    }
+
+    /// The schedule target ("s12" / "l3"); never an update.
+    func scheduleTarget(_ key: String = "target") -> EntityRef? {
+        guard let ref = EntityRef.of(params[key]), ref.kind != .update else { return nil }
+        return ref
+    }
 }
 
 /// Where an action came from: the model and the rule-based router are the assistant; buttons are manual.
@@ -379,6 +421,10 @@ enum ActionRegistry {
         switch action.name {
         case .like: return AssistantAction(name: .unlike, params: action.params)
         case .unlike: return AssistantAction(name: .like, params: action.params)
+        case .scheduleAdd:
+            return action.params["target"].map { AssistantAction(name: .scheduleRemove, params: ["target": $0]) }
+        case .scheduleRemove:
+            return AssistantAction(name: .scheduleAdd, params: action.params)
         case .checkoff:
             guard let done = action.bool("done") else { return nil }
             var params = action.params
@@ -396,8 +442,12 @@ enum ActionRegistry {
         let on = action.bool("on") != false
         switch action.name {
         case .followLockScreen: return on ? "Follow your day on the Lock Screen?" : "Stop following on the Lock Screen?"
-        case .reminders: return on ? "Turn on reminders before liked and planned items?" : "Turn off reminders?"
+        case .reminders: return on ? "Turn on reminders before things in your schedule?" : "Turn off reminders?"
         case .notifications: return on ? "Turn on notifications from the organizer?" : "Turn off notifications from the organizer?"
+        case .location: return on ? "Show your location on the map?" : "Stop showing your location on the map?"
+        case .leave: return "Leave this event? Your schedule is kept if you join again."
+        case .switchServer:
+            return action.string("server") == "dev" ? "Switch to the dev server? You'll leave this event." : "Switch to the production server? You'll leave this event."
         default: return "Are you sure?"
         }
     }

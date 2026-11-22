@@ -13,11 +13,29 @@
 
 import SwiftUI
 
-/// One block of a turn. `turn` carries the per-turn state (Undo, answered confirmations).
+/// One block of a turn (the chat): drawn by `ComponentView`, like every screen component.
 struct AssistantBlockView: View {
     let block: AssistantBlock
     let turn: AssistantController.Turn
     let index: Int
+
+    var body: some View {
+        ComponentView(component: ComponentCatalogue.component(block), turn: turn, index: index)
+    }
+}
+
+/// The one renderer of the component catalogue (Component.swift): chat blocks, the Home tab's
+/// sections and the screen components a chat answer shows (a place's menu, an item's
+/// performers, the FAQ, getting there, My schedule, now / next…). Screen components are drawn by
+/// `ScreenComponentView` (ScreenLayoutViews.swift) in Home's style; `turn` is the chat turn (Undo,
+/// answered confirmations), nil on screens; `open` pushes a tapped item (Home), nil = the app's
+/// default navigation.
+struct ComponentView: View {
+    let component: Component
+    var turn: AssistantController.Turn? = nil
+    var index = 0
+    var now: Date = .now
+    var open: ((SearchTarget) -> Void)? = nil
 
     @Environment(AppState.self) private var appState
 
@@ -28,6 +46,15 @@ struct AssistantBlockView: View {
 
     @ViewBuilder
     private var content: some View {
+        if let block = component.block, AssistantBlock.types.contains(component.type) {
+            blockContent(block)
+        } else {
+            ScreenComponentView(component: component, now: now, open: open ?? { appState.open($0) })
+        }
+    }
+
+    @ViewBuilder
+    private func blockContent(_ block: AssistantBlock) -> some View {
         switch block {
         case .text(let text):
             AssistantTextBlock(text: text)
@@ -37,17 +64,17 @@ struct AssistantBlockView: View {
             }
         case .placeCard(let id, let show):
             if let location = appState.location(id: id) {
-                PlaceCard(location: location, show: Set(show.compactMap(AssistantBlockView.placePart)))
+                PlaceCard(location: location, show: Set(show.compactMap(ComponentView.placePart)))
             }
         case .updateCard(let id):
             if let update = appState.notifications.first(where: { $0.id == id }) {
                 UpdateCard(notification: update)
             }
         case .list(let ids, let title, let limit):
-            CompactList(targets: ids.map(AssistantBlockView.target), title: title, limit: limit)
+            CompactList(targets: ids.map(ComponentView.target), title: title, limit: limit)
                 .blockCardBackground()
         case .carousel(let ids, let title):
-            CardCarousel(targets: ids.map(AssistantBlockView.target), title: title)
+            CardCarousel(targets: ids.map(ComponentView.target), title: title)
         case .timeline(let ids, let source, let title):
             TimelineBlock(ids: ids, source: source, title: title)
         case .map(let pins, let route):
@@ -63,7 +90,7 @@ struct AssistantBlockView: View {
         case .compare(let a, let b):
             CompareBlock(a: a, b: b)
         case .planDiff(let diff):
-            PlanDiffBlock(diff: diff, turn: turn)
+            if let turn { PlanDiffBlock(diff: diff, turn: turn) }
         case .plan(let day):
             AssistantPlanView(day: day, showsHeader: true)
         case .setting(let setting):
@@ -77,7 +104,9 @@ struct AssistantBlockView: View {
         case .chips(let chips):
             ChipsBlock(chips: chips)
         case .confirm(_, let prompt):
-            ConfirmBlock(prompt: prompt, turnId: turn.id, index: index, answer: turn.answered[index])
+            if let turn { ConfirmBlock(prompt: prompt, turnId: turn.id, index: index, answer: turn.answered[index]) }
+        case .component(let inner):
+            ScreenComponentView(component: inner, now: now, open: open ?? { appState.open($0) })
         }
     }
 
@@ -134,7 +163,7 @@ private struct TimelineBlock: View {
             let resolved = BlockData.timeline(ids, source: source, bundle, appState.planner.plan, now: .now)
             let items = resolved.compactMap { bundle.scheduleItem($0) }
             if !items.isEmpty {
-                ItemTimeline(items: items, title: title ?? (source == "plan" ? "My plan" : nil))
+                ItemTimeline(items: items, title: title ?? (source == "plan" ? "My Schedule" : nil))
                     .blockCardBackground()
             }
         }
@@ -212,7 +241,7 @@ private struct CompareBlock: View {
         case .item(let item):
             let planned = appState.plannedItemIds.contains(item.id)
             let canAdd = appState.planner.hasPlan && !planned && (item.startTime ?? .distantPast) > .now
-            return .item(item, appState: appState, actionTitle: canAdd ? "Add to My Plan" : nil)
+            return .item(item, appState: appState, actionTitle: canAdd ? "Add to My Schedule" : nil)
         case .version(let kind, let edit):
             var rows = [CompareRow(label: "Changes", value: AssistantRouter.describe(edit, bundle))]
             if let route = DayRoutes.of(edit.after, bundle) {
@@ -224,7 +253,7 @@ private struct CompareBlock: View {
                 title: kind.label,
                 subtitle: Planner.summary(edit.after, timeZone: bundle.event.timeZone),
                 rows: rows,
-                actionTitle: "Use This Plan"
+                actionTitle: "Use This Version"
             )
         }
     }
@@ -299,7 +328,7 @@ private struct SummaryBlock: View {
         switch kind {
         case "walking": walking
         case "recap": recap
-        case "liked_counts": SummaryCard(title: "Liked", systemImage: "heart.fill", stats: likedStats())
+        case "liked_counts": SummaryCard(title: MyScheduleText.title, systemImage: "calendar", stats: likedStats())
         default: EmptyView()
         }
     }
@@ -350,7 +379,7 @@ private struct SummaryBlock: View {
     private func recapStats(_ recap: Recap) -> [SummaryStat] {
         [
             SummaryStat(value: String(recap.checkedOff.count), label: "seen", systemImage: "checkmark.circle"),
-            SummaryStat(value: String(recap.likedCount), label: "liked", systemImage: "heart"),
+            SummaryStat(value: String(recap.likedCount), label: "added", systemImage: "heart"),
             SummaryStat(value: AssistantText.distance(recap.walkedMeters, units, locale: .current), label: "walked", systemImage: "figure.walk"),
         ]
     }
@@ -372,7 +401,7 @@ private struct ShareBlock: View {
 
     var body: some View {
         if let link = appState.assistant.shareLink(target) {
-            ShareCard(title: link.title, url: link.url, subtitle: target == "plan" ? "\(link.items) items, read-only. Friends can use it or merge it with theirs." : nil)
+            ShareCard(title: link.title, url: link.url, subtitle: target == "plan" || target == "schedule" ? "\(link.items) items, read-only. Friends can use it or merge it with theirs." : nil)
                 .task(id: link.url) {
                     appState.assistant.logShare(target, url: link.url, items: link.items)
                 }
@@ -397,8 +426,11 @@ private struct ChipsBlock: View {
 
     static func symbol(_ name: ActionName) -> String? {
         switch name {
-        case .like: return "heart"
-        case .unlike: return "heart.slash"
+        case .like, .scheduleAdd: return "heart"
+        case .unlike, .scheduleRemove: return "heart.slash"
+        case .scheduleReminder: return "bell"
+        case .scheduleMove: return "clock"
+        case .mySchedule: return "calendar"
         case .open: return "arrow.up.right"
         case .directions: return "figure.walk"
         case .planUndo: return "arrow.uturn.backward"
@@ -465,7 +497,7 @@ private struct PlanDayContent: View {
         let units: DistanceUnits = DistanceText.usesImperial() ? .imperial : .metric
         VStack(alignment: .leading, spacing: 10) {
             if showsHeader {
-                Text(plan.days.count > 1 ? "My plan · \(day.date.weekdayName)" : "My plan")
+                Text(plan.days.count > 1 ? "My Schedule · \(day.date.weekdayName)" : "My Schedule")
                     .font(.headline)
                     .accessibilityAddTraits(.isHeader)
             }
@@ -517,7 +549,7 @@ private struct PlanEntryList: View {
                 }
             }
             if entries.count < day.entries.count {
-                Text("\(day.entries.count - entries.count) more in your plan")
+                Text("\(day.entries.count - entries.count) more in your schedule")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

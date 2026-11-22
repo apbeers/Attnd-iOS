@@ -737,6 +737,25 @@ final class Planner {
         return updated
     }
 
+    /// One list (Nov 22, 2026): the day view of items chosen elsewhere (My schedule), laid out by
+    /// the same rules as a planned day (walks between them, swap alternatives from the day's
+    /// candidates in `windowStart…windowEnd`) with `meals` kept verbatim. No meal breaks are
+    /// added. The derived, never stored, `Plan` the chat, Live Activity and hints read.
+    func dayView(_ day: PlanDate, items: [Int], meals: [MealBreak], windowStart: Date, windowEnd: Date) -> PlanDay {
+        let chosen = items.compactMap { itemsById[$0] }.filter { $0.startTime != nil }.sorted(by: Self.itemOrder)
+        let pool = candidates(day, windowStart: windowStart, windowEnd: windowEnd)
+        var built = buildDay(day, windowStart: windowStart, windowEnd: windowEnd, chosen: chosen, orInstead: [:],
+                             candidates: pool, frozenMeals: meals)
+        // `buildDay` adds meal breaks only when asked (`includeMeals`); the view never invents one.
+        if preferences.includeMeals {
+            built.entries = built.entries.filter { entry in
+                guard case .meal(let meal) = entry else { return true }
+                return meals.contains(meal)
+            }
+        }
+        return built
+    }
+
     /// The integer milli-point score of `item` (rule 5).
     func score(_ item: ScheduleItem) -> Int {
         if let cached = scores[item.id] { return cached }
@@ -754,24 +773,24 @@ final class Planner {
 
     func reason(_ item: ScheduleItem) -> String {
         let group = constraints.groupLikes[item.id] ?? 0
-        if group >= 2 { return "Liked by \(group) of you" }
-        if heartedItems.contains(item.id) { return "You liked this" }
+        if group >= 2 { return "Picked by \(group) of you" }
+        if heartedItems.contains(item.id) { return MySchedule.inScheduleReason }
         if constraints.pinned.contains(item.id) { return "You added this" }
         if let best = bestSimilar(item, heartedLiked), best.similarity >= Self.similarReason {
-            return "Because you liked \(best.item.name)"
+            return "Because \(best.item.name) is in your schedule"
         }
         if let tag = item.tags.first(where: { likedTags.contains($0.lowercased()) }) {
-            return "Because you like \(tag.lowercased())"
+            return "Because you asked for \(tag.lowercased())"
         }
         if let category = category(item), likedCategories.contains(category.lowercased()) {
-            return "Because you like \(category.lowercased())"
+            return "Because you asked for \(category.lowercased())"
         }
         if let location = location(item.locationId), heartedLocations.contains(location.id) {
-            return "At \(location.name), which you liked"
+            return "At \(location.name), in your schedule"
         }
         if kid(item) == 1 { return "Kid-friendly" }
         if let best = bestSimilar(item, namedLiked), best.similarity >= Self.similarReason {
-            return "Like \(best.item.name)"
+            return "Similar to \(best.item.name)"
         }
         return "Fits your day"
     }

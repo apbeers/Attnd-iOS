@@ -34,6 +34,32 @@ final class PlanProposalTests: XCTestCase {
         XCTAssertEqual(v.pill, "\u{2212}1 item, +1 item, \u{2212}1 lunch break")
     }
 
+    /// One list §3: a proposal previews without touching My schedule; Apply turns the option's
+    /// result into one set of My schedule edits (what the request removed leaves even when the
+    /// person added it; what the re-solve dropped leaves only when the planner had added it).
+    func testProposalAppliesAsMyScheduleEdits() {
+        // My schedule = the fixture plan: 109 added by the person, the rest by the planner.
+        var schedule = MySchedule()
+        _ = schedule.apply(schedule.proposal(for: plan, bundle))
+        schedule.entries = schedule.entries.map { var e = $0; if e.id == 109 { e.source = .you }; return e }
+        let untouched = schedule
+        let p = proposal(.remove(item: 109))
+        _ = preview(p)
+        XCTAssertEqual(schedule, untouched)
+        let after = p.options[0].edit.after
+        let edits = schedule.proposal(for: after, explicit: after.constraints.excluded, bundle)
+        XCTAssertTrue(edits.removes.map(\.target).contains(.scheduleItem(109)))
+        XCTAssertTrue(edits.adds.map(\.target).contains(.scheduleItem(106)))
+        var history = ScheduleHistory()
+        history = history.push(schedule)
+        _ = schedule.apply(edits)
+        XCTAssertFalse(schedule.itemIds.contains(109))
+        XCTAssertTrue(schedule.itemIds.contains(106))
+        XCTAssertEqual(history.pop()?.schedule, untouched)
+        // The derived day view of the result matches the edit's items.
+        XCTAssertEqual(Set(schedule.dayPlan(bundle, now: PlannerFixture.now)?.itemIds ?? []), Set(after.itemIds))
+    }
+
     func testAddSuggestsAtItsPosition() {
         let p = proposal(.add(item: 110))
         XCTAssertEqual(p.kind, .add)
@@ -72,7 +98,8 @@ final class PlanProposalTests: XCTestCase {
 
     func testRouterEditsBecomeProposalsNotWrites() {
         let ctx = self.ctx
-        let routed = AssistantRouter.route("remove Juniper Lane", ctx)
+        // iOS: "remove X" is a My schedule command now; "more bbq" is still a plan edit (it drops Juniper Lane).
+        let routed = AssistantRouter.route("more bbq", ctx)
         let p = PlanProposals.from(routed: routed, ctx)
         XCTAssertEqual(p?.options.first?.edit.diff.removed, [109])
         XCTAssertEqual(p?.kind, .change)

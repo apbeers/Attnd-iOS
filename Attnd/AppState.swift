@@ -138,6 +138,11 @@ final class AppState {
     /// Where the last tap landed (window coordinates, x): the Undo toast stays in that pane of an
     /// unfolded iPhone Duo (batch 7 fix round). Not observed: read when a toast appears.
     @ObservationIgnored var lastTouchX: CGFloat?
+    /// Network tidy-ups (owner's trace, Nov 22, 2026): when app-status was last asked, the last
+    /// device registration the server accepted, and the last successful bundle fetch.
+    @ObservationIgnored private var lastAppStatusCheck: Date?
+    @ObservationIgnored private var lastDeviceSyncBody: String?
+    @ObservationIgnored private var lastFetchAt: (eventId: Int, at: Date)?
     /// A personal-state write waiting for its debounce (`savePersonalState`).
     @ObservationIgnored private var pendingPersonal: (eventId: Int, state: EventPersonalState)?
     @ObservationIgnored private var personalSaveTask: Task<Void, Never>?
@@ -438,6 +443,9 @@ final class AppState {
     func checkForUpdate() async {
         // Screenshot mode never shows the update banner.
         guard !ScreenshotMode.isActive else { return }
+        // Once at launch, then at most hourly on foreground (network trace, Nov 22, 2026: 3× in 73 s).
+        if let last = lastAppStatusCheck, Date.now.timeIntervalSince(last) < 3600 { return }
+        lastAppStatusCheck = .now
         do {
             let status = try await APIClient.shared.appStatus()
             appStatus = status
@@ -911,6 +919,12 @@ final class AppState {
     /// flash; errors are recorded the same way as any refresh.
     func refreshBundle(silent: Bool = false, source: RefreshSource = .foreground) async {
         guard let eventId = currentEvent?.id else { return }
+        // Right after a fetch (a join's, say) a foreground or poll refresh adds nothing; pushes and
+        // pull to refresh always go (network trace: 3 bundle requests within a minute).
+        if source == .foreground || source == .poll, let last = lastFetchAt, last.eventId == eventId,
+           Date.now.timeIntervalSince(last.at) < 15 {
+            return
+        }
         if let inflight = inflightRefresh, inflight.eventId == eventId {
             await inflight.task.value
             return
@@ -939,6 +953,7 @@ final class AppState {
             guard currentEvent?.id == eventId, !Task.isCancelled else { return }
             let now = Date.now
             lastRefreshed = now
+            lastFetchAt = (eventId, now)
             // Avoid needless observation churn from the polls.
             if loadError != nil { loadError = nil }
             if refreshProblem != nil { refreshProblem = nil }
@@ -1288,6 +1303,10 @@ final class AppState {
         guard !ScreenshotMode.isActive else { return }
         let token = liveActivityToken
         let change: LiveActivityTokenChange = liveActivityTokenSynced ? .unchanged : (token.map { LiveActivityTokenChange.set($0) } ?? .clear)
+        // Only when something changed since the last registration the server accepted (network
+        // trace: 5 identical POSTs in 73 s).
+        let body = "\(pushToken ?? "-")|\(notificationsEnabled)|\(currentEvent?.id ?? 0)"
+        if change == .unchanged, !deviceSyncPending, body == lastDeviceSyncBody { return }
         do {
             _ = try await APIClient.shared.registerDevice(
                 deviceId: deviceId,
@@ -1295,6 +1314,7 @@ final class AppState {
                 subscribed: notificationsEnabled,
                 liveActivityToken: change
             )
+            lastDeviceSyncBody = body
             if change != .unchanged, liveActivityToken == token { liveActivityTokenSynced = true }
             deviceSyncPending = false
             AppLog.info(.net, "net.device.registered", "Device registered", [

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Attnd" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>DEMO festival walk (Panther Island, Fort Worth)</name></metadata>
+  <wpt lat="32.749410" lon="-97.331600"><name>Info Booth</name><time>2026-11-14T20:00:00Z</time></wpt>
+  <wpt lat="32.750039" lon="-97.332027"><name>Main Stage</name><time>2026-11-14T20:03:02Z</time></wpt>
+  <wpt lat="32.750578" lon="-97.332775"><name>Kids Zone</name><time>2026-11-14T20:06:12Z</time></wpt>
+  <wpt lat="32.750308" lon="-97.330959"><name>Craft Beer Garden</name><time>2026-11-14T20:10:24Z</time></wpt>
+  <wpt lat="32.750758" lon="-97.329464"><name>Panther Island Pavilion</name><time>2026-11-14T20:14:18Z</time></wpt>
+  <wpt lat="32.749814" lon="-97.329998"><name>Sweet Spot</name><time>2026-11-14T20:17:47Z</time></wpt>
+  <wpt lat="32.749590" lon="-97.330959"><name>Chef Demo Kitchen</name><time>2026-11-14T20:20:58Z</time></wpt>
+  <wpt lat="32.748781" lon="-97.330318"><name>Trinity Stage</name><time>2026-11-14T20:24:21Z</time></wpt>
+  <wpt lat="32.748242" lon="-97.330639"><name>Makers Market</name><time>2026-11-14T20:27:12Z</time></wpt>
+  <wpt lat="32.748512" lon="-97.331814"><name>BBQ Pit Lane</name><time>2026-11-14T20:30:39Z</time></wpt>
+  <wpt lat="32.749231" lon="-97.332561"><name>Taco Row</name><time>2026-11-14T20:34:00Z</time></wpt>
+  <wpt lat="32.749410" lon="-97.331600"><name>Info Booth</name><time>2026-11-14T20:37:10Z</time></wpt>
+</gpx>

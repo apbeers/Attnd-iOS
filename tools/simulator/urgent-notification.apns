@@ -1,0 +1,12 @@
+{
+  "Simulator Target Bundle": "com.arcu.Attnd",
+  "aps": {
+    "alert": { "title": "Set time change", "body": "The Main Stage headliner now starts at 9:30 PM." },
+    "sound": "default",
+    "interruption-level": "time-sensitive"
+  },
+  "type": "notification",
+  "priority": "urgent",
+  "event_id": 1,
+  "notification_id": 2
+}

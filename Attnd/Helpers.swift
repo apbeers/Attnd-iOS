@@ -27,7 +27,26 @@ enum ISODate {
 
     /// Parses "2026-11-14T13:29:44+00:00", "…44Z", "…44.5Z" and Python's
     /// microsecond form "…44.123456+00:00". Returns nil for anything else.
+    /// Parsed strings (perf, batch 7: the same set times repeat across bundles and refreshes).
+    private static let cacheLock = NSLock()
+    nonisolated(unsafe) private static var cache: [String: Date] = [:]
+
     static func parse(_ string: String) -> Date? {
+        cacheLock.lock()
+        let hit = cache[string]
+        cacheLock.unlock()
+        if let hit { return hit }
+        let date = parseUncached(string)
+        if let date {
+            cacheLock.lock()
+            if cache.count > 4096 { cache.removeAll(keepingCapacity: true) }
+            cache[string] = date
+            cacheLock.unlock()
+        }
+        return date
+    }
+
+    private static func parseUncached(_ string: String) -> Date? {
         if let date = plain.date(from: string) ?? fractional.date(from: string) {
             return date
         }

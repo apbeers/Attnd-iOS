@@ -1,0 +1,8 @@
+{
+  "Simulator Target Bundle": "com.arcu.Attnd",
+  "aps": { "content-available": 1 },
+  "type": "content_updated",
+  "event_id": 1,
+  "content_version": 999999,
+  "jitter_ms": 0
+}

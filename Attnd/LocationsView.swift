@@ -724,7 +724,9 @@ enum ImageDecoding {
                 kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
             ]
             guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary) else { return nil }
-            return UIImage(cgImage: cgImage)
+            // Decoded here too, not at first draw on the main thread (perf, batch 7).
+            let image = UIImage(cgImage: cgImage)
+            return image.preparingForDisplay() ?? image
         }.value
     }
 }

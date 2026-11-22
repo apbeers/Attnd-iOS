@@ -2093,6 +2093,10 @@ actor ImageStore {
     /// Disk first; otherwise downloads (and keeps) the file. nil when neither works or the
     /// file is too large to cache.
     func data(for url: URL) async -> Data? {
+        // API-031: live Google photos only through the HTTP cache (their `max-age`), no file.
+        if MediaCache.isLivePlacePhoto(url) {
+            return await Self.httpCached(url)
+        }
         if let data = cachedData(for: url) { return data }
         _ = await fetch(url)
         return cachedData(for: url)
@@ -2157,6 +2161,22 @@ actor ImageStore {
         tooLarge = []
         guard let directory else { return }
         try? FileManager.default.removeItem(at: directory)
+    }
+
+    /// A session that honours HTTP caching (memory + a small disk URLCache, as the system keeps
+    /// it), for content that may only be cached as the server's headers allow.
+    private static let httpCachingSession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 30
+        config.requestCachePolicy = .useProtocolCachePolicy
+        config.urlCache = URLCache(memoryCapacity: 8 * 1024 * 1024, diskCapacity: 40 * 1024 * 1024)
+        return URLSession(configuration: config)
+    }()
+
+    static func httpCached(_ url: URL) async -> Data? {
+        guard let (data, response) = try? await httpCachingSession.data(from: url),
+              let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return nil }
+        return data
     }
 
     // MARK: Downloads

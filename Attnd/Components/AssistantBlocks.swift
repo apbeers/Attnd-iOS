@@ -187,18 +187,9 @@ struct Gallery: View {
         if !images.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 BlockTitle(title: title)
-                ScrollView(.horizontal) {
-                    LazyHStack(alignment: .top, spacing: 12) {
-                        ForEach(images) { image in
-                            tile(image)
-                                .containerRelativeFrame(.horizontal) { width, _ in images.count == 1 ? width : width * 0.65 }
-                        }
-                    }
-                    .scrollTargetLayout()
+                CarouselRow(items: images, id: \.id, fraction: images.count == 1 ? 1 : 0.65, maxCardWidth: 520) { image in
+                    tile(image)
                 }
-                .scrollTargetBehavior(.viewAligned)
-                .scrollIndicators(.hidden)
-                .scrollClipDisabled()
             }
         }
     }

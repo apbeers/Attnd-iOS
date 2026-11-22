@@ -204,6 +204,17 @@ final class DisplayLogicTests: XCTestCase {
         XCTAssertEqual(single.latitudeDelta, MapRegionMath.minimumDelta)
     }
 
+    func testFilterRegionFramesWhatIsLeft() throws {
+        XCTAssertNil(MapRegionMath.filterRegion([]))
+        let one = Coordinate(latitude: 32.75, longitude: -97.33)
+        let single = try XCTUnwrap(MapRegionMath.filterRegion([one]))
+        XCTAssertEqual(single.center, one)
+        XCTAssertEqual(single.latitudeDelta, MapRegionMath.streetLevelDelta)
+        let two = try XCTUnwrap(MapRegionMath.filterRegion([one, Coordinate(latitude: 32.76, longitude: -97.32)]))
+        XCTAssertEqual(two.latitudeDelta, 0.016, accuracy: 0.0001)
+        XCTAssertGreaterThanOrEqual(two.longitudeDelta, MapRegionMath.minimumDelta * 1.5)
+    }
+
     func testInitialRegion_FitAllVersusStreetLevel() throws {
         let event = Coordinate(latitude: 32.75, longitude: -97.33)
         let pins = [Coordinate(latitude: 32.70, longitude: -97.40), Coordinate(latitude: 32.80, longitude: -97.20)]
@@ -305,6 +316,13 @@ final class DisplayLogicTests: XCTestCase {
         let bundle = EventBundle(event: event, display: display, locations: locations)
         XCTAssertEqual(MediaCache.referencedURLs(for: bundle), [logo, img, flyer])
         XCTAssertEqual(MediaCache.referencedURLs(event: nil, display: .default, locations: []), [])
+    }
+
+    func testMediaReferencedURLs_SkipLiveGooglePhotos_API031() {
+        let live = URL(string: "https://attnd.app/img/places/9/")!
+        let own = URL(string: "https://attnd.app/media/b.jpg")!
+        let locations = [Location(id: 9, name: "A", imageUrl: live), Location(id: 10, name: "B", imageUrl: own)]
+        XCTAssertEqual(MediaCache.referencedURLs(event: nil, display: .default, locations: locations), [own])
     }
 
     func testMediaNeedsDownload_MissingOrStale() {

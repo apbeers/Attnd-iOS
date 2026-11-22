@@ -535,6 +535,28 @@ enum HomeColumns {
     }
 }
 
+/// Home's two column widths on a wide container (iPhone Duo unfolded, owner feedback after build
+/// 181: no large gap down the middle, both columns fill their halves). With a reported vertical
+/// fold the gap is the fold's own width plus `gutter` on each side; without one the columns meet
+/// at the middle with `2 × gutter` between them. `margin` is the page's side padding. Pure.
+enum HomeColumnWidths {
+    struct Widths: Equatable { var leading: Double; var gap: Double; var trailing: Double }
+
+    static func of(width: Double, margin: Double, gutter: Double,
+                   foldMinX: Double?, foldMaxX: Double?) -> Widths {
+        let inner = max(width - 2 * margin, 0)
+        if let minX = foldMinX, let maxX = foldMaxX, maxX > minX,
+           minX - margin - gutter > 160, width - margin - (maxX + gutter) > 160 {
+            let leading = minX - margin - gutter
+            let gap = (maxX - minX) + 2 * gutter
+            return Widths(leading: leading, gap: gap, trailing: max(inner - leading - gap, 0))
+        }
+        let gap = 2 * gutter
+        let half = max((inner - gap) / 2, 0)
+        return Widths(leading: half, gap: gap, trailing: half)
+    }
+}
+
 enum TabletopSplit {
     static let topTypes: Set<String> = ["header", "urgent", "countdown", "now_next", "map"]
     /// What the tabletop glance (DuoViews.swift) already shows on the top half (batch 7 fix round:

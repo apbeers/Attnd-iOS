@@ -101,6 +101,8 @@ private struct HomeScreen: View {
 
     /// Two columns from this container width (the inner display of an unfolded iPhone Duo).
     static let twoColumnWidth: CGFloat = 700
+    /// Space each side of the fold (or of the middle) between the two columns.
+    static let gutter: CGFloat = 20
     /// Parts that keep the whole width in two-column mode.
     static let fullWidth: Set<String> = ["header", "urgent", "countdown", "now_next"]
 
@@ -155,17 +157,16 @@ private struct HomeScreen: View {
         }
     }
 
-    /// A vertical fold across the middle: the leading column ends at the fold (minus the page
-    /// padding), the gap is the fold itself.
-    struct FoldSplit: Equatable { var leadingWidth: CGFloat; var gap: CGFloat }
+    /// A vertical fold across the middle (the reported `.division`, in the Home container's
+    /// coordinates): its edges. nil = none reported (columns split the width in half).
+    struct FoldSplit: Equatable { var minX: CGFloat; var maxX: CGFloat }
     @State private var foldSplit: FoldSplit?
 
     private static func split(_ proxy: GeometryProxy) -> FoldSplit? {
         guard let fold = ReservedRegionReader.folds(in: proxy).first(where: { $0.height > $0.width }),
               fold.minX > 0, fold.maxX < proxy.size.width else { return nil }
-        return FoldSplit(leadingWidth: fold.minX, gap: fold.width + 32)
+        return FoldSplit(minX: fold.minX, maxX: fold.maxX)
     }
-
     /// One of the wide layout's columns (not lazy: both columns measure fully, nothing starts cut).
     private func homeColumn(_ sections: [LayoutSection]) -> some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -173,6 +174,8 @@ private struct HomeScreen: View {
                 ComponentView(component: ComponentCatalogue.component(section), now: now, open: open)
             }
         }
+        // Every section stays inside its column (carousels scroll and clip there).
+        .environment(\.carouselContained, true)
     }
 
     private func column(_ sections: [LayoutSection]) -> some View {
@@ -203,14 +206,17 @@ private struct HomeScreen: View {
                     // sections row by row, so a tall one pushed its neighbour down), split on the
                     // fold when the system reports one.
                     let columns = HomeColumns.split(rest)
+                    let widths = HomeColumnWidths.of(width: Double(width), margin: 16, gutter: Double(Self.gutter),
+                                                     foldMinX: foldSplit.map { Double($0.minX) },
+                                                     foldMaxX: foldSplit.map { Double($0.maxX) })
                     HStack(alignment: .top, spacing: 0) {
                         homeColumn(columns.leading)
-                            .frame(width: foldSplit.map { max($0.leadingWidth - 32, 0) }, alignment: .topLeading)
-                            .frame(maxWidth: foldSplit == nil ? .infinity : nil, alignment: .topLeading)
-                        Color.clear.frame(width: foldSplit?.gap ?? 16)
+                            .frame(width: CGFloat(widths.leading), alignment: .topLeading)
+                        Color.clear.frame(width: CGFloat(widths.gap))
                         homeColumn(columns.trailing)
-                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                            .frame(width: CGFloat(widths.trailing), alignment: .topLeading)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .scrollTargetLayout()
                 .padding(.horizontal)
@@ -548,21 +554,9 @@ struct MyScheduleUpNext: View {
                     .foregroundStyle(.secondary)
                     .blockCardBackground()
             } else {
-                ScrollView(.horizontal) {
-                    // Not lazy (≤ 5 cards): the row is as tall as its tallest card, all cards that height.
-                    HStack(alignment: .top, spacing: 12) {
-                        ForEach(rows) { row in
-                            card(row)
-                                .containerRelativeFrame(.horizontal) { width, _ in width * 0.8 }
-                                .frame(maxHeight: .infinity, alignment: .top)
-                        }
-                    }
-                    .fixedSize(horizontal: false, vertical: true)
-                    .scrollTargetLayout()
+                CarouselRow(items: rows, id: \.id) { row in
+                    card(row)
                 }
-                .scrollTargetBehavior(.viewAligned)
-                .scrollIndicators(.hidden)
-                .scrollClipDisabled()
             }
             // Places saved without a time aren't in Up next: one small row for them.
             let saved = appState.mySchedule.savedPlaceIds.count

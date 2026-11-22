@@ -119,16 +119,17 @@ struct ScheduleView: View {
             }
         }
         .navigationTitle(title)
-        .modifier(SearchableIf(enabled: appState.display.enableSearch, text: $searchText, prompt: "Search schedule"))
         .refreshable { await appState.pullToRefresh() }
         // Walk times to each item's location (no compass needed here).
         .usesUserLocation(heading: false)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                filterMenu
-            }
-        }
+        .modifier(ScheduleChrome(isPane: isPane, title: title, searchEnabled: appState.display.enableSearch,
+                                 searchText: $searchText, filter: { filterMenu }))
     }
+
+    /// The map's side pane (iPhone Duo unfolded): plain rows across the pane's width, a small
+    /// title with the filter on the same row, no navigation bar (owner, Duo simulator after 181:
+    /// the inset card, the huge title and a lone filter button left too much white space).
+    private var isPane: Bool { onSelect != nil }
 
     // MARK: List
 
@@ -138,6 +139,11 @@ struct ScheduleView: View {
             List(selection: selection) {
                 listContent(sections: sections, now: now)
             }
+        } else if isPane {
+            List {
+                listContent(sections: sections, now: now)
+            }
+            .listStyle(.plain)
         } else {
             List {
                 listContent(sections: sections, now: now)
@@ -733,6 +739,46 @@ private struct OrganizerChangeRow: View {
             return "\(change.name) changed."
         case .cancelled:
             return "\(change.name) was cancelled."
+        }
+    }
+}
+
+/// The Schedule list's bar: the usual navigation bar with the filter at its trailing edge, or (the
+/// map's side pane) a compact header row of its own — title and filter inline — without the bar.
+private struct ScheduleChrome<Filter: View>: ViewModifier {
+    let isPane: Bool
+    let title: String
+    let searchEnabled: Bool
+    @Binding var searchText: String
+    @ViewBuilder var filter: () -> Filter
+
+    func body(content: Content) -> some View {
+        if isPane {
+            content
+                .toolbar(.hidden, for: .navigationBar)
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(title)
+                            .font(.title3.bold())
+                            .accessibilityAddTraits(.isHeader)
+                        Spacer(minLength: 8)
+                        filter()
+                            .labelStyle(.iconOnly)
+                            .font(.title3)
+                            .frame(minWidth: 44, minHeight: 44)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 4)
+                    .background(.background)
+                }
+        } else {
+            content
+                .modifier(SearchableIf(enabled: searchEnabled, text: $searchText, prompt: "Search schedule"))
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        filter()
+                    }
+                }
         }
     }
 }

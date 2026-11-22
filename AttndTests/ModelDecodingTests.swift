@@ -136,6 +136,39 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertNil(try decode(Location.self, #"{"id":1,"category":"  "}"#).category)
     }
 
+    func testLocation_LiveGooglePhoto_API031() throws {
+        let loc = try decode(Location.self, """
+        {"id":7,"image_url":"https://attnd.app/img/places/7/","image_credit":"Photo: Google Maps",
+         "image_attribution_url":"https://attnd.app/img/places/7/?format=json"}
+        """)
+        XCTAssertEqual(loc.imageCredit, "Photo: Google Maps")
+        XCTAssertEqual(loc.imageAttributionUrl?.absoluteString, "https://attnd.app/img/places/7/?format=json")
+        XCTAssertTrue(MediaCache.isLivePlacePhoto(try XCTUnwrap(loc.imageUrl)))
+        // Older servers: no keys; http or blank attribution URLs are ignored.
+        let old = try decode(Location.self, #"{"id":1,"image_credit":"  ","image_attribution_url":"http://x.test/a"}"#)
+        XCTAssertNil(old.imageCredit)
+        XCTAssertNil(old.imageAttributionUrl)
+        XCTAssertFalse(MediaCache.isLivePlacePhoto(URL(string: "https://attnd.app/media/places/7.jpg")!))
+        XCTAssertFalse(MediaCache.isLivePlacePhoto(URL(string: "https://attnd.app/img/places/x/")!))
+    }
+
+    func testPhotoAttribution_API031() throws {
+        let json = """
+        {"url":"https://lh3.example/p.jpg","attributions":[{"name":"Ana Ruiz","uri":"https://maps.google.com/u/1"},
+         {"name":" "},{"name":"Bo","uri":"http://insecure"}],"credit":"Photo: Ana Ruiz, Bo · Google Maps"}
+        """
+        let a = try XCTUnwrap(PhotoAttribution.decode(Data(json.utf8)))
+        XCTAssertEqual(a.credit, "Photo: Ana Ruiz, Bo · Google Maps")
+        XCTAssertEqual(a.authors.map(\.name), ["Ana Ruiz", "Bo"])
+        XCTAssertEqual(a.authors[0].uri?.absoluteString, "https://maps.google.com/u/1")
+        XCTAssertNil(a.authors[1].uri)
+        // No credit: made from the names; nothing usable: nil.
+        let made = try XCTUnwrap(PhotoAttribution.decode(Data(#"{"attributions":[{"name":"Cy"}]}"#.utf8)))
+        XCTAssertEqual(made.credit, "Photo: Cy · Google Maps")
+        XCTAssertNil(PhotoAttribution.decode(Data(#"{"attributions":[]}"#.utf8)))
+        XCTAssertNil(PhotoAttribution.decode(Data("nope".utf8)))
+    }
+
     func testLocation_Tags_API010() throws {
         XCTAssertEqual(try decode(Location.self, #"{"id":1,"tags":["live music","free"]}"#).tags, ["live music", "free"])
         // Older servers: no key. Wrong type: default.

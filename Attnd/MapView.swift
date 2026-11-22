@@ -260,8 +260,8 @@ struct MapView: View {
             }
             return true
         }
-        .onChange(of: selectedCategory) { dropHiddenSelection() }
-        .onChange(of: heartedOnly) { dropHiddenSelection() }
+        .onChange(of: selectedCategory) { dropHiddenSelection(); refitForFilter() }
+        .onChange(of: heartedOnly) { dropHiddenSelection(); refitForFilter() }
         .task {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))
@@ -331,35 +331,35 @@ struct MapView: View {
                     .allowsHitTesting(false)
                 Spacer(minLength: 0)
             }
-            if let travelRange {
-                TimeTravelScrubber(
-                    range: travelRange,
-                    points: TimeTravel.snapPoints(appState.schedule, in: travelRange),
-                    now: now,
-                    timeZone: appState.timeZone,
-                    time: $ui.timeTravel
-                )
-                .frame(maxWidth: 480)
-                .padding(.horizontal)
-                .padding(.bottom, 8)
-                .debugFloatingFrame("time_travel")
-            }
-            if let location = selected {
-                LocationInfoCard(location: location, walkText: walkCardText) {
-                    appState.mapNavigation.open(location.id)
-                }
-                .frame(maxWidth: 480)
-                .padding(.horizontal)
-                .padding(.bottom, 8)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
             // Batch 7 (Duo folded: the trailing column crowded the vertical tab bar and the camera
             // island): one row in the bottom-leading corner, the map buttons then My plan / search.
             // Unfolded (regular width): a small vertical group at the map's trailing edge, next
-            // to the tab rail, like the folded layout first had them.
+            // to the tab rail; the selected place's card and the time-travel scrubber sit beside it,
+            // docked at the map's bottom edge above Apple Maps' legal label (owner, after 181: the
+            // scrubber floated in the middle of the map).
             if horizontalSizeClass == .regular {
-                HStack {
-                    Spacer(minLength: 0)
+                HStack(alignment: .bottom, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if let location = selected {
+                            LocationInfoCard(location: location, walkText: walkCardText) {
+                                appState.mapNavigation.open(location.id)
+                            }
+                            .frame(maxWidth: 480)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
+                        if let travelRange {
+                            TimeTravelDock(
+                                range: travelRange,
+                                points: TimeTravel.snapPoints(appState.schedule, in: travelRange),
+                                now: now,
+                                timeZone: appState.timeZone,
+                                time: $ui.timeTravel,
+                                startsCollapsed: selected != nil || mapSize.height < 520
+                            )
+                            .debugFloatingFrame("time_travel")
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .bottomLeading)
                     VStack(spacing: 10) {
                         MapButtonStack(
                             onCenter: recenter,
@@ -370,9 +370,20 @@ struct MapView: View {
                         if showsFloatingButton { FloatingTabButton() }
                     }
                 }
+                .padding(.leading, 16)
                 .padding(.trailing, 16)
-                .padding(.bottom, FloatingSearchButtonMetrics.bottomPadding)
+                // Clear of Apple Maps' legal / attribution label in the bottom-leading corner.
+                .padding(.bottom, MapOverlayMetrics.legalClearance)
             } else {
+                if let location = selected {
+                    LocationInfoCard(location: location, walkText: walkCardText) {
+                        appState.mapNavigation.open(location.id)
+                    }
+                    .frame(maxWidth: 480)
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
                 HStack(spacing: 10) {
                     MapButtonStack(
                         onCenter: recenter,
@@ -430,6 +441,18 @@ struct MapView: View {
         guard !hasPositioned, let region = initialRegion else { return }
         cameraPosition = .region(region.mkRegion)
         hasPositioned = !appState.locations.isEmpty
+    }
+
+    /// A category or My Schedule chip changed: frame the pins that are left with some padding
+    /// (one pin at street level), or every pin again when the filter is cleared (owner, after 181:
+    /// "Family" left one pin with the camera far out over the city). Nothing to show: unchanged.
+    private func refitForFilter() {
+        let filtered = selectedCategory != nil || heartedOnly
+        guard let region = filtered
+            ? MapRegionMath.filterRegion(visibleLocations.compactMap(\.coordinate))
+            : MapRegionMath.fitting(visibleLocations.compactMap(\.coordinate)) else { return }
+        if tracking != .off { tracking = .off }
+        withAnimation { cameraPosition = .region(region.mkRegion) }
     }
 
     private func recenter() {

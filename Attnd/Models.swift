@@ -215,6 +215,11 @@ struct Location: Identifiable, Hashable, Sendable {
     var category: String? = nil
     var website: URL? = nil
     var imageUrl: URL? = nil
+    /// API-022 / API-031: who the automatically found photo is by ("Photo: Google Maps" for a
+    /// live Google photo); nil for the organizer's own images.
+    var imageCredit: String? = nil
+    /// API-031: JSON with the photo's authors (`PhotoAttribution`), only for live Google photos.
+    var imageAttributionUrl: URL? = nil
     var address: String = ""
     var latitude: Double? = nil
     var longitude: Double? = nil
@@ -231,6 +236,8 @@ extension Location: Decodable {
     private enum CodingKeys: String, CodingKey {
         case id, name, snippet, description, category, website, address, latitude, longitude, tags, context
         case imageUrl = "image_url"
+        case imageCredit = "image_credit"
+        case imageAttributionUrl = "image_attribution_url"
         case sortOrder = "sort_order"
     }
 
@@ -243,12 +250,57 @@ extension Location: Decodable {
         category = c.nonEmptyString(.category)
         website = c.url(.website)
         imageUrl = c.url(.imageUrl)
+        imageCredit = c.nonEmptyString(.imageCredit)
+        imageAttributionUrl = c.httpsURL(.imageAttributionUrl)
         address = c.lenient(String.self, .address) ?? ""
         latitude = c.lenient(Double.self, .latitude)
         longitude = c.lenient(Double.self, .longitude)
         sortOrder = c.lenient(Int.self, .sortOrder) ?? 0
         tags = c.lenient([String].self, .tags) ?? []
         context = c.lenient(LocationContext.self, .context).flatMap { $0.isEmpty ? nil : $0 }
+    }
+}
+
+// MARK: - Photo attribution (API-031)
+
+/// The answer of a live Google photo's `image_attribution_url`: the authors, and the line to show
+/// under the photo ("Photo: Ana Ruiz · Google Maps"). Lenient: authors without a name are
+/// dropped, non-https links ignored; no usable credit = nil (keep `image_credit`).
+struct PhotoAttribution: Hashable, Sendable {
+    struct Author: Hashable, Sendable {
+        var name: String
+        var uri: URL?
+    }
+
+    var credit: String
+    var authors: [Author]
+
+    static func decode(_ data: Data) -> PhotoAttribution? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let authors: [Author] = ((object["attributions"] as? [Any]) ?? []).compactMap { entry in
+            guard let entry = entry as? [String: Any],
+                  let name = (entry["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !name.isEmpty else { return nil }
+            let uri = (entry["uri"] as? String).flatMap(URL.init(string:)).flatMap { $0.scheme?.lowercased() == "https" ? $0 : nil }
+            return Author(name: name, uri: uri)
+        }
+        var credit = ((object["credit"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if credit.isEmpty, !authors.isEmpty {
+            credit = "Photo: " + authors.map(\.name).joined(separator: ", ") + " · Google Maps"
+        }
+        guard !credit.isEmpty else { return nil }
+        return PhotoAttribution(credit: credit, authors: authors)
+    }
+
+    /// The credit as Markdown with each author's name linked (for a `Text` with room for links);
+    /// names not found in the credit stay plain.
+    var linkedCredit: AttributedString {
+        var text = AttributedString(credit)
+        for author in authors {
+            guard let uri = author.uri, let range = text.range(of: author.name) else { continue }
+            text[range].link = uri
+        }
+        return text
     }
 }
 

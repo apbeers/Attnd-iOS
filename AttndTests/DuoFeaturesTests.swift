@@ -158,4 +158,27 @@ final class DuoFeaturesTests: XCTestCase {
         // A "fold" at the very edge isn't one.
         XCTAssertEqual(UndoToastPane.span(containerWidth: 640, fold: nil, windowMidX: 600, touchX: nil, primaryIsTrailing: false), 0...640)
     }
+
+    // MARK: Home columns (owner, after 181: no big gap, columns fill their halves)
+
+    func testHomeColumnsMeetAtTheFoldWithAGutter() {
+        // 951 pt wide, a 20 pt fold at 465…485, 16 pt margins, 20 pt gutter.
+        let w = HomeColumnWidths.of(width: 951, margin: 16, gutter: 20, foldMinX: 465, foldMaxX: 485)
+        XCTAssertEqual(w.leading, 429)
+        XCTAssertEqual(w.gap, 60)
+        XCTAssertEqual(w.leading + w.gap + w.trailing, 951 - 32, accuracy: 0.001)
+        // The trailing column starts `gutter` after the fold.
+        XCTAssertEqual(16 + w.leading + w.gap, 485 + 20)
+    }
+
+    func testHomeColumnsSplitTheMiddleWithoutAFold() {
+        let w = HomeColumnWidths.of(width: 900, margin: 16, gutter: 20, foldMinX: nil, foldMaxX: nil)
+        XCTAssertEqual(w.leading, w.trailing)
+        XCTAssertEqual(w.gap, 40)
+        XCTAssertEqual(w.leading, (868 - 40) / 2)
+        // A "fold" that would leave a sliver is ignored.
+        let edge = HomeColumnWidths.of(width: 900, margin: 16, gutter: 20, foldMinX: 100, foldMaxX: 110)
+        XCTAssertEqual(edge, w)
+    }
 }
+

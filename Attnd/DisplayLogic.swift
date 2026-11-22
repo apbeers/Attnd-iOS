@@ -373,6 +373,18 @@ enum MapRegionMath {
         )
     }
 
+    /// The region for a filtered map (a category or My Schedule chip): one pin at street level,
+    /// several fitted with a little more padding (the chips and the bottom card cover the edges)
+    /// and never closer than street level's minimum. nil when nothing is left to show.
+    static func filterRegion(_ coordinates: [Coordinate]) -> MapRegionSpec? {
+        guard let first = coordinates.first else { return nil }
+        if coordinates.count == 1 || coordinates.allSatisfy({ $0 == first }) { return streetLevel(first) }
+        guard let fitted = fitting(coordinates, padding: 1.6) else { return nil }
+        return MapRegionSpec(center: fitted.center,
+                             latitudeDelta: max(fitted.latitudeDelta, minimumDelta * 1.5),
+                             longitudeDelta: max(fitted.longitudeDelta, minimumDelta * 1.5))
+    }
+
     /// Street-level region centred on a coordinate.
     static func streetLevel(_ center: Coordinate) -> MapRegionSpec {
         MapRegionSpec(center: center, latitudeDelta: streetLevelDelta, longitudeDelta: streetLevelDelta)

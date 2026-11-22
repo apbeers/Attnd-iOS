@@ -25,8 +25,69 @@ struct TimeTravelScrubber: View {
     let now: Date
     let timeZone: TimeZone
     @Binding var time: Date?
+    /// One row (label, slider, Now), for the dock at the map's bottom edge.
+    var compact = false
+    /// Shown as × when the dock may collapse back to its chip.
+    var onClose: (() -> Void)? = nil
 
     var body: some View {
+        if compact { compactBody } else { fullBody }
+    }
+
+    private var slider: some View {
+        let binding = $time
+        let range = self.range, points = self.points, now = self.now
+        let label = TimeTravel.label(time ?? now, now: now, timeZone: timeZone)
+        return Slider(
+            value: Binding(
+                get: { TimeTravel.fraction(of: binding.wrappedValue ?? now, in: range) },
+                set: { fraction in
+                    let snapped = TimeTravel.snap(TimeTravel.date(at: fraction, in: range), to: points, now: now)
+                    binding.wrappedValue = TimeTravel.isNow(snapped, now: now) ? nil : snapped
+                }
+            ),
+            in: 0...1
+        )
+        .accessibilityLabel("Time on the map")
+        .accessibilityValue(label)
+    }
+
+    private var compactBody: some View {
+        let label = TimeTravel.label(time ?? now, now: now, timeZone: timeZone)
+        return HStack(spacing: 10) {
+            Label(time == nil ? "Now" : label, systemImage: time == nil ? "dot.radiowaves.left.and.right" : "clock.arrow.circlepath")
+                .font(.subheadline.weight(.semibold))
+                .monospacedDigit()
+                .contentTransition(.numericText())
+                .lineLimit(1)
+                .fixedSize()
+            slider
+            Text(EventTimeFormat.clock(range.upperBound, in: timeZone))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .fixedSize()
+                .accessibilityHidden(true)
+            if time != nil {
+                Button("Now", systemImage: "arrow.uturn.backward") { time = nil }
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.glass)
+                    .controlSize(.small)
+            } else if let onClose {
+                Button("Hide Time Slider", systemImage: "xmark", action: onClose)
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.glass)
+                    .controlSize(.small)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .glassEffect(.regular.interactive(), in: .capsule)
+        .sensoryFeedback(.selection, trigger: time)
+    }
+
+    @ViewBuilder
+    private var fullBody: some View {
         let current = time ?? now
         let label = TimeTravel.label(current, now: now, timeZone: timeZone)
         let binding = $time
@@ -75,6 +136,53 @@ struct TimeTravelScrubber: View {
         .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 20))
         // A tick each time it snaps onto another set start.
         .sensoryFeedback(.selection, trigger: time)
+    }
+}
+
+/// Bottom spacing for overlays at the map's bottom edge: clear of Apple Maps' legal label.
+enum MapOverlayMetrics {
+    static let legalClearance: CGFloat = 30
+}
+
+/// The time-travel scrubber docked at the map's bottom edge (unfolded): a compact one-row
+/// scrubber across the map pane, or a small "Time" chip while it isn't in use and space is tight
+/// (a place card showing, a short map). Expanding it never moves the map.
+struct TimeTravelDock: View {
+    let range: ClosedRange<Date>
+    let points: [Date]
+    let now: Date
+    let timeZone: TimeZone
+    @Binding var time: Date?
+    var startsCollapsed: Bool
+
+    @State private var expandedByUser = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var collapsed: Bool { startsCollapsed && time == nil && !expandedByUser }
+
+    var body: some View {
+        Group {
+            if collapsed {
+                Button {
+                    withAnimation(reduceMotion ? nil : .snappy(duration: 0.25)) { expandedByUser = true }
+                } label: {
+                    Label("Time", systemImage: "clock")
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 4)
+                }
+                .buttonStyle(.glass)
+                .accessibilityHint("Shows the time slider: see what's on later.")
+            } else {
+                TimeTravelScrubber(range: range, points: points, now: now, timeZone: timeZone, time: $time,
+                                   compact: true,
+                                   onClose: startsCollapsed ? {
+                                       time = nil
+                                       withAnimation(reduceMotion ? nil : .snappy(duration: 0.25)) { expandedByUser = false }
+                                   } : nil)
+                    .frame(maxWidth: .infinity)
+            }
+        }
+        .onChange(of: startsCollapsed) { _, tight in if !tight { expandedByUser = false } }
     }
 }
 

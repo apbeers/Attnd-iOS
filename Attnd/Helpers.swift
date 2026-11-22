@@ -378,8 +378,17 @@ enum MediaCache {
         var seen = Set<String>()
         return candidates.compactMap { $0 }.filter { url in
             guard let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http" else { return false }
+            // API-031: live Google photos are never kept for offline use (Google's terms).
+            guard !isLivePlacePhoto(url) else { return false }
             return seen.insert(url.absoluteString).inserted
         }
+    }
+
+    /// API-031: Attnd's live Google Places photo redirect (`/img/places/<id>/`). Loaded per view
+    /// with the HTTP cache only (its `max-age`), never written to the image directory.
+    static func isLivePlacePhoto(_ url: URL) -> Bool {
+        let parts = url.path.split(separator: "/")
+        return parts.count == 3 && parts[0] == "img" && parts[1] == "places" && parts[2].allSatisfy(\.isNumber)
     }
 
     /// Whether a URL must be downloaded: never cached, or cached long enough ago to re-check.

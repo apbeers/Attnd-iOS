@@ -791,6 +791,9 @@ struct LocationDetailView: View {
                         // Mirrors and blurs the image into the area under the bars
                         // and beside it in wide layouts, instead of a hard edge.
                         .backgroundExtensionEffect()
+                        .overlay(alignment: .bottomTrailing) {
+                            PhotoCreditLine(credit: location.imageCredit, attributionURL: location.imageAttributionUrl)
+                        }
                 }
 
                 if let columns {
@@ -1089,4 +1092,35 @@ private struct LocationScheduleRow: View {
 #Preview {
     LocationsTab()
         .environment(AppState())
+}
+
+// MARK: - Photo credit (API-022 / API-031)
+
+/// The small credit on a large place photo: `image_credit`, or for a live Google photo the
+/// authors' names fetched from `image_attribution_url` (linked to their profiles), shown over the
+/// photo's bottom-trailing corner on a dark scrim so it stays readable. Nothing without a credit.
+struct PhotoCreditLine: View {
+    let credit: String?
+    let attributionURL: URL?
+
+    @State private var attribution: PhotoAttribution?
+
+    var body: some View {
+        if let line = attribution?.linkedCredit ?? credit.map({ AttributedString($0) }) {
+            Text(line)
+                .font(.caption2)
+                .foregroundStyle(.white)
+                .tint(.white)
+                .lineLimit(2)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(.black.opacity(0.55), in: .rect(cornerRadius: 8))
+                .padding(8)
+                .task(id: attributionURL) {
+                    attribution = nil
+                    guard let url = attributionURL, let data = await ImageStore.httpCached(url) else { return }
+                    attribution = PhotoAttribution.decode(data)
+                }
+        }
+    }
 }

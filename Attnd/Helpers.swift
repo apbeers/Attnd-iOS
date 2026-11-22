@@ -436,6 +436,33 @@ enum MediaCache {
 
 /// Build, device and event details shown in Options → About & support and copied
 /// as plain text for support requests. Pure: the caller gathers the values.
+/// The device id (a random UUID made by the app, never a system identifier) and where it is kept.
+/// UserDefaults holds the live copy; the Keychain keeps one on this phone only
+/// (`AfterFirstUnlockThisDeviceOnly`, not synced to iCloud, not restored onto another phone), which
+/// survives deleting and reinstalling the app, so a reinstall rejoins as the same phone.
+/// Order: the app's own copy (an existing install, or the one the App Clip handed over), else the
+/// Keychain's (a reinstall), else a new one; whichever store lacks it gets it.
+enum DeviceIdentity {
+    static let keychainKey = "com.arcu.attnd.deviceId"
+
+    struct Resolution: Equatable {
+        var id: String
+        var saveDefaults: Bool
+        var saveKeychain: Bool
+    }
+
+    static func resolve(defaults: String?, keychain: String?, make: () -> String) -> Resolution {
+        let stored = valid(defaults), kept = valid(keychain)
+        let id = stored ?? kept ?? make()
+        return Resolution(id: id, saveDefaults: stored != id, saveKeychain: kept != id)
+    }
+
+    private static func valid(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+        return value
+    }
+}
+
 struct SupportInfo: Hashable, Sendable {
     var appVersion: String
     var buildNumber: String

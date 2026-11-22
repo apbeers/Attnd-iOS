@@ -399,12 +399,16 @@ final class AppState {
         usage = UsageReporter()
         usage.attachPerfMetrics()
         let defaults = UserDefaults.standard
-        if let stored = defaults.string(forKey: Keys.deviceId) {
-            deviceId = stored
-        } else {
-            let newId = UUID().uuidString
-            defaults.set(newId, forKey: Keys.deviceId)
-            deviceId = newId
+        // The device id survives a reinstall through the Keychain (this phone only; DeviceIdentity).
+        // Screenshot mode leaves the Keychain alone.
+        let identity = DeviceIdentity.resolve(
+            defaults: defaults.string(forKey: Keys.deviceId),
+            keychain: ScreenshotMode.isActive ? nil : KeychainHelper.read(key: DeviceIdentity.keychainKey),
+            make: { UUID().uuidString })
+        deviceId = identity.id
+        if identity.saveDefaults { defaults.set(identity.id, forKey: Keys.deviceId) }
+        if identity.saveKeychain && !ScreenshotMode.isActive {
+            KeychainHelper.save(key: DeviceIdentity.keychainKey, value: identity.id)
         }
         // Screenshot mode: no blue dot and no push (property observers don't run in init,
         // so the stored preferences are left untouched).

@@ -220,6 +220,32 @@ final class BusinessLogicTests: XCTestCase {
         XCTAssertNil(EventSheet.search.usageDetail)
     }
 
+    // MARK: - Device id (survives reinstalls through the Keychain)
+
+    func testDeviceIdentity_ExistingInstallKeepsItsIdAndFillsTheKeychain() {
+        XCTAssertEqual(DeviceIdentity.resolve(defaults: "A", keychain: nil, make: { "NEW" }),
+                       .init(id: "A", saveDefaults: false, saveKeychain: true))
+        XCTAssertEqual(DeviceIdentity.resolve(defaults: "A", keychain: "A", make: { "NEW" }),
+                       .init(id: "A", saveDefaults: false, saveKeychain: false))
+    }
+
+    func testDeviceIdentity_ReinstallTakesTheKeychainsId() {
+        XCTAssertEqual(DeviceIdentity.resolve(defaults: nil, keychain: "K", make: { "NEW" }),
+                       .init(id: "K", saveDefaults: true, saveKeychain: false))
+        XCTAssertEqual(DeviceIdentity.resolve(defaults: "  ", keychain: "K", make: { "NEW" }).id, "K")
+    }
+
+    func testDeviceIdentity_AppClipHandoverWinsOverAnOldKeychainId() {
+        // The handover put the clip's id in UserDefaults: that is the phone the server knows now.
+        XCTAssertEqual(DeviceIdentity.resolve(defaults: "CLIP", keychain: "OLD", make: { "NEW" }),
+                       .init(id: "CLIP", saveDefaults: false, saveKeychain: true))
+    }
+
+    func testDeviceIdentity_FirstLaunchMakesOneAndStoresItTwice() {
+        XCTAssertEqual(DeviceIdentity.resolve(defaults: nil, keychain: nil, make: { "NEW" }),
+                       .init(id: "NEW", saveDefaults: true, saveKeychain: true))
+    }
+
     // MARK: - Support info (API-004)
 
     func testSupportCode_FirstEightWithoutDashesUppercased() {

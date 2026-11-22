@@ -388,7 +388,7 @@ Shared plan links (API-015, the AASA claims `/p/*` for the app and the App Clip)
 
 ## Device Identity
 
-A UUID is generated on first launch and stored in `UserDefaults` under `com.arcu.attnd.deviceId`.
+A random UUID made by the app on first launch (never `identifierForVendor`, the IDFA or any other system identifier), stored in `UserDefaults` under `com.arcu.attnd.deviceId` **and** in the Keychain under the same name (`DeviceIdentity` in `Helpers.swift`, owner Nov 22, 2026): `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, not synchronizable, so it stays on this phone (no iCloud Keychain, not restored onto another phone) and survives deleting and reinstalling the app, which then rejoins as the same phone (free-limit counts, usage, the support code stay the same). Order at launch (`DeviceIdentity.resolve`, tested in `BusinessLogicTests`): the app's own UserDefaults copy (an existing install, or the App Clip's id the handover just imported), else the Keychain's (a reinstall), else a new UUID; whichever store lacks it is filled. The App Clip keeps its own Keychain copy (its own access group); the handover still moves the clip's id into the app. Screenshot mode doesn't touch the Keychain. Apple doesn't promise that Keychain items outlive the app; if a release ever clears them, a reinstall simply gets a new id as before. Android keeps the plain preference for now (parity item).
 
 ## Persistent Preferences (UserDefaults)
 

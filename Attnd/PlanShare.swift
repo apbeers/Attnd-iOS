@@ -27,7 +27,7 @@ enum PlanShare {
     /// Production links; the dev server's are `https://dev.attnd.app/p/…` (callers pass `host`).
     static let productionHost = "attnd.app"
     /// Hosts whose `/p/` links the app reads (dev events link to the dev server, Nov 20, 2026).
-    static let linkHosts: Set<String> = ["attnd.app", "dev.attnd.app"]
+    static let linkHosts: Set<String> = ["attnd.app", "dev.attnd.app", "www.attnd.app"]
 
     /// The exact JSON text (no spaces; v, ids, d).
     static func json(_ ids: [Int], day: PlanDate?) -> String {

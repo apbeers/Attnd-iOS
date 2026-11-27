@@ -9,6 +9,10 @@ App Store Connect automation for CI (App Store Connect API, no fastlane).
         Wait for processing, point the App Store version at this build and set release notes;
         with --submit also submit it for App Review (released automatically after approval).
 
+    asc.py submit
+        Submit the editable App Store version (with the build already attached to it) for App Review;
+        released automatically after approval. For a version a release run prepared without --submit.
+
     asc.py metadata [--store store] [--locale en-US] [--version 2.0] [--dry-run]
         Validate the listing text in store/<locale>/ and set it on the editable App Store version:
         version localization (description, keywords, promotional text, what's new, support and
@@ -177,9 +181,26 @@ def release(args, app):
 
     if not args.submit:
         print(f'{args.version} ({args.build}) is attached to the App Store version with its listing; not submitted '
-              '(the owner submits it in App Store Connect: Add for Review, then Submit to App Review).')
+              '(submit it with the "Submit for App Review" workflow, or in App Store Connect).')
         return
+    submit_version(app, version_id, f'{args.version} ({args.build})')
 
+
+def submit(args, app):
+    """Submit the editable version as it is (its attached build, listing and review notes)."""
+    versions = must('GET', f'/v1/apps/{app}/appStoreVersions',
+                    {'filter[platform]': 'IOS', 'filter[appVersionState]': EDITABLE_STATES})['data']
+    if not versions:
+        sys.exit('No editable App Store version to submit (nothing prepared, or it is already in review).')
+    version_id = versions[0]['id']
+    label = versions[0]['attributes']['versionString']
+    build = must('GET', f'/v1/appStoreVersions/{version_id}/build')['data']
+    if not build:
+        sys.exit(f'App Store version {label} has no build attached yet; run the release first.')
+    submit_version(app, version_id, f'{label} (build {build["attributes"].get("version")})')
+
+
+def submit_version(app, version_id, label):
     # Find or create a review submission, add the version, submit.
     open_subs = must('GET', '/v1/reviewSubmissions', {'filter[app]': app, 'filter[platform]': 'IOS',
                                                       'filter[state]': 'READY_FOR_REVIEW'})['data']
@@ -197,7 +218,7 @@ def release(args, app):
         sys.exit(f'Adding version to review submission failed ({status}): {data.get("_error", "")[:800]}')
     must('PATCH', f'/v1/reviewSubmissions/{sub_id}', body={'data': {
         'type': 'reviewSubmissions', 'id': sub_id, 'attributes': {'submitted': True}}})
-    print(f'Submitted {args.version} ({args.build}) for App Review; it releases automatically when approved.')
+    print(f'Submitted {label} for App Review; it releases automatically when approved.')
 
 
 # --- Store listing: metadata ---------------------------------------------------------------------
@@ -529,7 +550,7 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == 'check':
         return check()
     parser = argparse.ArgumentParser()
-    parser.add_argument('command', choices=['testflight', 'release', 'metadata', 'screenshots'])
+    parser.add_argument('command', choices=['testflight', 'release', 'submit', 'metadata', 'screenshots'])
     parser.add_argument('--submit', action='store_true',
                         help='release: also submit for App Review (default: prepare the version only)')
     parser.add_argument('--version', default='',
@@ -553,7 +574,7 @@ def main():
     if args.command == 'screenshots':
         args.plan = screenshot_plan(args.dir)  # validate sizes before touching anything
     app = app_id(os.environ.get('ASC_BUNDLE_ID', 'com.arcu.Attnd'))
-    {'testflight': testflight, 'release': release, 'metadata': metadata, 'screenshots': screenshots}[args.command](args, app)
+    {'testflight': testflight, 'release': release, 'submit': submit, 'metadata': metadata, 'screenshots': screenshots}[args.command](args, app)
 
 
 if __name__ == '__main__':

@@ -1,17 +1,9 @@
 // MapArrangement.swift
 // Attnd
 //
-// The Map tab on wide layouts (an unfolded iPhone Duo): the map plus the
-// pane named by `display.secondary_pane` (locations, schedule or now/next).
-//
-// `ArrangementView { primary } secondary: { … }` with `.arrangementViewStyle(.split)`
-// (iOS 27.1, iPhone Duo): side by side when wide, stacked when tall, split on the fold.
-// Older systems and SDKs get an equivalent fallback.
-//
-// Rules from Apple's guidance this file follows:
-//   - ArrangementView sits at the top of the tab, never inside a NavigationSplitView,
-//     List or ScrollView. Each pane brings its own NavigationStack.
-//   - Layout decisions use size classes and container geometry, never screen size.
+// The Map tab: the map (primary pane) and, on regular width, the pane named by
+// `display.secondary_pane` (locations, schedule or now/next) in a `PanePair`
+// (ArrangementView on iOS 27.1+). Each pane brings its own NavigationStack.
 
 import MapKit
 import SwiftUI
@@ -42,39 +34,24 @@ struct MapTab: View {
 
     var body: some View {
         let pane = appState.display.secondaryPane
-        // The `map-pane` App Store screenshot (iPhone Duo) always shows the arrangement.
-        let showsPane = (horizontalSizeClass == .regular || ScreenshotMode.current?.screen == .mapPane) && pane != .none
-        // One map for every posture (batch 7 fix round: folding swapped the full-screen map for a
-        // new one inside an ArrangementView, so a second MKMapView was made and the selection was
-        // lost). The pane is an optional sibling before the map in an AnyLayout, so the map keeps
-        // its identity when the pane comes and goes and when the layout turns from a row into a
-        // column. Unfolded the pane leads and the map trails next to the tab rail, meeting on the
-        // fold (the reported `.division`, else the middle) with no gutter.
-        GeometryReader { proxy in
-            let isWide = proxy.size.width >= proxy.size.height
-            let fold = ReservedRegionReader.folds(in: proxy).first { $0.height > $0.width && $0.minX > 0 }
-            let paneWidth = MapPaneLayout.paneWidth(container: proxy.size, foldMinX: fold?.minX)
-            let layout = isWide ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
+        // The `map-pane` App Store screenshot (iPhone Duo) always shows the pane.
+        let wantsPane = (horizontalSizeClass == .regular || ScreenshotMode.current?.screen == .mapPane) && pane != .none
+        // The map is the primary pane: alone on phones and wherever the system shows one pane,
+        // with the pane beside or below it where there is room (split on the fold). It is always
+        // the same view, so the MKMapView, the camera and the selection survive fold / unfold.
+        PanePair(showsSecondary: wantsPane) { split in
             ZStack {
-                layout {
-                    if showsPane {
-                        NavigationStack {
-                            SecondaryPaneView(pane: pane, ui: $ui)
-                        }
-                        .safeAreaPadding(.bottom, FloatingSearchButtonMetrics.reservedHeight)
-                        .frame(width: isWide ? paneWidth : nil, height: isWide ? nil : proxy.size.height * 0.45)
-                        .transition(.move(edge: .leading).combined(with: .opacity))
-                    }
-                    mapStack(showsFloatingButton: !showsPane)
-                }
-                // With the pane, the floating button sits bottom-trailing over the whole tab.
-                if showsPane {
-                    FloatingButtonLayer()
-                }
+                mapStack(showsFloatingButton: !split)
+                // With the pane, the floating button sits bottom-trailing over the map.
+                if split { FloatingButtonLayer() }
+            }
+        } secondary: {
+            NavigationStack {
+                SecondaryPaneView(pane: pane, ui: $ui)
             }
         }
-        // The selected pin and pane carry across; the pane slides (Reduce Motion: no animation).
-        .animation(reduceMotion ? nil : .smooth(duration: 0.3), value: showsPane)
+        // The pane slides in and out (Reduce Motion: no animation).
+        .animation(reduceMotion ? nil : .smooth(duration: 0.3), value: wantsPane)
     }
 
     /// The map in its own stack: place details pushed over it (`AppState.mapNavigation`;
@@ -87,16 +64,6 @@ struct MapTab: View {
                 .eventStatusBanners(reservesSpace: false)
                 .optionsToolbarItem(for: .map)
         }
-    }
-}
-
-/// The pane's width beside the map: up to the fold when the system reports one (partly folded),
-/// else half the width (the fold of a flat-open Duo is in the middle), never under 280 pt or over
-/// 60 % of the width. Pure.
-enum MapPaneLayout {
-    static func paneWidth(container: CGSize, foldMinX: CGFloat?) -> CGFloat {
-        let wanted = foldMinX ?? container.width / 2
-        return min(max(wanted, min(280, container.width * 0.5)), container.width * 0.6)
     }
 }
 
@@ -117,51 +84,6 @@ struct FloatingButtonLayer: View {
             }
         }
         .ignoresSafeArea(.keyboard)
-    }
-}
-
-/// Primary + secondary arrangement. Isolated so the new API is easy to adjust.
-struct MapArrangement<Primary: View, Secondary: View>: View {
-    @ViewBuilder var primary: Primary
-    @ViewBuilder var secondary: Secondary
-
-    var body: some View {
-        #if IOS27_SDK
-        if #available(iOS 27.1, *) {
-            ArrangementView {
-                primary
-            } secondary: {
-                secondary
-            }
-            .arrangementViewStyle(.split)
-        } else {
-            FallbackArrangement(primary: primary, secondary: secondary)
-        }
-        #else
-        FallbackArrangement(primary: primary, secondary: secondary)
-        #endif
-    }
-}
-
-/// Side by side when the container is wider than tall, stacked otherwise.
-private struct FallbackArrangement<Primary: View, Secondary: View>: View {
-    let primary: Primary
-    let secondary: Secondary
-
-    var body: some View {
-        GeometryReader { proxy in
-            let isWide = proxy.size.width >= proxy.size.height
-            let layout = isWide ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
-            layout {
-                // The pane (primary) takes its share; the map fills the rest right to its edge.
-                primary
-                    .frame(
-                        width: isWide ? min(400, proxy.size.width * 0.4) : nil,
-                        height: isWide ? nil : proxy.size.height * 0.45
-                    )
-                secondary
-            }
-        }
     }
 }
 

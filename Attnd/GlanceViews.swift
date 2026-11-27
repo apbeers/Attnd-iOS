@@ -117,13 +117,11 @@ final class UserLocationTracker {
     }
 
     private func attachHeadingToWindow(_ manager: CLLocationManager) {
-        #if IOS27_SDK
         if #available(iOS 27.0, *), let window = Self.activeWindowScene()?.keyWindow {
             manager.headingBody = window
             headingFollowsWindow = true
             return
         }
-        #endif
         headingFollowsWindow = false
     }
 

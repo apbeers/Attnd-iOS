@@ -5,6 +5,7 @@
 // the tabletop glance, flyer places and drag payloads. Fixed now, America/Chicago.
 
 import XCTest
+import SwiftUI
 @testable import Attnd
 
 final class DuoFeaturesTests: XCTestCase {
@@ -147,38 +148,29 @@ final class DuoFeaturesTests: XCTestCase {
 
     func testUndoToastStaysInOnePane() {
         // Folded / phones: the whole width.
-        XCTAssertEqual(UndoToastPane.span(containerWidth: 400, fold: nil, windowMidX: nil, touchX: 300, primaryIsTrailing: false), 0...400)
+        XCTAssertEqual(UndoToastPane.span(containerWidth: 400, fold: nil, windowMidX: nil, touchX: 300), 0...400)
         // Partly folded: the pane that was tapped.
-        XCTAssertEqual(UndoToastPane.span(containerWidth: 900, fold: 440...460, windowMidX: nil, touchX: 700, primaryIsTrailing: false), 460...900)
-        XCTAssertEqual(UndoToastPane.span(containerWidth: 900, fold: 440...460, windowMidX: nil, touchX: 100, primaryIsTrailing: true), 0...440)
-        // No tap position: the primary pane (the map trails on the Map tab).
-        XCTAssertEqual(UndoToastPane.span(containerWidth: 900, fold: 440...460, windowMidX: nil, touchX: nil, primaryIsTrailing: true), 460...900)
+        XCTAssertEqual(UndoToastPane.span(containerWidth: 900, fold: 440...460, windowMidX: nil, touchX: 700), 460...900)
+        XCTAssertEqual(UndoToastPane.span(containerWidth: 900, fold: 440...460, windowMidX: nil, touchX: 100), 0...440)
+        // No tap position: the primary pane (PanePair puts it leading).
+        XCTAssertEqual(UndoToastPane.span(containerWidth: 900, fold: 440...460, windowMidX: nil, touchX: nil), 0...440)
         // Flat open: the middle of the window is the fold.
-        XCTAssertEqual(UndoToastPane.span(containerWidth: 640, fold: nil, windowMidX: 330, touchX: nil, primaryIsTrailing: false), 0...330)
+        XCTAssertEqual(UndoToastPane.span(containerWidth: 640, fold: nil, windowMidX: 330, touchX: nil), 0...330)
         // A "fold" at the very edge isn't one.
-        XCTAssertEqual(UndoToastPane.span(containerWidth: 640, fold: nil, windowMidX: 600, touchX: nil, primaryIsTrailing: false), 0...640)
+        XCTAssertEqual(UndoToastPane.span(containerWidth: 640, fold: nil, windowMidX: 600, touchX: nil), 0...640)
     }
 
-    // MARK: Home columns (owner, after 181: no big gap, columns fill their halves)
+    // MARK: Pane pairs
 
-    func testHomeColumnsMeetAtTheFoldWithAGutter() {
-        // 951 pt wide, a 20 pt fold at 465…485, 16 pt margins, 20 pt gutter.
-        let w = HomeColumnWidths.of(width: 951, margin: 16, gutter: 20, foldMinX: 465, foldMaxX: 485)
-        XCTAssertEqual(w.leading, 429)
-        XCTAssertEqual(w.gap, 60)
-        XCTAssertEqual(w.leading + w.gap + w.trailing, 951 - 32, accuracy: 0.001)
-        // The trailing column starts `gutter` after the fold.
-        XCTAssertEqual(16 + w.leading + w.gap, 485 + 20)
-    }
-
-    func testHomeColumnsSplitTheMiddleWithoutAFold() {
-        let w = HomeColumnWidths.of(width: 900, margin: 16, gutter: 20, foldMinX: nil, foldMaxX: nil)
-        XCTAssertEqual(w.leading, w.trailing)
-        XCTAssertEqual(w.gap, 40)
-        XCTAssertEqual(w.leading, (868 - 40) / 2)
-        // A "fold" that would leave a sliver is ignored.
-        let edge = HomeColumnWidths.of(width: 900, margin: 16, gutter: 20, foldMinX: 100, foldMaxX: 110)
-        XCTAssertEqual(edge, w)
+    func testPanePairSplitsAlongItsAxes() {
+        let wide = CGSize(width: 951, height: 669), tall = CGSize(width: 669, height: 951)
+        XCTAssertTrue(PanePairRule.isSplit(wanted: true, axes: [.horizontal, .vertical], size: wide))
+        XCTAssertTrue(PanePairRule.isSplit(wanted: true, axes: [.horizontal, .vertical], size: tall))
+        // Side by side only: a tall container shows the primary alone.
+        XCTAssertTrue(PanePairRule.isSplit(wanted: true, axes: .horizontal, size: wide))
+        XCTAssertFalse(PanePairRule.isSplit(wanted: true, axes: .horizontal, size: tall))
+        // Not wanted, or not laid out yet: the primary alone.
+        XCTAssertFalse(PanePairRule.isSplit(wanted: false, axes: .horizontal, size: wide))
+        XCTAssertFalse(PanePairRule.isSplit(wanted: true, axes: .horizontal, size: .zero))
     }
 }
-

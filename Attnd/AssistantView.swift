@@ -17,8 +17,8 @@
 //     the glass text box "Change your plan or search…", the only control. No chat transcript.
 //   - Wide windows (iPhone Duo unfolded, regular width): side by side — a chat column (this
 //     session's turns with their blocks, the dock) on the leading side and the plan page on the
-//     trailing side, one controller for both; split on the fold by `ArrangementView` (iOS 27.1
-//     SDK, `PlanArrangement`), at the top of the cover only.
+//     trailing side, one controller for both; split on the fold by `PanePair` (ArrangementView on
+//     iOS 27.1+), at the top of the cover only.
 // There is no Search / Ask / Plan toggle: the app picks the path of every turn.
 
 import SwiftUI
@@ -111,7 +111,7 @@ struct FloatingPlanButton: View {
 
 /// The cover's root: My plan is one continuous chat (iOS, Nov 21, 2026). Compact width (phones,
 /// iPhone Duo folded): the chat alone. Regular width (iPhone Duo unfolded): the chat column and
-/// the last component it showed, large, side by side (`PlanArrangement`: split on the fold, at the
+/// the last component it showed, large, side by side (`PanePair`: split on the fold, at the
 /// top of the cover only). All state (transcript, composer text, proposal, working line) is the
 /// controller's, so folding mid-conversation keeps it.
 struct PlanPageHost: View {
@@ -119,19 +119,15 @@ struct PlanPageHost: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     var body: some View {
-        Group {
-            if horizontalSizeClass == .regular {
-                PlanArrangement {
-                    PlanChatStack()
-                } secondary: {
-                    NavigationStack {
-                        LastComponentPane()
-                            .navigationTitle("My Schedule")
-                            .navigationBarTitleDisplayMode(.inline)
-                    }
-                }
-            } else {
-                PlanChatStack()
+        // The chat is the primary pane, always the same view; the last component joins it side by
+        // side on regular width when wider than tall (a tall inner display shows the chat alone).
+        PanePair(showsSecondary: horizontalSizeClass == .regular, axes: .horizontal, primaryRatio: 0.4) { _ in
+            PlanChatStack()
+        } secondary: {
+            NavigationStack {
+                LastComponentPane()
+                    .navigationTitle("My Schedule")
+                    .navigationBarTitleDisplayMode(.inline)
             }
         }
         .modifier(PageLiveTasks())
@@ -214,43 +210,6 @@ private struct PageCloseItem: ToolbarContent {
         ToolbarItem(placement: .cancellationAction) {
             Button("Close", systemImage: "xmark", role: .close) {
                 appState.assistant.closePage()
-            }
-        }
-    }
-}
-
-/// Chat column + plan page side by side; `ArrangementView` (iOS 27.1, iPhone Duo) splits them on
-/// the fold. Older systems and SDKs: an HStack with the plan taking ~60 %.
-private struct PlanArrangement<Primary: View, Secondary: View>: View {
-    @ViewBuilder var primary: Primary
-    @ViewBuilder var secondary: Secondary
-
-    var body: some View {
-        #if IOS27_SDK
-        if #available(iOS 27.1, *) {
-            // Side by side only when the container is wider than tall (Apple's "Preparing your app
-            // for iPhone Duo"): a tall inner display shows the chat alone; split on the fold.
-            ArrangementView {
-                primary
-            } secondary: {
-                secondary
-            }
-            .arrangementViewStyle(.split.axes(.horizontal))
-        } else {
-            fallback
-        }
-        #else
-        fallback
-        #endif
-    }
-
-    private var fallback: some View {
-        GeometryReader { proxy in
-            HStack(spacing: 0) {
-                primary
-                    .frame(width: max(320, proxy.size.width * 0.4))
-                Divider()
-                secondary
             }
         }
     }

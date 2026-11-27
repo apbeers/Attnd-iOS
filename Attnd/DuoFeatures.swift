@@ -245,11 +245,12 @@ enum DragPayload: Equatable, Sendable {
 // MARK: - Undo toast pane
 
 /// Which part of the width the Undo toast may use: one pane of an unfolded iPhone Duo (the one
-/// the action was tapped in, else the screen's primary pane), never across the fold. `fold` is the
+/// the action was tapped in, else the primary pane, which `PanePair` always places leading),
+/// never across the fold. `fold` is the
 /// reported `.division` (partly folded); `windowMidX` the middle of a flat-open inner display.
 enum UndoToastPane {
     static func span(containerWidth width: CGFloat, fold: ClosedRange<CGFloat>?, windowMidX: CGFloat?,
-                     touchX: CGFloat?, primaryIsTrailing: Bool) -> ClosedRange<CGFloat> {
+                     touchX: CGFloat?) -> ClosedRange<CGFloat> {
         let full: ClosedRange<CGFloat> = 0...max(width, 0)
         guard let split = fold ?? windowMidX.map({ $0...$0 }),
               split.lowerBound > 120, split.upperBound < width - 120 else { return full }
@@ -259,6 +260,6 @@ enum UndoToastPane {
             if x < split.lowerBound { return leading }
             if x > split.upperBound { return trailing }
         }
-        return primaryIsTrailing ? trailing : leading
+        return leading
     }
 }

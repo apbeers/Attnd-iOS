@@ -152,7 +152,6 @@ private struct PayloadDrop: ViewModifier {
             isTargeted?.wrappedValue = false
             if let payload = strings.lazy.compactMap(DragPayload.parse).first { perform(payload) }
         }
-        #if IOS27_SDK
         if #available(iOS 27.0, *) {
             if let isTargeted {
                 base.onDropSessionUpdated { session in
@@ -167,9 +166,6 @@ private struct PayloadDrop: ViewModifier {
         } else {
             base
         }
-        #else
-        base
-        #endif
     }
 }
 
@@ -602,34 +598,28 @@ struct PlanningBoard: View {
 
 // MARK: - Flyer + map
 
-/// The Flyer tab: unfolded and wider than tall, the flyer full height on the leading half and the
-/// map on the trailing one (meeting on the fold). The flyer keeps its identity when the map comes
-/// and goes, so it never reloads on a fold.
+/// The Flyer tab: the flyer (primary pane) and, on regular width when wider than tall, a map of
+/// the places beside it (`PanePair`, split on the fold). The flyer keeps its identity when the
+/// map comes and goes, so it never reloads on a fold.
 struct FlyerTab: View {
     @Environment(AppState.self) private var appState
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        GeometryReader { proxy in
-            let showsMap = horizontalSizeClass == .regular && proxy.size.width > proxy.size.height
-                && appState.currentEvent?.flyerUrl != nil && appState.locations.contains { $0.coordinate != nil }
-                && !ScreenshotMode.isActive
-            let fold = ReservedRegionReader.folds(in: proxy).first { $0.height > $0.width && $0.minX > 0 }
-            HStack(spacing: 0) {
-                NavigationStack {
-                    FlyerView(flyerUrl: appState.currentEvent?.flyerUrl)
-                        .eventStatusBanners()
-                        .optionsToolbarItem(for: .flyer)
-                }
-                .frame(width: showsMap ? MapPaneLayout.paneWidth(container: proxy.size, foldMinX: fold?.minX) : nil)
-                if showsMap {
-                    FlyerPlacesMap()
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                }
+        let wantsMap = horizontalSizeClass == .regular
+            && appState.currentEvent?.flyerUrl != nil && appState.locations.contains { $0.coordinate != nil }
+            && !ScreenshotMode.isActive
+        PanePair(showsSecondary: wantsMap, axes: .horizontal) { _ in
+            NavigationStack {
+                FlyerView(flyerUrl: appState.currentEvent?.flyerUrl)
+                    .eventStatusBanners()
+                    .optionsToolbarItem(for: .flyer)
             }
-            .animation(reduceMotion ? nil : .smooth(duration: 0.3), value: showsMap)
+        } secondary: {
+            FlyerPlacesMap()
         }
+        .animation(reduceMotion ? nil : .smooth(duration: 0.3), value: wantsMap)
     }
 }
 

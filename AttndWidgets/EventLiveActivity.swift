@@ -611,15 +611,11 @@ private struct CompactLeadingSelector: View {
     let context: Context
 
     var body: some View {
-        #if IOS27_SDK
         if #available(iOS 27.0, *) {
             WidthAwareCompactLeading(context: context)
         } else {
             CompactLeadingView(context: context, narrow: false)
         }
-        #else
-        CompactLeadingView(context: context, narrow: false)
-        #endif
     }
 }
 
@@ -657,19 +653,14 @@ private struct CompactTrailingSelector: View {
     let context: Context
 
     var body: some View {
-        #if IOS27_SDK
         if #available(iOS 27.0, *) {
             WidthAwareCompactTrailing(context: context)
         } else {
             CompactTrailingView(context: context, narrow: false)
         }
-        #else
-        CompactTrailingView(context: context, narrow: false)
-        #endif
     }
 }
 
-#if IOS27_SDK
 @available(iOS 27.0, *)
 private struct WidthAwareCompactLeading: View {
     let context: Context
@@ -691,7 +682,6 @@ private struct WidthAwareCompactTrailing: View {
         CompactTrailingView(context: context, narrow: isLimitedInWidth)
     }
 }
-#endif
 
 private struct CompactTrailingView: View {
     let context: Context

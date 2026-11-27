@@ -1,0 +1,35 @@
+# Submit for App Review (manual): submits the App Store version that the release run on main prepared
+# (build attached, listing text and What's New set) as it is. Released automatically after approval.
+# Linux only (nothing to build). Started by hand or by Claude when the owner asks; needs the file on main.
+name: Submit for App Review
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-review
+
+jobs:
+  submit:
+    name: Submit for App Review
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    environment: production
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: scripts/ci
+      - name: App Store Connect tooling
+        run: |
+          python3 -m venv "$RUNNER_TEMP/asc"
+          "$RUNNER_TEMP/asc/bin/pip" install --quiet --disable-pip-version-check "pyjwt[crypto]"
+          echo "$RUNNER_TEMP/asc/bin" >> "$GITHUB_PATH"
+      - name: Submit the editable version
+        run: python scripts/ci/asc.py submit

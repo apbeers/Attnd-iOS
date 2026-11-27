@@ -52,7 +52,7 @@ struct PanePair<Primary: View, Secondary: View>: View {
             }
             // No axes = the primary alone (Apple: "for axes that you don't include, the
             // arrangement view only displays the primary view").
-            .arrangementViewStyle(.split.axes(split ? axes : []))
+            .arrangementViewStyle(.split.axes(split ? axes : Axis.Set()))
         } else {
             let wide = size.width >= size.height
             let layout = wide ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))

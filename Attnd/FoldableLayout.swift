@@ -10,8 +10,10 @@
 //     .division (the fold) and .occlusion (camera housings). Each region's `frame`
 //     already includes its margins. Read them during layout; don't cache them.
 //   - ToolbarItemPlacement.topBarPinnedTrailing (never moves to the overflow menu)
-// They compile only against the 27.1+ SDK (IOS27_SDK in Config/*.xcconfig) and run
-// behind `#available(iOS 27.1, *)`.
+// The app always builds with the 27.2 SDK; on iOS 26 they sit behind `#available(iOS 27.1, *)`.
+// Two-pane screens use `PanePair` (ArrangementView) instead of reading the fold themselves; the
+// reserved regions below are only for custom pieces (floating overlays, the tabletop glance,
+// the Undo toast, the audit overlay).
 
 import SwiftUI
 
@@ -73,26 +75,21 @@ enum ReservedRegionReader {
     /// Reserved hardware regions in the proxy's local coordinate space, leading = minX.
     @MainActor
     static func rects(in proxy: GeometryProxy) -> [CGRect] {
-        // Compiled only against the iOS 27.1+ SDK (IOS27_SDK, set in Config/*.xcconfig).
-        #if IOS27_SDK
         if #available(iOS 27.1, *) {
             // Active regions only: the fold when the device is open, camera housings always.
             let fold = proxy.reservedRegions(kind: .division, options: [])
             let cameras = proxy.reservedRegions(kind: .occlusion, options: [])
             return (fold + cameras).map { $0.frame }
         }
-        #endif
         return []
     }
 
     /// The fold alone (`.division`), active only while partly folded.
     @MainActor
     static func folds(in proxy: GeometryProxy) -> [CGRect] {
-        #if IOS27_SDK
         if #available(iOS 27.1, *) {
             return proxy.reservedRegions(kind: .division, options: []).map { $0.frame }
         }
-        #endif
         return []
     }
 }
@@ -170,11 +167,9 @@ extension ToolbarItemPlacement {
     /// A trailing item the system keeps visible (never moved to the overflow menu,
     /// still shown in the vertical bars of iPhone Duo's wide postures).
     static var pinnedTrailing: ToolbarItemPlacement {
-        #if IOS27_SDK
         if #available(iOS 27.1, *) {
             return .topBarPinnedTrailing
         }
-        #endif
         return .topBarTrailing
     }
 }

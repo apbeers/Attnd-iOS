@@ -20,6 +20,8 @@ Test each posture **upright and rotated 90° both ways**. Change posture **while
 | Open, tall | compact / regular depending on width | Nothing sits under the horizontal fold; map buttons and card stay at the bottom |
 | Open, wide | regular width | Map tab shows map + secondary pane side by side; Locations / Schedule show list + detail |
 | Partially folded (L shape) | per active region | Content and overlays stay off the hinge; no frozen layout mid-fold |
+
+**Two panes (`PanePair`, Nov 27, 2026)**: the Map, Flyer, Home and Ask Attnd now let `ArrangementView` place their two panes. Check on each: the primary (map, flyer, Home's first column, chat) leads / sits on top, the second pane sits beside it when wider than tall (Map: also below when taller), both meet on the fold with nothing on it, the primary alone on the closed Duo, and the primary keeps its state (camera and pin, flyer page, scroll position, chat) when the second pane comes and goes. On an iOS 26 iPhone the same screens show one pane in portrait and the same two in landscape on large phones.
 | Tent | per facing screen | App fills the facing side; toolbar items readable |
 | Laptop | regular width | Bars may move vertical: every toolbar item shows its icon with an accessible title |
 
@@ -42,7 +44,7 @@ Test each posture **upright and rotated 90° both ways**. Change posture **while
 - [ ] **Place / item detail, unfolded (≥ 700 pt)**: two columns — header, walk map and directions (item: header, place, countdown) leading, the rest trailing; folded: one column; the hero image still extends under the bars.
 - [ ] **Tabletop** (partly folded, fold across the middle): Home shows header / urgent / countdown / map above the fold and the rest as a list below it; the chat keeps the composer below the fold; nothing sits on the fold.
 - [ ] **Home header**: plain text (event name, "Sat Nov 21 · Panther Island, Fort Worth"), no card, no code; the urgent card is one line + body and swipes away sideways with an Undo toast (still in Updates).
-- [ ] **Home, unfolded**: header / urgent / countdown / now-next full width, then two columns (Up Next in My Schedule beside the map, …) from 700 pt of container width; folded: one column; the last section scrolls clear of the tab bar and the floating button.
+- [ ] **Home, unfolded**: landscape (regular width, wider than tall) → two columns that scroll on their own, header / urgent / countdown / now-next at the top of the first; unfolded portrait and folded: one column with every section; the last section scrolls clear of the tab bar and the floating button.
 - [ ] **Schedule tab**: the My Schedule section first (ended entries dimmed), organizer-change rows (Keep / Remove / Find Another) readable on the cover display; split view on the inner display.
 - [ ] **VoiceOver across the fold**: in the chat and on Home (two columns), the reading order goes leading column top to bottom, then trailing; nothing is skipped at the fold.
 - [ ] **Live Activity**: the island is vertical on the outer display's right edge: compact leading turns into a progress ring and trailing into Next's clock time ("3:00") where `isDynamicIslandLimitedInWidth`; never an empty region; the theme's primary / secondary / tertiary (API-023) in light and dark (urgent stays red). Extensions may not run in the Duo simulator runtime: check on hardware.
@@ -67,7 +69,7 @@ Test each posture **upright and rotated 90° both ways**. Change posture **while
 - [ ] **Stage vs stage**: Schedule unfolded with nothing selected → two line-ups side by side, clashing sets marked; switch either stage; tap a set → its detail.
 - [ ] **Planning board**: My plan unfolded → Your Day + Coming Up; drag a set onto the board → the proposal card in the chat; Apply → the day and route redraw; Undo.
 - [ ] **Drag between panes**: drag a schedule row onto the map (shows its stage), onto Home's Up Next (added, Undo toast).
-- [ ] **Flyer + map**: Flyer tab unfolded landscape → flyer leading, map trailing; chips for places printed on the flyer; tap → the map flies there; fold → the flyer alone, not reloaded.
+- [ ] **Flyer + map**: Flyer tab unfolded landscape → flyer leading, map trailing (PanePair); chips for places printed on the flyer; tap → the map flies there; fold → the flyer alone, not reloaded.
 - [ ] **Empty glass circle** (outer display, Home): with `-AttndDebugRegions YES`, every glass element of ours has a blue label; report the label (or none) next to the circle.
 - [ ] **Vertical Dynamic Island**: compact trailing shows Next's clock in bold rounded digits; urgent shows the red triangle.
 

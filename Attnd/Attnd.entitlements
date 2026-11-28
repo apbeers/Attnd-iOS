@@ -8,6 +8,7 @@
 	<array>
 		<string>applinks:attnd.app</string>
 		<string>applinks:dev.attnd.app</string>
+		<string>applinks:www.attnd.app</string>
 	</array>
 	<key>com.apple.developer.devicecheck.appattest-environment</key>
 	<string>production</string>

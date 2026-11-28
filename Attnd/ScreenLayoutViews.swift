@@ -97,15 +97,10 @@ private struct HomeScreen: View {
     let open: (SearchTarget) -> Void
 
     @Environment(AppState.self) private var appState
-    @State private var width: CGFloat = 0
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
-    /// Two columns from this container width (the inner display of an unfolded iPhone Duo).
-    static let twoColumnWidth: CGFloat = 700
-    /// Space each side of the fold (or of the middle) between the two columns.
-    static let gutter: CGFloat = 20
-    /// Parts that keep the whole width in two-column mode.
-    static let fullWidth: Set<String> = ["header", "urgent", "countdown", "now_next"]
-
+    /// Parts that lead the first column in two-column mode.
+    static let leadingFirst: Set<String> = ["header", "urgent", "countdown", "now_next"]
 
     var body: some View {
         let sections = appState.screenSections(.home, now: now) { bundle, state in
@@ -150,91 +145,43 @@ private struct HomeScreen: View {
                     }
                 }
             } else {
-                scroll(sections)
-                    .onAppear { foldSplit = Self.split(proxy) }
-                    .onChange(of: proxy.size) { foldSplit = Self.split(proxy) }
+                columns(sections)
             }
         }
-    }
-
-    /// A vertical fold across the middle (the reported `.division`, in the Home container's
-    /// coordinates): its edges. nil = none reported (columns split the width in half).
-    struct FoldSplit: Equatable { var minX: CGFloat; var maxX: CGFloat }
-    @State private var foldSplit: FoldSplit?
-
-    private static func split(_ proxy: GeometryProxy) -> FoldSplit? {
-        guard let fold = ReservedRegionReader.folds(in: proxy).first(where: { $0.height > $0.width }),
-              fold.minX > 0, fold.maxX < proxy.size.width else { return nil }
-        return FoldSplit(minX: fold.minX, maxX: fold.maxX)
-    }
-    /// One of the wide layout's columns (not lazy: both columns measure fully, nothing starts cut).
-    private func homeColumn(_ sections: [LayoutSection]) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            ForEach(sections, id: \.type) { section in
-                ComponentView(component: ComponentCatalogue.component(section), now: now, open: open)
-            }
-        }
-        // Every section stays inside its column (carousels scroll and clip there).
-        .environment(\.carouselContained, true)
-    }
-
-    private func column(_ sections: [LayoutSection]) -> some View {
-        LazyVStack(alignment: .leading, spacing: 16) {
-            ForEach(sections, id: \.type) { section in
-                ComponentView(component: ComponentCatalogue.component(section), now: now, open: open)
-            }
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 12)
     }
 
     /// The section at the top of the list, kept across fold / unfold / tabletop (the scroll view
     /// is rebuilt when the layout changes; it comes back at the same section).
     @State private var topSection: String?
 
-    private func scroll(_ sections: [LayoutSection]) -> some View {
-        ScrollView {
-            if width >= Self.twoColumnWidth {
-                // Wide (iPhone Duo unfolded): the full-width parts, then two columns of sections.
-                let wide = sections.filter { Self.fullWidth.contains($0.type) }
-                let rest = sections.filter { !Self.fullWidth.contains($0.type) }
-                VStack(alignment: .leading, spacing: 16) {
-                    ForEach(wide, id: \.type) { section in
-                        ComponentView(component: ComponentCatalogue.component(section), now: now, open: open)
-                    }
-                    // Two independent columns, both from the top (batch 7: a grid paired the
-                    // sections row by row, so a tall one pushed its neighbour down), split on the
-                    // fold when the system reports one.
-                    let columns = HomeColumns.split(rest)
-                    let widths = HomeColumnWidths.of(width: Double(width), margin: 16, gutter: Double(Self.gutter),
-                                                     foldMinX: foldSplit.map { Double($0.minX) },
-                                                     foldMaxX: foldSplit.map { Double($0.maxX) })
-                    HStack(alignment: .top, spacing: 0) {
-                        homeColumn(columns.leading)
-                            .frame(width: CGFloat(widths.leading), alignment: .topLeading)
-                        Color.clear.frame(width: CGFloat(widths.gap))
-                        homeColumn(columns.trailing)
-                            .frame(width: CGFloat(widths.trailing), alignment: .topLeading)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .scrollTargetLayout()
-                .padding(.horizontal)
-                .padding(.vertical, 12)
-            } else {
-                LazyVStack(alignment: .leading, spacing: 16) {
-                    ForEach(sections, id: \.type) { section in
-                        ComponentView(component: ComponentCatalogue.component(section), now: now, open: open)
-                    }
-                }
-                .scrollTargetLayout()
-                .padding(.horizontal)
-                .padding(.vertical, 12)
-            }
+    /// Home as one column, or two independent columns side by side on regular width when wider
+    /// than tall (iPhone Duo unfolded in landscape, large iPhones in landscape): a `PanePair`, so
+    /// the system splits them on the fold. The first column is always the same scroll view (its
+    /// top section survives fold / unfold); alone it shows every section.
+    private func columns(_ sections: [LayoutSection]) -> some View {
+        let split = HomeColumns.split(sections.filter { !Self.leadingFirst.contains($0.type) })
+        return PanePair(showsSecondary: horizontalSizeClass == .regular, axes: .horizontal) { isSplit in
+            scroll(isSplit ? sections.filter { Self.leadingFirst.contains($0.type) } + split.leading : sections,
+                   keepsPosition: true)
+        } secondary: {
+            scroll(split.trailing, keepsPosition: false)
         }
-        .scrollPosition(id: $topSection, anchor: .top)
-        // Columns follow the container's width (never the device).
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+    }
+
+    private func scroll(_ sections: [LayoutSection], keepsPosition: Bool) -> some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 16) {
+                ForEach(sections, id: \.type) { section in
+                    ComponentView(component: ComponentCatalogue.component(section), now: now, open: open)
+                }
+            }
+            .scrollTargetLayout()
+            .padding(.horizontal)
+            .padding(.vertical, 12)
+        }
+        .scrollPosition(id: keepsPosition ? $topSection : .constant(nil), anchor: .top)
+        // Every section stays inside its column (carousels scroll and clip there).
+        .environment(\.carouselContained, true)
         // The last section scrolls clear of the floating button and the tab bar, like the other tabs.
         .contentMargins(.bottom, 88, for: .scrollContent)
         .refreshable { await appState.pullToRefresh() }
@@ -787,8 +734,7 @@ struct UndoToastOverlay: View {
                 // A flat-open inner display (portrait) folds down the middle of the window.
                 windowMidX: horizontalSizeClass == .regular && proxy.size.height > proxy.size.width
                     ? (frame.maxX + proxy.safeAreaInsets.trailing) / 2 - frame.minX : nil,
-                touchX: appState.undoToast?.touchX.map { $0 - frame.minX },
-                primaryIsTrailing: appState.selectedTab == .map
+                touchX: appState.undoToast?.touchX.map { $0 - frame.minX }
             )
             HStack(spacing: 0) {
                 Spacer(minLength: 0).frame(width: span.lowerBound)

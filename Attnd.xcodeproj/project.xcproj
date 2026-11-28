@@ -90,6 +90,12 @@
             "AttndAppClip/compile-sources",
           ],
         }, {
+          "path": "PanePair.swift",
+          "target-membership": [
+            "Attnd/compile-sources",
+            "AttndAppClip/compile-sources",
+          ],
+        }, {
           "path": "AppLog.swift",
           "target-membership": [
             "Attnd/compile-sources",

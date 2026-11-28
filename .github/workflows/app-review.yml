@@ -25,7 +25,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          sparse-checkout: scripts/ci
+          sparse-checkout: |
+            scripts/ci
+            store
       - name: App Store Connect tooling
         run: |
           python3 -m venv "$RUNNER_TEMP/asc"

@@ -200,7 +200,79 @@ def submit(args, app):
     submit_version(app, version_id, f'{label} (build {build["attributes"].get("version")})')
 
 
+# The App Clip card (default App Clip experience): a version that ships the App Clip can only be reviewed with
+# one. Apple's rules (HIG, App Clips): header image 1800 x 1200 PNG/JPEG without transparency and without text,
+# subtitle <= 56 characters, action OPEN for an app like ours. The title is the clip's display name.
+CLIP_CARD_DIR = pathlib.Path('store/en-US')
+CLIP_ACTION = 'OPEN'
+
+
+def ensure_clip_card(app, version_id, locale='en-US'):
+    clips = must('GET', f'/v1/apps/{app}/appClips')['data']
+    if not clips:
+        return
+    clip = clips[0]['id']
+    status, data = call('GET', f'/v1/appStoreVersions/{version_id}/appClipDefaultExperience')
+    experience = data.get('data') if status < 300 else None
+    if experience:
+        experience_id = experience['id']
+    else:
+        # Copy the newest earlier card when there is one (its texts and image), else start a new one.
+        earlier = must('GET', f'/v1/appClips/{clip}/appClipDefaultExperiences')['data']
+        relationships = {'appClip': {'data': {'type': 'appClips', 'id': clip}},
+                         'releaseWithAppStoreVersion': {'data': {'type': 'appStoreVersions', 'id': version_id}}}
+        if earlier:
+            relationships['appClipDefaultExperienceTemplate'] = {
+                'data': {'type': 'appClipDefaultExperiences', 'id': earlier[-1]['id']}}
+        experience_id = must('POST', '/v1/appClipDefaultExperiences', body={'data': {
+            'type': 'appClipDefaultExperiences', 'attributes': {'action': CLIP_ACTION},
+            'relationships': relationships}})['data']['id']
+        print(f'App Clip card created for the version ({"copied from an earlier one" if earlier else "new"})')
+
+    subtitle = (CLIP_CARD_DIR / 'app_clip_subtitle.txt').read_text().strip()[:56]
+    localizations = must('GET', f'/v1/appClipDefaultExperiences/{experience_id}/appClipDefaultExperienceLocalizations')['data']
+    localization = next((l for l in localizations if l['attributes'].get('locale') == locale), None)
+    if localization is None:
+        localization = must('POST', '/v1/appClipDefaultExperienceLocalizations', body={'data': {
+            'type': 'appClipDefaultExperienceLocalizations', 'attributes': {'locale': locale, 'subtitle': subtitle},
+            'relationships': {'appClipDefaultExperience': {
+                'data': {'type': 'appClipDefaultExperiences', 'id': experience_id}}}}})['data']
+    elif not localization['attributes'].get('subtitle'):
+        must('PATCH', f'/v1/appClipDefaultExperienceLocalizations/{localization["id"]}', body={'data': {
+            'type': 'appClipDefaultExperienceLocalizations', 'id': localization['id'],
+            'attributes': {'subtitle': subtitle}}})
+
+    status, data = call('GET', f'/v1/appClipDefaultExperienceLocalizations/{localization["id"]}/appClipHeaderImage')
+    if status < 300 and data.get('data'):
+        print('App Clip card ready')
+        return
+    path = CLIP_CARD_DIR / 'app_clip_header.png'
+    image = path.read_bytes()
+    created = must('POST', '/v1/appClipHeaderImages', body={'data': {
+        'type': 'appClipHeaderImages', 'attributes': {'fileName': path.name, 'fileSize': len(image)},
+        'relationships': {'appClipDefaultExperienceLocalization': {
+            'data': {'type': 'appClipDefaultExperienceLocalizations', 'id': localization['id']}}}}})['data']
+    for operation in created['attributes'].get('uploadOperations') or []:
+        offset, length = operation['offset'], operation['length']
+        http_upload(operation, image[offset:offset + length])
+    must('PATCH', f'/v1/appClipHeaderImages/{created["id"]}', body={'data': {
+        'type': 'appClipHeaderImages', 'id': created['id'],
+        'attributes': {'uploaded': True, 'sourceFileChecksum': hashlib.md5(image).hexdigest()}}})
+    deadline = time.time() + 10 * 60
+    while time.time() < deadline:
+        state = (must('GET', f'/v1/appClipHeaderImages/{created["id"]}')['data']['attributes']
+                 .get('assetDeliveryState') or {})
+        if state.get('state') == 'COMPLETE':
+            print('App Clip card ready (header image uploaded)')
+            return
+        if state.get('state') == 'FAILED':
+            sys.exit(f'App Clip header image failed: {json.dumps(state.get("errors") or [])[:400]}')
+        time.sleep(10)
+    sys.exit('Timed out waiting for the App Clip header image to process')
+
+
 def submit_version(app, version_id, label):
+    ensure_clip_card(app, version_id)
     # Find or create a review submission, add the version, submit.
     open_subs = must('GET', '/v1/reviewSubmissions', {'filter[app]': app, 'filter[platform]': 'IOS',
                                                       'filter[state]': 'READY_FOR_REVIEW'})['data']
